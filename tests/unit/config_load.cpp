@@ -1,5 +1,7 @@
 #include "check.h"
+#include "config/shaders.h"
 #include "config/store.h"
+#include "scene/animation_shader.h"
 
 #include <algorithm>
 #include <array>
@@ -2580,6 +2582,55 @@ UMBRIEL_TEST(tabletConfigDefaults) {
   CHECK(!tablet.calibrationMatrix.has_value());
 }
 
+UMBRIEL_TEST(decorationShadersResolveIncludesWatchEditsAndReplaceRuleBlocks) {
+  const TempConfigTree tree;
+  tree.write("config.toml", "[include]\nfiles = ['theme/ring.toml']\n");
+  tree.write("theme/ring.toml", R"(
+[appearance]
+shader_fps = 30
+[appearance.border_shader]
+shader = "ring.glsl"
+padding = 48
+speed = 2
+[appearance.border_shader.light]
+enabled = true
+spread = 90
+intensity = 1.4
+threshold = 0.6
+[[window_rule]]
+match.app_id = "terminal"
+[window_rule.border_shader]
+enabled = false
+)");
+  tree.write("theme/ring.glsl", "vec4 ring_color(vec2 p) { return vec4(1.0); }");
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto& settings = store.config().appearance.borderShader;
+  CHECK(settings.shader.has_value());
+  if (settings.shader)
+    CHECK(settings.shader->file == tree.path("theme/ring.glsl"));
+  CHECK_EQ(settings.padding, 48);
+  CHECK_EQ(settings.speed, 2.0);
+  CHECK(settings.light.enabled);
+  CHECK_EQ(settings.light.spread, 90.0);
+  CHECK_EQ(settings.light.intensity, 1.4);
+  CHECK_EQ(settings.light.threshold, 0.6);
+  CHECK_EQ(store.config().appearance.shaderFps, 30);
+  CHECK(store.config().windowRules[0].borderShader.has_value());
+  CHECK(!store.config().windowRules[0].borderShader->enabled);
+  CHECK(!store.config().windowRules[0].borderShader->shader.has_value());
+  CHECK_EQ(store.config().windowRules[0].borderShader->padding, 0);
+  CHECK(!store.config().windowRules[0].borderShader->light.enabled);
+  CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("theme/ring.glsl")), 1);
+  CHECK(!containsDiagnostic(store, "unknown key"));
+  tree.write("theme/ring.glsl", "vec4 ring_color(vec2 p) { return vec4(0.0); }");
+  const auto edited = store.reload();
+  CHECK(edited.success);
+  CHECK(edited.effects.viewChrome);
+  CHECK(!edited.effects.animation);
+}
+
 UMBRIEL_TEST(animationShadersResolveIncludedFilesAcrossAllEventsAndTrackContentChanges) {
   const TempConfigTree tree;
   const std::array sections{"windows_in", "windows_out", "windows_move",  "workspaces", "overview",
@@ -3098,6 +3149,103 @@ UMBRIEL_TEST(packagedAnimationDefaultsMatchCompiledDefaults) {
 
   CHECK(result.success);
   CHECK(store.config().animation == umbriel::Config{}.animation);
+}
+
+UMBRIEL_TEST(persistentShaderIncludesPreserveOrderPathsAndCapabilities) {
+  const TempConfigTree tree;
+  tree.write("main.toml", "[include]\nfiles=[\"effects/presets.toml\"]\n");
+  tree.write("effects/tint.glsl", "vec4 postprocess(vec3 p) { return tex2D_screen(p.xy); }");
+  tree.write("effects/presets.toml", R"(
+[shaders]
+window="ink"
+global="ink"
+in_capture=true
+reads_cursor=true
+redraw="on-damage"
+[shaders.preset.ink]
+scope="window"
+[[shaders.preset.ink.passes]]
+shader="tint.glsl"
+buffer=true
+[[shaders.preset.ink.passes]]
+preset="temperature"
+kelvin=6500
+[[shaders.region]]
+output="HEADLESS-1"
+preset="ink"
+x=-10
+y=20
+width=300
+height=200
+[animation.pair.ink.open]
+shader="tint.glsl"
+[animation.pair.ink.close]
+shader="tint.glsl"
+duration_ms=450
+)");
+  auto& store = umbriel::configStore();
+  CHECK(store.load(tree.path("main.toml").c_str()));
+  CHECK(store.diagnostics().empty());
+  const auto& settings = store.config().shaders;
+  CHECK(settings.inCapture && settings.readsCursor);
+  CHECK_EQ(settings.redraw, std::string("on-damage"));
+  CHECK_EQ(settings.presets.size(), size_t{1});
+  const auto& passes = settings.presets.front().passes;
+  CHECK_EQ(passes.size(), size_t{2});
+  CHECK(passes[0].buffer && passes[0].source.has_value());
+  CHECK_EQ(passes[0].source->file, tree.path("effects/tint.glsl"));
+  CHECK(passes[1].source->code.contains("vec3(1.000000,1.000000,1.000000)"));
+  CHECK_EQ(settings.regions.front().x, -10);
+  const auto& pair = store.config().animation.pairs.at("ink");
+  CHECK_EQ(pair.open.durationMs, 400);
+  CHECK_EQ(pair.close.durationMs, 450);
+  CHECK(pair.open.curve.easing == umbriel::Easing::Linear);
+  CHECK_EQ(pair.open.shader->file, tree.path("effects/tint.glsl"));
+}
+
+UMBRIEL_TEST(invalidPersistentShaderPassIsNotSilentlyRemovedFromChain) {
+  const TempConfig file;
+  file.write(R"(
+[shaders]
+redraw="typo"
+[shaders.preset.broken]
+scope="typo"
+[[shaders.preset.broken.passes]]
+preset="invert"
+[[shaders.preset.broken.passes]]
+preset="unknown"
+)");
+  auto& store = umbriel::configStore();
+  CHECK(store.load(file.path().c_str()));
+  CHECK_EQ(store.config().shaders.presets.front().passes.size(), size_t{2});
+  CHECK(!store.config().shaders.presets.front().passes[1].source);
+  CHECK(containsDiagnostic(store, "known builtin"));
+  CHECK(containsDiagnostic(store, "scope must"));
+  CHECK(containsDiagnostic(store, "shaders.redraw"));
+  CHECK(!umbriel::builtinShader("unknown"));
+}
+
+UMBRIEL_TEST(collectionRegistersEveryPresetAndRuntimeAnimationPairs) {
+  auto& store = umbriel::configStore();
+  const auto path = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/biri/collection.toml";
+  CHECK(store.load(path.c_str()));
+  CHECK(store.diagnostics().empty());
+  CHECK_EQ(store.config().shaders.presets.size(), size_t{24});
+  CHECK_EQ(store.config().animation.pairs.size(), size_t{4});
+  CHECK(store.config().shaders.global.empty());
+  CHECK(store.config().shaders.window.empty());
+  CHECK(umbriel::selectAnimationPair("default"));
+  CHECK(umbriel::selectAnimationPair("cycle"));
+  CHECK_EQ(umbriel::selectedWindowsIn().shader->file.filename(), std::filesystem::path("lightning-open.glsl"));
+  CHECK_EQ(umbriel::selectedWindowsOut().durationMs, 400);
+  CHECK(umbriel::selectAnimationPair("whirlpool"));
+  CHECK_EQ(umbriel::selectedWindowsOut().durationMs, 500);
+  CHECK_EQ(umbriel::selectedWindowsIn().shader->file.filename(), std::filesystem::path("whirlpool-open.glsl"));
+  CHECK(umbriel::selectAnimationPair("off"));
+  CHECK(!umbriel::selectedWindowsIn().shader);
+  CHECK(!umbriel::selectedWindowsOut().shader);
+  CHECK(!umbriel::selectAnimationPair("nonexistent"));
+  CHECK(umbriel::selectAnimationPair("default"));
 }
 
 int main() { return RUN_TESTS(); }

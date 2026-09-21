@@ -230,7 +230,17 @@ void fx_framebuffer_destroy(struct fx_framebuffer *fx_buffer) {
 		fx_buffer->blend_buffer = NULL;
 		wlr_buffer_drop(blend_buffer);
 	}
-	if (fx_buffer->blend_parent != NULL) {
+        if (fx_buffer->effect_capture_buffer != NULL) {
+          struct wlr_buffer* capture = fx_buffer->effect_capture_buffer->buffer;
+          fx_buffer->effect_capture_buffer->effect_capture_parent = NULL;
+          fx_buffer->effect_capture_buffer = NULL;
+          wlr_buffer_drop(capture);
+        }
+        if (fx_buffer->effect_capture_parent != NULL) {
+          fx_buffer->effect_capture_parent->effect_capture_buffer = NULL;
+          fx_buffer->effect_capture_parent->effect_capture_valid = false;
+        }
+        if (fx_buffer->blend_parent != NULL) {
 		fx_buffer->blend_parent->blend_buffer = NULL;
 		fx_buffer->blend_parent = NULL;
 	}

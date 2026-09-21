@@ -12,6 +12,8 @@
 #include "overview/overview.h"
 #include "scene/animation_shader.h"
 #include "server/server.h"
+
+#include <umbrielfx/render/postprocess.h>
 extern "C" {
 #include <umbrielfx/render/animation.h>
 }
@@ -662,6 +664,9 @@ namespace umbriel {
   void View::setFadeAlpha(float alpha) {
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
     m_fadeAlpha = std::clamp(alpha, 0.0F, 1.0F);
+    m_decoration.setLightSuppressed(m_fade.animating());
+    if (m_shaderRect != nullptr)
+      wlr_scene_node_set_enabled(&m_shaderRect->node, !m_fade.animating() && windowShader() != nullptr);
     float effective = effectiveOpacity();
     wlr_scene_node_for_each_buffer(&m_sceneTree->node, setCompositorOpacity, &effective);
     m_decoration.setBorderRawColor(m_borderColorAnim.current(), effective);
@@ -1218,7 +1223,7 @@ namespace umbriel {
       const float rawAlpha = std::clamp(static_cast<float>(m_fade.current()), 0.0F, 1.0F);
       const bool builtInSlide = !m_inScratchpad
           && !m_customFade
-          && config().animation.windowsIn.style == "slide"
+          && selectedWindowsIn().style == "slide"
           && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) == nullptr;
       // Keep the window visible through more of its travel so slide is clearly distinct from fade.
       setFadeAlpha(builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);
@@ -1824,6 +1829,7 @@ namespace umbriel {
   void View::setBorderFocused(bool focused) {
     const bool focusChanged = m_borderFocusedState != focused;
     m_borderFocusedState = focused;
+    m_decoration.setShaderFocused(focused && !m_urgent);
 
     const auto& animation = config().animation;
     const auto& dim = animation.dimUnfocused;
@@ -1862,6 +1868,7 @@ namespace umbriel {
       return;
     }
     m_urgent = urgent;
+    m_decoration.setShaderFocused(m_borderFocusedState && !urgent);
     if (m_workspace != nullptr) {
       m_workspace->updateUrgent();
     }
@@ -1978,6 +1985,44 @@ namespace umbriel {
 
   void View::updateBorderGeometry(int contentWidth, int contentHeight) {
     m_decoration.updateBorderGeometry(contentWidth, contentHeight);
+    refreshWindowShader();
+    if (m_shaderRect != nullptr)
+      wlr_scene_rect_set_size(m_shaderRect, contentWidth, contentHeight);
+  }
+
+  fx_postprocess_chain* View::windowShader() {
+    const auto& rule = resolvedRules();
+    return postprocessShader(selectedShader(m_shaderSelection, rule.shader ? *rule.shader : config().shaders.window));
+  }
+
+  void View::refreshWindowShader() {
+    if (m_sceneTree == nullptr)
+      return;
+    auto* chain = windowShader();
+    if (m_shaderRect == nullptr && chain != nullptr)
+      m_shaderRect = wlr_scene_rect_create(m_sceneTree, 0, 0, std::array<float, 4>{0, 0, 0, 0}.data());
+    // Isolated captures only contain this client's surfaces. Apply the same
+    // window preset over that scene when inclusion is explicitly enabled.
+    if (m_captureScene != nullptr && m_captureShaderRect == nullptr && chain != nullptr)
+      m_captureShaderRect = wlr_scene_rect_create(&m_captureScene->tree, 0, 0, std::array<float, 4>{0, 0, 0, 0}.data());
+    if (m_captureShaderRect != nullptr) {
+      const auto captureGeometry = committedContentBox();
+      wlr_scene_rect_set_postprocess(m_captureShaderRect, config().shaders.inCapture ? chain : nullptr);
+      wlr_scene_node_set_enabled(&m_captureShaderRect->node, config().shaders.inCapture && chain != nullptr);
+      wlr_scene_rect_set_size(m_captureShaderRect, captureGeometry.width, captureGeometry.height);
+      wlr_scene_node_raise_to_top(&m_captureShaderRect->node);
+    }
+    if (m_shaderRect == nullptr)
+      return;
+    wlr_scene_rect_set_postprocess(m_shaderRect, chain);
+    wlr_scene_node_set_enabled(&m_shaderRect->node, chain != nullptr && !m_fade.animating());
+    const auto geometry = committedContentBox();
+    wlr_scene_rect_set_size(m_shaderRect, geometry.width, geometry.height);
+    wlr_scene_rect_set_corner_radius(
+        m_shaderRect, decorated() ? nestedRadius(config().appearance.cornerRadius, borderInset()) : 0
+    );
+    if (m_decoration.borderTree() != nullptr)
+      wlr_scene_node_place_below(&m_shaderRect->node, &m_decoration.borderTree()->node);
   }
 
   void View::refreshConfigChrome() {
@@ -1998,7 +2043,7 @@ namespace umbriel {
     if (!m_mapped
         || !m_onActiveWorkspace
         || !animation.enabled
-        || !animation.windowsOut.enabled
+        || !selectedWindowsOut().enabled
         || m_server->sessionLocked()
         || (m_server->overview() != nullptr && m_server->overview()->active())) {
       return kInvalidCloseSnapshot;
@@ -2672,7 +2717,7 @@ namespace umbriel {
 
     if (m_onActiveWorkspace) {
       const auto& animation = config().animation;
-      const auto& open = animation.windowsIn;
+      const auto open = selectedWindowsIn();
       m_customFade = animation.enabled
           && open.enabled
           && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) != nullptr;
@@ -4270,6 +4315,7 @@ namespace umbriel {
     const ResolvedWindowRule& rule = resolved != nullptr ? *resolved : resolvedRules();
     m_appliedRuleState = ruleState();
     m_decoration.applyRule(rule);
+    refreshWindowShader();
     const float newOpacity = rule.opacity ? static_cast<float>(*rule.opacity) : 1.0F;
     if (newOpacity != m_ruleOpacity) {
       m_ruleOpacity = newOpacity;

@@ -13,7 +13,9 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
+#include "scene/decoration_shader.h"
 #include "scene/hint_rect.h"
+#include "scene/postprocess.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
 #include "server/ipc.h"
@@ -498,6 +500,12 @@ namespace umbriel {
     if (effects.animation) {
       prepareAnimationShaders(m_renderer);
     }
+    if (effects.viewChrome) {
+      prepareDecorationShaders(m_renderer);
+      preparePostprocessShaders(m_renderer);
+      for (auto& output : m_outputs)
+        output->applyPostprocessConfig();
+    }
 
     if (effects.sceneBlur) {
       const Config::Appearance::Blur& blur = config().appearance.blur;
@@ -596,6 +604,9 @@ namespace umbriel {
       }
       // The view refresh cleared every focus ring; put the active one back.
       refocus();
+      if (m_overview != nullptr && m_overview->active()) {
+        m_overview->onFocusChanged();
+      }
       markDirty(Dirty::Backdrop);
       if (m_sessionLocked) {
         updateLockBlank();
@@ -730,6 +741,18 @@ namespace umbriel {
     m_renderer = newRenderer;
     m_allocator = newAllocator;
     prepareAnimationShaders(m_renderer);
+    prepareDecorationShaders(m_renderer);
+    preparePostprocessShaders(m_renderer);
+    for (auto& output : m_outputs)
+      output->applyPostprocessConfig();
+    for (const auto& view : m_registry.all()) {
+      if (view->mapped()) {
+        view->applyDynamicRules();
+      }
+    }
+    if (m_overview != nullptr && m_overview->active()) {
+      m_overview->onFocusChanged();
+    }
 
     // Point the compositor at the new renderer so clients' shm/dma-buf textures get
     // re-imported on next attach.

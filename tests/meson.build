@@ -311,7 +311,19 @@ output_management_client = executable(
   dependencies: [wayland_client_dep],
 )
 
+capture_protocols = []
+foreach protocol : ['ext-foreign-toplevel-list', 'ext-image-capture-source', 'ext-image-copy-capture']
+  xml = wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'staging' / protocol / (protocol + '-v1.xml')
+  capture_protocols += custom_target(protocol + '-v1-client-protocol.h', input: xml,
+    output: protocol + '-v1-client-protocol.h', command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'])
+  capture_protocols += custom_target(protocol + '-v1-client-protocol.c', input: xml,
+    output: protocol + '-v1-client-protocol.c', command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'])
+endforeach
+toplevel_capture_client = executable('toplevel-capture-client',
+  ['harness/clients/toplevel_capture_client.cpp', capture_protocols], dependencies: [wayland_client_dep])
+
 harness_client_targets = [
+  toplevel_capture_client,
   pointer_client,
   keyboard_keymap_client,
   input_method_client,

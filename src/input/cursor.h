@@ -121,6 +121,7 @@ namespace umbriel {
     Cursor& operator=(const Cursor&) = delete;
 
     [[nodiscard]] wlr_cursor* wlr() const { return m_cursor; }
+    [[nodiscard]] bool hidden() const { return m_cursorHidden; }
     [[nodiscard]] wlr_xcursor_manager* xcursorManager() const { return m_xcursorManager; }
     [[nodiscard]] bool isPassthrough() const;
     [[nodiscard]] View* grabbedView() const;

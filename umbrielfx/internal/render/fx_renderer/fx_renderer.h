@@ -61,8 +61,12 @@ struct fx_framebuffer {
 	struct fx_framebuffer *sdr_capture_parent;
 	bool capture_sdr;
 	bool sdr_capture_valid;
+        struct fx_framebuffer* effect_capture_buffer;
+        struct fx_framebuffer* effect_capture_parent;
+        bool effect_capture_valid;
+        const void* effect_capture_owner;
 
-	EGLImageKHR image;
+        EGLImageKHR image;
 	GLuint rbo;
 	GLuint fbo;
 	GLuint tex;

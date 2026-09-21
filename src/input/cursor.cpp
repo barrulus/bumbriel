@@ -17,6 +17,8 @@
 #include "server/server.h"
 #include "view/view.h"
 #include "view/xdg_size.h"
+
+#include <umbrielfx/render/postprocess.h>
 // clang-format off
 #include <algorithm>
 #include <chrono>
@@ -214,6 +216,7 @@ namespace umbriel {
   void Cursor::noteActivity() {
     if (m_cursorHidden) {
       m_cursorHidden = false;
+      wlr_scene_postprocess_pointer(m_server->scene(), m_cursor->x, m_cursor->y, true);
       if (m_compositorOwnsCursor) {
         setXcursor(m_compositorCursorName.c_str());
       } else {
@@ -237,6 +240,7 @@ namespace umbriel {
       }
       if (m_cursorHidden) {
         m_cursorHidden = false;
+        wlr_scene_postprocess_pointer(m_server->scene(), m_cursor->x, m_cursor->y, true);
         if (m_compositorOwnsCursor) {
           setXcursor(m_compositorCursorName.c_str());
         } else {
@@ -265,6 +269,7 @@ namespace umbriel {
       return;
     }
     m_cursorHidden = true;
+    wlr_scene_postprocess_pointer(m_server->scene(), m_cursor->x, m_cursor->y, false);
     wlr_cursor_set_surface(m_cursor, nullptr, 0, 0);
   }
 
@@ -1377,6 +1382,7 @@ namespace umbriel {
   void Cursor::handleTouchFrame() { wlr_seat_touch_notify_frame(m_server->seat()->wlr()); }
 
   void Cursor::processMotion(uint32_t timeMsec, double oldX, double oldY, bool allowFocusChange) {
+    wlr_scene_postprocess_pointer(m_server->scene(), m_cursor->x, m_cursor->y, !m_cursorHidden);
     updateHotCorner();
     if (auto* grab = std::get_if<ScrollDragGrab>(&m_grab)) {
       if (m_server->sessionLocked()) {

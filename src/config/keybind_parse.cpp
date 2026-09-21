@@ -226,6 +226,8 @@ namespace umbriel {
          KeybindAction::ScratchpadToggle, ActionArgKind::OptionalScratchpad},
         {"session-quit", "[skip-confirmation]", "Quit the session, confirming first unless told to skip",
          KeybindAction::SessionQuit, ActionArgKind::SkipConfirmation},
+        {"shader", "<scope> <preset-or-operation> [<target>]", "Select, toggle or cycle a persistent shader",
+         KeybindAction::Shader, ActionArgKind::Shader},
         {"shortcuts-inhibit-toggle", "", "Toggle shortcuts inhibition for the focused surface",
          KeybindAction::ShortcutsInhibitToggle},
         {"spawn", "<cmd>", "Run a command with a launch activation token", KeybindAction::Spawn,
@@ -484,6 +486,39 @@ namespace umbriel {
           } else {
             output.payload = SpawnArg{.command = std::string(arg)};
           }
+          return true;
+        }
+        break;
+      case ActionArgKind::Shader:
+        if (takeActionArg(value, spec, arg)) {
+          const size_t separator = arg.find(' ');
+          if (separator == std::string_view::npos)
+            return false;
+          ShaderArg shader;
+          shader.scope = arg.substr(0, separator);
+          arg.remove_prefix(separator + 1);
+          while (arg.starts_with(' '))
+            arg.remove_prefix(1);
+          const size_t target = arg.find(' ');
+          shader.operation = arg.substr(0, target);
+          if (shader.operation.empty()
+              || (shader.scope != "window"
+                  && shader.scope != "output"
+                  && shader.scope != "global"
+                  && shader.scope != "animation"
+                  && shader.scope != "cursor"
+                  && shader.scope != "screen"))
+            return false;
+          if (target != std::string_view::npos) {
+            arg.remove_prefix(target + 1);
+            while (arg.starts_with(' '))
+              arg.remove_prefix(1);
+            shader.target = arg;
+          }
+          if (shader.scope != "window" && shader.scope != "output" && !shader.target.empty())
+            return false;
+          output.action = spec.action;
+          output.payload = std::move(shader);
           return true;
         }
         break;

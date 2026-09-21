@@ -544,9 +544,12 @@ umbriel_pure_dep = declare_dependency(
 core_sources = files(
   'src/core/animation.cpp',
   'src/scene/animation_shader.cpp',
+  'src/scene/decoration_shader.cpp',
+  'src/scene/postprocess.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',
+  'src/config/shaders.cpp',
   'src/config/store.cpp',
   'src/config/config_merge.cpp',
   'src/config/config_watcher.cpp',
@@ -703,5 +706,9 @@ install_data(
 install_data(
   'examples/shaders/reveal.glsl',
   'examples/shaders/squash.glsl',
+  install_dir: get_option('datadir') / 'umbriel' / 'shaders',
+)
+install_subdir(
+  'examples/shaders/biri',
   install_dir: get_option('datadir') / 'umbriel' / 'shaders',
 )

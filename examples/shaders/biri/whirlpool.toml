@@ -1,0 +1,23 @@
+# Include this file from your config; paths resolve beside this file.
+[animation.windows_in]
+enabled = true
+duration_ms = 400
+curve = "linear"
+shader = "whirlpool-open.glsl"
+
+[animation.windows_out]
+enabled = true
+duration_ms = 500
+curve = "linear"
+shader = "whirlpool-close.glsl"
+
+# Named pair for shader:animation selection and cycling.
+[animation.pair.whirlpool.open]
+shader = "whirlpool-open.glsl"
+duration_ms = 400
+curve = "linear"
+
+[animation.pair.whirlpool.close]
+shader = "whirlpool-close.glsl"
+duration_ms = 500
+curve = "linear"

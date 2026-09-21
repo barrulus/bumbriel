@@ -3,9 +3,11 @@
 #include "config/config.h"
 #include "scene/border_rect.h"
 #include "scene/color.h"
+#include "scene/decoration_shader.h"
 
 extern "C" {
 #include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/decoration.h>
 }
 
 // clang-format off
@@ -28,6 +30,43 @@ namespace umbriel {
     // The punched hole protects client content, so keep the border above the
     // toplevel surface that would otherwise cover its outermost pixels.
     wlr_scene_node_raise_to_top(&m_borderTree->node);
+    updateShader();
+  }
+
+  void ViewDecoration::setShaderFocused(bool focused) {
+    m_shaderFocused = focused;
+    updateShader();
+  }
+
+  void ViewDecoration::updateShader() {
+    if (m_border == nullptr)
+      return;
+    auto* shader = m_shaderFocused ? decorationShader(m_shaderConfig) : nullptr;
+    const fx_decoration_parameters parameters{
+        .speed = static_cast<float>(m_shaderConfig.speed),
+        .padding = static_cast<float>(m_shaderConfig.padding),
+        .coordinate_scale = 1.0F,
+        .animated = m_shaderConfig.animated,
+        .light = {
+            .enabled = m_shaderConfig.light.enabled && !m_lightSuppressed,
+            .spread = static_cast<float>(m_shaderConfig.light.spread),
+            .intensity = static_cast<float>(m_shaderConfig.light.intensity),
+            .threshold = static_cast<float>(m_shaderConfig.light.threshold)
+        },
+    };
+    wlr_scene_border_set_shader(m_border, shader, &parameters);
+    const int padding = shader != nullptr ? m_shaderConfig.padding : 0;
+    if (padding != m_shaderPadding) {
+      m_shaderPadding = padding;
+      updateBorderGeometry(m_border->clipped_region.area.width, m_border->clipped_region.area.height);
+    }
+  }
+
+  void ViewDecoration::setLightSuppressed(bool suppressed) {
+    if (m_lightSuppressed == suppressed)
+      return;
+    m_lightSuppressed = suppressed;
+    updateShader();
   }
 
   bool ViewDecoration::bordersVisible() const { return m_borderTree != nullptr && m_borderTree->node.enabled; }
@@ -44,13 +83,16 @@ namespace umbriel {
     }
 
     const auto& appearance = config().appearance;
-    applyBorderGeometry(
-        m_border,
-        makeBorderRing(
-            contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
-        ),
-        appearance.borderWidth, appearance.outerBorderWidth
+    auto ring = makeBorderRing(
+        contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
     );
+    ring.box.x -= m_shaderPadding;
+    ring.box.y -= m_shaderPadding;
+    ring.box.width += 2 * m_shaderPadding;
+    ring.box.height += 2 * m_shaderPadding;
+    ring.hole.x += m_shaderPadding;
+    ring.hole.y += m_shaderPadding;
+    applyBorderGeometry(m_border, ring, appearance.borderWidth, appearance.outerBorderWidth);
   }
 
   void ViewDecoration::setBorderColor(bool focused, bool scratchpad, float alpha) {
@@ -82,7 +124,8 @@ namespace umbriel {
     const BorderRing ring = makeBorderRing(
         contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
     );
-    return m_border->width != ring.box.width || m_border->height != ring.box.height;
+    return m_border->width != ring.box.width + 2 * m_shaderPadding
+        || m_border->height != ring.box.height + 2 * m_shaderPadding;
   }
 
   void ViewDecoration::snapshotBorders(
@@ -104,6 +147,7 @@ namespace umbriel {
         &copy->node, m_borderTree->node.x + m_border->node.x, m_borderTree->node.y + m_border->node.y
     );
     wlr_scene_node_copy_animations_for_snapshot(&copy->node, &m_borderTree->node);
+    wlr_scene_border_copy_shader(copy, m_border);
     // Straight colours at the opacity the ring is drawn with right now, so the fade starts from what is on screen
     // and stays in step with the content buffers, which keep their current opacity as their base.
     BorderSnapshot captured{.node = copy, .innerColor = innerColor, .outerColor = config().colors.border.outer};
@@ -114,6 +158,8 @@ namespace umbriel {
 
   // Blur
   void ViewDecoration::applyRule(const ResolvedWindowRule& rule) {
+    m_shaderConfig = rule.borderShader.value_or(config().appearance.borderShader);
+    updateShader();
     m_blurOptions = SurfaceBlurOptions{
         .ignoreAlpha = static_cast<float>(rule.blurIgnoreAlpha.value_or(0.0)),
         .enabled = rule.blur.value_or(false),

@@ -73,6 +73,7 @@ namespace umbriel {
     WindowMoveToWorkspaceNext,
     WindowMoveToWorkspacePrevious,
     ConfigReload,
+    Shader,
     KeyboardLayoutNext,
     ShortcutsInhibitToggle,
     LayoutScrollDrag,
@@ -163,6 +164,10 @@ namespace umbriel {
     std::string name;
     bool operator==(const SubmapArg&) const = default;
   };
+  struct ShaderArg {
+    std::string scope, operation, target;
+    bool operator==(const ShaderArg&) const = default;
+  };
 
   [[nodiscard]] inline bool validSubmapName(std::string_view name) {
     return !name.empty() && name != "disable" && !name.contains(']');
@@ -209,7 +214,7 @@ namespace umbriel {
 
   using KeybindPayload = std::variant<
       std::monostate, SpawnArg, SubmapArg, FractionArg, WorkspaceArg, OutputArg, ScratchpadArg, WindowIdArg,
-      LayoutModeArg, QuitArg>;
+      LayoutModeArg, QuitArg, ShaderArg>;
 
   struct Keybind {
     // What triggers the bind.
@@ -259,6 +264,7 @@ namespace umbriel {
   enum class ActionArgKind : uint8_t {
     None,
     Command,
+    Shader,
     Fraction,
     Workspace,
     OptionalOutput,

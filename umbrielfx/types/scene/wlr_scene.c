@@ -2,7 +2,9 @@
 
 #include "render/color.h"
 #include "render/fx_renderer/animation_history.h"
+#include "render/fx_renderer/decoration.h"
 #include "render/fx_renderer/fx_renderer.h"
+#include "render/fx_renderer/postprocess.h"
 #include "render/tracy.h"
 #include "types/fx/clipped_region.h"
 #include "types/wlr_output.h"
@@ -651,6 +653,8 @@ struct render_data {
   struct render_list_entry* entries;
   int entry_count;
   bool shadow_capture;
+  bool postprocess_capture;
+  bool postprocess_active;
 };
 
 static void logical_to_buffer_coords(pixman_region32_t* region, const struct render_data* data, bool round_up) {
@@ -1283,6 +1287,604 @@ void wlr_scene_rect_set_color(struct wlr_scene_rect* rect, const float color[sta
 
   memcpy(rect->color, color, sizeof(rect->color));
   scene_node_update(&rect->node, NULL);
+}
+
+struct scene_postprocess_history {
+  struct wl_list link;
+  struct wlr_scene_output* output;
+  struct wl_listener destroy;
+  struct fx_postprocess_state* state;
+};
+struct scene_postprocess {
+  struct wlr_addon addon;
+  struct wl_list link, histories;
+  struct wlr_scene_rect* rect;
+  struct fx_postprocess_chain* chain;
+};
+struct scene_output_postprocess {
+  struct wlr_addon addon;
+  struct wl_listener destroy;
+  struct wlr_scene_output* output;
+  struct fx_scene_postprocess* effects;
+  struct fx_postprocess_state** states;
+  size_t count;
+  struct fx_scene_postprocess global;
+  struct fx_postprocess_state* global_state;
+  bool in_capture, reads_cursor, suspended, software_cursor, pointer_visible, isolated_capture;
+  enum fx_postprocess_redraw redraw;
+  double origin, time, pointer_x, pointer_y;
+};
+static struct wl_list scene_postprocesses = {&scene_postprocesses, &scene_postprocesses};
+static double postprocess_clock_origin = -1;
+
+static void postprocess_history_destroy(struct wl_listener* listener, void* data) {
+  struct scene_postprocess_history* history = wl_container_of(listener, history, destroy);
+  fx_postprocess_state_destroy(history->state);
+  wl_list_remove(&history->destroy.link);
+  wl_list_remove(&history->link);
+  free(history);
+}
+static void scene_postprocess_destroy(struct wlr_addon* addon) {
+  struct scene_postprocess* effect = wl_container_of(addon, effect, addon);
+  struct scene_postprocess_history *history, *tmp;
+  wl_list_for_each_safe(history, tmp, &effect->histories, link) postprocess_history_destroy(&history->destroy, NULL);
+  fx_postprocess_chain_unref(effect->chain);
+  wl_list_remove(&effect->link);
+  wlr_addon_finish(addon);
+  free(effect);
+}
+static const struct wlr_addon_interface scene_postprocess_impl = {
+    .name = "persistent_window_postprocess",
+    .destroy = scene_postprocess_destroy,
+};
+static struct scene_postprocess* scene_postprocess_get(struct wlr_scene_node* node) {
+  struct wlr_addon* addon = wlr_addon_find(&node->addons, &scene_postprocess_impl, &scene_postprocess_impl);
+  if (addon == NULL)
+    return NULL;
+  struct scene_postprocess* effect = wl_container_of(addon, effect, addon);
+  return effect;
+}
+void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postprocess_chain* chain) {
+  struct scene_postprocess* effect = scene_postprocess_get(&rect->node);
+  if (effect != NULL && effect->chain == chain)
+    return;
+  if (effect != NULL)
+    scene_postprocess_destroy(&effect->addon);
+  rect->accepts_input = false;
+  if (chain == NULL) {
+    wlr_scene_rect_set_color(rect, (float[4]){0, 0, 0, 0});
+    return;
+  }
+  effect = calloc(1, sizeof(*effect));
+  if (effect == NULL)
+    return;
+  effect->rect = rect;
+  effect->chain = fx_postprocess_chain_ref(chain);
+  wl_list_init(&effect->histories);
+  wl_list_insert(&scene_postprocesses, &effect->link);
+  wlr_addon_init(&effect->addon, &rect->node.addons, &scene_postprocess_impl, &scene_postprocess_impl);
+  wlr_scene_rect_set_color(rect, (float[4]){0, 0, 0, 0.5});
+  scene_node_update(&rect->node, NULL);
+}
+static void output_postprocess_clear(struct scene_output_postprocess* effect) {
+  for (size_t i = 0; i < effect->count; ++i) {
+    fx_postprocess_state_destroy(effect->states[i]);
+    fx_postprocess_chain_unref(effect->effects[i].chain);
+  }
+  free(effect->effects);
+  free(effect->states);
+  effect->count = 0;
+  effect->effects = NULL;
+  effect->states = NULL;
+  fx_postprocess_chain_unref(effect->global.chain);
+  effect->global.chain = NULL;
+  fx_postprocess_state_destroy(effect->global_state);
+  effect->global_state = NULL;
+}
+static void output_postprocess_release_captures(struct wlr_scene_output* output) {
+  if (output->output->renderer == NULL || !wlr_renderer_is_fx(output->output->renderer))
+    return;
+  struct fx_renderer* renderer = fx_get_renderer(output->output->renderer);
+  // Dropping a child can also remove the next renderer-list entry. Restart
+  // after each drop; retained capture textures keep their own buffer locks.
+  bool found;
+  do {
+    found = false;
+    struct fx_framebuffer* buffer;
+    wl_list_for_each(buffer, &renderer->buffers, link) if (buffer->effect_capture_owner == output) {
+      buffer->effect_capture_owner = NULL;
+      buffer->effect_capture_valid = false;
+      struct fx_framebuffer* capture = buffer->effect_capture_buffer;
+      buffer->effect_capture_buffer = NULL;
+      if (capture != NULL) {
+        capture->effect_capture_parent = NULL;
+        wlr_buffer_drop(capture->buffer);
+      }
+      found = true;
+      break;
+    }
+  } while (found);
+}
+static void output_postprocess_destroy(struct wlr_addon* addon) {
+  struct scene_output_postprocess* effect = wl_container_of(addon, effect, addon);
+  if (effect->software_cursor)
+    wlr_output_lock_software_cursors(effect->output->output, false);
+  output_postprocess_clear(effect);
+  output_postprocess_release_captures(effect->output);
+  wl_list_remove(&effect->destroy.link);
+  wlr_addon_finish(addon);
+  free(effect);
+}
+static const struct wlr_addon_interface output_postprocess_impl = {
+    .name = "output_postprocess",
+    .destroy = output_postprocess_destroy,
+};
+static void output_postprocess_output_destroy(struct wl_listener* listener, void* data) {
+  struct scene_output_postprocess* effect = wl_container_of(listener, effect, destroy);
+  output_postprocess_destroy(&effect->addon);
+}
+static struct scene_output_postprocess* output_postprocess_get(struct wlr_scene_output* output, bool create) {
+  struct wlr_addon* addon = wlr_addon_find(&output->output->addons, output, &output_postprocess_impl);
+  if (addon != NULL) {
+    struct scene_output_postprocess* effect = wl_container_of(addon, effect, addon);
+    return effect;
+  }
+  if (!create)
+    return NULL;
+  struct scene_output_postprocess* effect = calloc(1, sizeof(*effect));
+  if (effect == NULL)
+    return NULL;
+  effect->output = output;
+  effect->origin = -1;
+  effect->pointer_visible = true;
+  effect->destroy.notify = output_postprocess_output_destroy;
+  wl_signal_add(&output->events.destroy, &effect->destroy);
+  wlr_addon_init(&effect->addon, &output->output->addons, output, &output_postprocess_impl);
+  return effect;
+}
+void wlr_scene_output_set_postprocess(
+    struct wlr_scene_output* output, const struct fx_scene_postprocess* effects, size_t count,
+    struct fx_scene_postprocess global, bool in_capture, bool reads_cursor, enum fx_postprocess_redraw redraw
+) {
+  struct scene_output_postprocess* effect = output_postprocess_get(output, true);
+  if (effect == NULL)
+    return;
+  bool same = count == effect->count
+      && global.chain == effect->global.chain
+      && global.cursor_radius == effect->global.cursor_radius
+      && wlr_box_equal(&global.region, &effect->global.region)
+      && in_capture == effect->in_capture
+      && reads_cursor == effect->reads_cursor
+      && redraw == effect->redraw;
+  for (size_t i = 0; same && i < count; ++i)
+    same = effects[i].chain == effect->effects[i].chain
+        && effects[i].cursor_radius == effect->effects[i].cursor_radius
+        && wlr_box_equal(&effects[i].region, &effect->effects[i].region);
+  if (same)
+    return;
+  output_postprocess_clear(effect);
+  effect->effects = calloc(count, sizeof(*effect->effects));
+  effect->states = calloc(count, sizeof(*effect->states));
+  if (count > 0 && (effect->effects == NULL || effect->states == NULL)) {
+    output_postprocess_clear(effect);
+    return;
+  }
+  effect->count = count;
+  for (size_t i = 0; i < count; ++i) {
+    effect->effects[i] = effects[i];
+    fx_postprocess_chain_ref(effects[i].chain);
+  }
+  effect->global = global;
+  fx_postprocess_chain_ref(global.chain);
+  effect->in_capture = in_capture;
+  effect->reads_cursor = reads_cursor;
+  effect->redraw = redraw;
+  effect->origin = -1;
+  bool software = reads_cursor && global.chain != NULL && !effect->suspended;
+  if (software != effect->software_cursor)
+    wlr_output_lock_software_cursors(output->output, software);
+  effect->software_cursor = software;
+  scene_output_damage_whole(output);
+}
+static bool postprocess_window_visible(struct scene_postprocess* effect, struct wlr_scene_output* output) {
+  struct wlr_scene_node* node = &effect->rect->node;
+  int x, y;
+  if (scene_node_get_root(node) != output->scene || !wlr_scene_node_coords(node, &x, &y))
+    return false;
+  int width, height;
+  wlr_output_effective_resolution(output->output, &width, &height);
+  return pixman_region32_contains_rectangle(
+             &node->visible, &(pixman_box32_t){output->x, output->y, output->x + width, output->y + height}
+         )
+      != PIXMAN_REGION_OUT;
+}
+static bool
+output_postprocess_chain_visible(struct scene_output_postprocess* output, const struct fx_scene_postprocess* effect) {
+  if (effect->chain == NULL || output->suspended)
+    return false;
+  if (fx_postprocess_chain_reads_pointer(effect->chain)) {
+    int width, height;
+    wlr_output_effective_resolution(output->output->output, &width, &height);
+    if (!output->pointer_visible
+        || output->pointer_x < output->output->x
+        || output->pointer_y < output->output->y
+        || output->pointer_x >= output->output->x + width
+        || output->pointer_y >= output->output->y + height)
+      return false;
+  }
+  return true;
+}
+static bool scene_output_has_postprocess(struct wlr_scene_output* output) {
+  struct scene_output_postprocess* settings = output_postprocess_get(output, false);
+  if (settings != NULL) {
+    if (settings->suspended)
+      return false;
+    if (output_postprocess_chain_visible(settings, &settings->global))
+      return true;
+    for (size_t i = 0; i < settings->count; ++i)
+      if (output_postprocess_chain_visible(settings, &settings->effects[i]))
+        return true;
+  }
+  struct scene_postprocess* effect;
+  wl_list_for_each(effect, &scene_postprocesses, link) if (postprocess_window_visible(effect, output)) return true;
+  return false;
+}
+static void postprocess_damage_current_frame(struct wlr_scene_output* output) {
+  wlr_damage_ring_add_whole(&output->damage_ring);
+  pixman_region32_union_rect(
+      &output->pending_commit_damage, &output->pending_commit_damage, 0, 0, output->output->width,
+      output->output->height
+  );
+}
+bool wlr_scene_output_tick_postprocess(struct wlr_scene_output* output, double seconds, bool suspended) {
+  struct scene_output_postprocess* settings = output_postprocess_get(output, true);
+  if (settings == NULL)
+    return false;
+  if (postprocess_clock_origin < 0)
+    postprocess_clock_origin = seconds;
+  if (settings->suspended != suspended) {
+    settings->suspended = suspended;
+    settings->origin = -1;
+    for (size_t i = 0; i < settings->count; ++i) {
+      fx_postprocess_state_destroy(settings->states[i]);
+      settings->states[i] = NULL;
+    }
+    fx_postprocess_state_destroy(settings->global_state);
+    settings->global_state = NULL;
+    struct scene_postprocess* effect;
+    wl_list_for_each(effect, &scene_postprocesses, link) {
+      struct scene_postprocess_history* history;
+      wl_list_for_each(history, &effect->histories, link) if (history->output == output) {
+        fx_postprocess_state_destroy(history->state);
+        history->state = NULL;
+      }
+    }
+    bool software = !suspended && settings->reads_cursor && settings->global.chain != NULL;
+    if (software != settings->software_cursor)
+      wlr_output_lock_software_cursors(output->output, software);
+    settings->software_cursor = software;
+    postprocess_damage_current_frame(output);
+  }
+  if (suspended)
+    return false;
+  if (settings->origin < 0)
+    settings->origin = seconds;
+  settings->time = seconds - settings->origin;
+  bool animated = false;
+  struct scene_postprocess* effect;
+  wl_list_for_each(effect, &scene_postprocesses, link) animated |=
+      fx_postprocess_chain_animated(effect->chain) && postprocess_window_visible(effect, output);
+  if (settings->redraw != FX_POSTPROCESS_ON_DAMAGE) {
+    if (output_postprocess_chain_visible(settings, &settings->global))
+      animated |=
+          settings->redraw == FX_POSTPROCESS_CONTINUOUS || fx_postprocess_chain_animated(settings->global.chain);
+    for (size_t i = 0; i < settings->count; ++i)
+      if (output_postprocess_chain_visible(settings, &settings->effects[i]))
+        animated |= fx_postprocess_chain_animated(settings->effects[i].chain);
+  }
+  if (animated)
+    postprocess_damage_current_frame(output);
+  return animated;
+}
+void wlr_scene_postprocess_pointer(struct wlr_scene* scene, double x, double y, bool visible) {
+  struct wlr_scene_output* output;
+  wl_list_for_each(output, &scene->outputs, link) {
+    struct scene_output_postprocess* settings = output_postprocess_get(output, false);
+    if (settings == NULL
+        || (settings->pointer_x == x && settings->pointer_y == y && settings->pointer_visible == visible))
+      continue;
+    bool reads = fx_postprocess_chain_reads_pointer(settings->global.chain);
+    for (size_t i = 0; i < settings->count; ++i)
+      reads |= fx_postprocess_chain_reads_pointer(settings->effects[i].chain);
+    settings->pointer_x = x;
+    settings->pointer_y = y;
+    settings->pointer_visible = visible;
+    if (!output_postprocess_chain_visible(settings, &settings->global)) {
+      fx_postprocess_state_destroy(settings->global_state);
+      settings->global_state = NULL;
+    }
+    for (size_t i = 0; i < settings->count; ++i)
+      if (!output_postprocess_chain_visible(settings, &settings->effects[i])) {
+        fx_postprocess_state_destroy(settings->states[i]);
+        settings->states[i] = NULL;
+      }
+    // Both old and new footprints are covered, including cross-output motion.
+    // Full composition is retained until a region-damage optimization is proven.
+    if (reads && !settings->suspended)
+      scene_output_damage_whole(output);
+  }
+}
+
+struct scene_decoration {
+  struct wlr_addon addon;
+  struct wl_list link;
+  struct wlr_scene_border* border;
+  struct fx_decoration_shader* shader;
+  struct fx_decoration_parameters parameters;
+  float time;
+  bool frozen;
+  struct wlr_scene_rect* light_node;
+  struct wlr_addon light_addon;
+  struct fx_decoration_light* light_cache;
+  float light_inputs[20];
+};
+static struct wl_list scene_decorations = {&scene_decorations, &scene_decorations};
+static double decoration_clock_origin = -1;
+
+struct scene_decoration_layer {
+  struct wlr_addon addon;
+  struct wlr_scene_tree* tree;
+  struct wl_listener destroy;
+};
+static void decoration_layer_destroy(struct wlr_addon* addon) {
+  struct scene_decoration_layer* layer = wl_container_of(addon, layer, addon);
+  if (layer->tree != NULL)
+    wl_list_remove(&layer->destroy.link);
+  wlr_addon_finish(addon);
+  free(layer);
+}
+static const struct wlr_addon_interface decoration_layer_impl = {
+    .name = "decoration_light_layer",
+    .destroy = decoration_layer_destroy,
+};
+static void decoration_layer_tree_destroy(struct wl_listener* listener, void* data) {
+  struct scene_decoration_layer* layer = wl_container_of(listener, layer, destroy);
+  wl_list_remove(&layer->destroy.link);
+  layer->tree = NULL;
+}
+void wlr_scene_set_decoration_light_layer(struct wlr_scene* scene, struct wlr_scene_tree* tree) {
+  struct wlr_addon* addon = wlr_addon_find(&scene->tree.node.addons, &decoration_layer_impl, &decoration_layer_impl);
+  if (addon != NULL)
+    decoration_layer_destroy(addon);
+  if (tree == NULL)
+    return;
+  assert(scene_node_get_root(&tree->node) == scene);
+  struct scene_decoration_layer* layer = calloc(1, sizeof(*layer));
+  if (layer == NULL)
+    return;
+  layer->tree = tree;
+  layer->destroy.notify = decoration_layer_tree_destroy;
+  wl_signal_add(&tree->node.events.destroy, &layer->destroy);
+  wlr_addon_init(&layer->addon, &scene->tree.node.addons, &decoration_layer_impl, &decoration_layer_impl);
+}
+
+static void decoration_light_node_destroy(struct wlr_addon* addon) {
+  struct scene_decoration* effect = wl_container_of(addon, effect, light_addon);
+  effect->light_node = NULL;
+  fx_decoration_light_destroy(effect->light_cache);
+  effect->light_cache = NULL;
+  wlr_addon_finish(addon);
+}
+static const struct wlr_addon_interface decoration_light_node_impl = {
+    .name = "decoration_light",
+    .destroy = decoration_light_node_destroy,
+};
+static struct scene_decoration* decoration_from_light_node(struct wlr_scene_node* node) {
+  struct wlr_addon* addon = wlr_addon_find(&node->addons, &decoration_light_node_impl, &decoration_light_node_impl);
+  if (addon == NULL)
+    return NULL;
+  struct scene_decoration* effect = wl_container_of(addon, effect, light_addon);
+  return effect;
+}
+
+static void decoration_sync_light(struct scene_decoration* effect) {
+  struct wlr_scene_border* border = effect->border;
+  struct wlr_scene* scene = scene_node_get_root(&border->node);
+  struct wlr_addon* addon = wlr_addon_find(&scene->tree.node.addons, &decoration_layer_impl, &decoration_layer_impl);
+  struct scene_decoration_layer* layer = addon != NULL ? wl_container_of(addon, layer, addon) : NULL;
+  int x, y, px, py;
+  bool enabled = layer != NULL
+      && layer->tree != NULL
+      && effect->parameters.light.enabled
+      && effect->parameters.light.intensity > 0
+      && !effect->frozen
+      && effect->shader->renderer != NULL
+      && border->inner_width + border->outer_width > 0
+      && (border->inner_width > 0 ? border->inner_color[3] : border->outer_color[3]) > 0
+      && wlr_scene_node_coords(&border->node, &x, &y)
+      && wlr_scene_node_coords(&layer->tree->node, &px, &py);
+  // A detached spill cannot follow an arbitrary ancestor vertex deformation.
+  // Suppress it during shader-driven transforms; snapshots never create spill.
+  for (struct wlr_scene_node* node = &border->node; enabled && node != NULL;
+       node = node->parent != NULL ? &node->parent->node : NULL) {
+    if (node != &border->node && scene_animation_get(node) != NULL)
+      enabled = false;
+  }
+  if (!enabled) {
+    if (effect->light_node != NULL)
+      wlr_scene_node_destroy(&effect->light_node->node);
+    return;
+  }
+  const float z = effect->parameters.coordinate_scale > 0 ? effect->parameters.coordinate_scale : 1;
+  const int margin = ceilf(ceilf(effect->parameters.light.spread * 2 + 8) * z);
+  if (effect->light_node == NULL) {
+    // The rect supplies scene visibility/damage bookkeeping; its addon supplies
+    // rendering. Non-opaque and input-transparent, even over opaque clients.
+    effect->light_node = wlr_scene_rect_create(layer->tree, 0, 0, (float[4]){0, 0, 0, 0.5});
+    if (effect->light_node == NULL)
+      return;
+    effect->light_node->accepts_input = false;
+    wlr_addon_init(
+        &effect->light_addon, &effect->light_node->node.addons, &decoration_light_node_impl, &decoration_light_node_impl
+    );
+  } else if (effect->light_node->node.parent != layer->tree) {
+    wlr_scene_node_reparent(&effect->light_node->node, layer->tree);
+  }
+  wlr_scene_rect_set_size(effect->light_node, border->width + 2 * margin, border->height + 2 * margin);
+  wlr_scene_node_set_position(&effect->light_node->node, x - px - margin, y - py - margin);
+  const float inputs[] = {
+      border->inner_color[0],
+      border->inner_color[1],
+      border->inner_color[2],
+      border->inner_color[3],
+      border->outer_color[0],
+      border->outer_color[1],
+      border->outer_color[2],
+      border->outer_color[3],
+      border->clipped_region.area.x,
+      border->clipped_region.area.y,
+      border->clipped_region.area.width,
+      border->clipped_region.area.height,
+      border->clipped_region.corners.top_left,
+      border->clipped_region.corners.top_right,
+      border->clipped_region.corners.bottom_right,
+      border->clipped_region.corners.bottom_left,
+      border->inner_width,
+      border->outer_width,
+      border->width,
+      border->height
+  };
+  if (memcmp(effect->light_inputs, inputs, sizeof(inputs)) != 0) {
+    memcpy(effect->light_inputs, inputs, sizeof(inputs));
+    scene_node_update(&effect->light_node->node, NULL);
+  }
+}
+
+static void scene_decoration_destroy(struct wlr_addon* addon) {
+  struct scene_decoration* effect = wl_container_of(addon, effect, addon);
+  if (effect->light_node != NULL)
+    wlr_scene_node_destroy(&effect->light_node->node);
+  fx_decoration_shader_unref(effect->shader);
+  wl_list_remove(&effect->link);
+  wlr_addon_finish(addon);
+  free(effect);
+}
+static const struct wlr_addon_interface scene_decoration_impl = {
+    .name = "scene_decoration",
+    .destroy = scene_decoration_destroy,
+};
+static struct scene_decoration* scene_decoration_get(struct wlr_scene_border* border) {
+  struct wlr_addon* addon = wlr_addon_find(&border->node.addons, &scene_decoration_impl, &scene_decoration_impl);
+  if (addon == NULL)
+    return NULL;
+  struct scene_decoration* effect = wl_container_of(addon, effect, addon);
+  return effect;
+}
+void wlr_scene_border_set_shader(
+    struct wlr_scene_border* border, struct fx_decoration_shader* shader,
+    const struct fx_decoration_parameters* parameters
+) {
+  struct scene_decoration* effect = scene_decoration_get(border);
+  if (shader == NULL) {
+    if (effect != NULL) {
+      scene_decoration_destroy(&effect->addon);
+      scene_node_update(&border->node, NULL);
+    }
+    return;
+  }
+  assert(parameters != NULL);
+  if (effect == NULL) {
+    effect = calloc(1, sizeof(*effect));
+    if (effect == NULL)
+      return;
+    effect->border = border;
+    wlr_addon_init(&effect->addon, &border->node.addons, &scene_decoration_impl, &scene_decoration_impl);
+    wl_list_insert(&scene_decorations, &effect->link);
+  }
+  if (effect->shader == shader
+      && effect->parameters.speed == parameters->speed
+      && effect->parameters.padding == parameters->padding
+      && effect->parameters.coordinate_scale == parameters->coordinate_scale
+      && effect->parameters.animated == parameters->animated
+      && effect->parameters.light.enabled == parameters->light.enabled
+      && effect->parameters.light.spread == parameters->light.spread
+      && effect->parameters.light.intensity == parameters->light.intensity
+      && effect->parameters.light.threshold == parameters->light.threshold)
+    return;
+  const bool changed = effect->shader != shader;
+  fx_decoration_shader_ref(shader);
+  fx_decoration_shader_unref(effect->shader);
+  effect->shader = shader;
+  effect->parameters = *parameters;
+  fx_decoration_light_destroy(effect->light_cache);
+  effect->light_cache = NULL;
+  if (effect->light_node != NULL)
+    scene_node_update(&effect->light_node->node, NULL);
+  if (changed || !parameters->animated || parameters->speed == 0)
+    effect->time = 0;
+  scene_node_update(&border->node, NULL);
+}
+void wlr_scene_border_copy_shader(struct wlr_scene_border* destination, struct wlr_scene_border* source) {
+  struct scene_decoration* effect = scene_decoration_get(source);
+  if (effect == NULL)
+    return;
+  wlr_scene_border_set_shader(destination, effect->shader, &effect->parameters);
+  struct scene_decoration* copy = scene_decoration_get(destination);
+  if (copy != NULL) {
+    copy->time = effect->time;
+    copy->frozen = true;
+    copy->parameters.light.enabled = false;
+  }
+}
+bool wlr_scene_output_tick_decoration_shaders(struct wlr_scene_output* output, double seconds) {
+  if (decoration_clock_origin < 0)
+    decoration_clock_origin = seconds;
+  bool active = false;
+  struct scene_decoration* effect;
+  struct wlr_box output_box = {.x = output->x, .y = output->y};
+  wlr_output_effective_resolution(output->output, &output_box.width, &output_box.height);
+  wl_list_for_each(effect, &scene_decorations, link) {
+    struct wlr_scene_border* border = effect->border;
+    if (scene_node_get_root(&border->node) != output->scene)
+      continue;
+    decoration_sync_light(effect);
+    if (effect->frozen
+        || !effect->parameters.animated
+        || effect->parameters.speed == 0
+        || effect->shader->time < 0
+        || effect->shader->renderer == NULL
+        || &effect->shader->renderer->wlr_renderer != output->output->renderer
+        || scene_node_get_root(&border->node) != output->scene
+        || (border->inner_width + border->outer_width) == 0
+        || (border->inner_width > 0 ? border->inner_color[3] : border->outer_color[3]) == 0)
+      continue;
+    struct wlr_scene_node* damage_node = effect->light_node != NULL ? &effect->light_node->node : &border->node;
+    struct wlr_box box = {0}, intersection;
+    scene_node_get_size(damage_node, &box.width, &box.height);
+    if (!wlr_scene_node_coords(damage_node, &box.x, &box.y) || !wlr_box_intersection(&intersection, &box, &output_box))
+      continue;
+    // Enabled, intersecting geometry may still be fully occluded by another window.
+    if (!pixman_region32_not_empty(&damage_node->visible))
+      continue;
+    effect->time = (seconds - decoration_clock_origin) * effect->parameters.speed;
+    active = true;
+    // Only this output is damaged; no global animation/scanout suppression.
+    pixman_region32_t damage;
+    pixman_region32_init_rect(
+        &damage, intersection.x - output->x, intersection.y - output->y, intersection.width, intersection.height
+    );
+    wlr_region_scale(&damage, &damage, output->output->scale);
+    int width = output->output->width, height = output->output->height;
+    wlr_output_transform_coords(output->output->transform, &width, &height);
+    wlr_region_transform(&damage, &damage, wlr_output_transform_invert(output->output->transform), width, height);
+    pixman_region32_intersect_rect(&damage, &damage, 0, 0, output->output->width, output->output->height);
+    // Called during the current frame. Scheduling here would defeat the idle
+    // shader timer; C++ owns the next-frame policy.
+    wlr_damage_ring_add(&output->damage_ring, &damage);
+    pixman_region32_union(&output->pending_commit_damage, &output->pending_commit_damage, &damage);
+    pixman_region32_fini(&damage);
+  }
+  return active;
 }
 
 struct wlr_scene_border* wlr_scene_border_create(
@@ -2392,7 +2994,84 @@ struct render_list_entry {
   struct wlr_scene_node* node;
   bool highlight_transparent_region;
   int x, y;
+  bool has_clip;
+  struct wlr_box clip;
 };
+
+static void render_window_postprocess(
+    struct scene_postprocess* effect, const struct render_data* data, const struct wlr_box* box,
+    const pixman_region32_t* clip
+) {
+  if (data->postprocess_capture || data->shadow_capture)
+    return;
+  struct scene_output_postprocess* settings = output_postprocess_get(data->output, false);
+  if (settings == NULL || settings->suspended)
+    return;
+  struct scene_postprocess_history* history;
+  wl_list_for_each(history, &effect->histories, link) if (history->output == data->output) goto found;
+  history = calloc(1, sizeof(*history));
+  if (history == NULL)
+    return;
+  history->output = data->output;
+  history->destroy.notify = postprocess_history_destroy;
+  wl_signal_add(&data->output->events.destroy, &history->destroy);
+  wl_list_insert(&effect->histories, &history->link);
+found:;
+  struct fx_postprocess_parameters parameters = {
+      .time = settings->time + settings->origin - postprocess_clock_origin,
+      .scale = data->scale,
+      .output_size = {effect->rect->width * data->scale, effect->rect->height * data->scale},
+      .region = {0, 0, 1, 1},
+      .box = *box,
+      .transform = data->transform,
+      .corners = corner_radii_new(
+          effect->rect->corners.top_left * data->scale, effect->rect->corners.top_right * data->scale,
+          effect->rect->corners.bottom_right * data->scale, effect->rect->corners.bottom_left * data->scale
+      ),
+  };
+  fx_render_pass_postprocess(
+      fx_get_render_pass(data->render_pass), &history->state, effect->chain, &parameters, clip, true
+  );
+}
+
+static void render_output_postprocess(
+    struct scene_output_postprocess* settings, const struct fx_scene_postprocess* effect,
+    struct fx_postprocess_state** state, const struct render_data* data
+) {
+  if (!output_postprocess_chain_visible(settings, effect)) {
+    // Leaving an output or hiding the pointer also clears its history.
+    fx_postprocess_state_destroy(*state);
+    *state = NULL;
+    return;
+  }
+  struct wlr_box box = effect->region;
+  if (wlr_box_empty(&box))
+    box = (struct wlr_box){.width = data->logical.width, .height = data->logical.height};
+  if (effect->cursor_radius > 0)
+    box = (struct wlr_box){
+        .x = floor(settings->pointer_x - data->logical.x - effect->cursor_radius),
+        .y = floor(settings->pointer_y - data->logical.y - effect->cursor_radius),
+        .width = ceil(effect->cursor_radius * 2),
+        .height = ceil(effect->cursor_radius * 2)
+    };
+  struct fx_postprocess_parameters parameters = {
+      .time = settings->time,
+      .scale = data->scale,
+      .cursor =
+          {(settings->pointer_x - data->logical.x) * data->scale,
+           (settings->pointer_y - data->logical.y) * data->scale},
+      .output_size = {data->trans_width, data->trans_height},
+      .region =
+          {(float)box.x / data->logical.width, (float)box.y / data->logical.height,
+           (float)box.width / data->logical.width, (float)box.height / data->logical.height},
+      .box = box,
+      .transform = data->transform,
+  };
+  transform_output_box(&parameters.box, data);
+  fx_render_pass_postprocess(
+      fx_get_render_pass(data->render_pass), state, effect->chain, &parameters, &data->damage, true
+  );
+}
 
 static float
 get_luminance_multiplier(const struct wlr_color_luminances* src_lum, const struct wlr_color_luminances* dst_lum) {
@@ -2413,7 +3092,16 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
 
   pixman_region32_t render_region;
   pixman_region32_init(&render_region);
-  pixman_region32_copy(&render_region, &node->visible);
+  if (data->postprocess_active) {
+    int width, height;
+    scene_node_get_size(node, &width, &height);
+    pixman_region32_union_rect(&render_region, &render_region, entry->x, entry->y, width, height);
+    if (entry->has_clip)
+      pixman_region32_intersect_rect(
+          &render_region, &render_region, entry->clip.x, entry->clip.y, entry->clip.width, entry->clip.height
+      );
+  } else
+    pixman_region32_copy(&render_region, &node->visible);
   pixman_region32_translate(&render_region, -data->logical.x, -data->logical.y);
   logical_to_buffer_coords(&render_region, data, true);
   pixman_region32_intersect(&render_region, &render_region, &data->damage);
@@ -2447,6 +3135,38 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     break;
   case WLR_SCENE_NODE_RECT:;
     struct wlr_scene_rect* scene_rect = wlr_scene_rect_from_node(node);
+    struct scene_postprocess* window_effect = scene_postprocess_get(node);
+    if (window_effect != NULL) {
+      render_window_postprocess(window_effect, data, &dst_box, &render_region);
+      break;
+    }
+    struct scene_decoration* light = decoration_from_light_node(node);
+    if (light != NULL) {
+      struct wlr_scene_border* border = light->border;
+      const struct fx_render_border_options ring = {
+          .shader = light->shader,
+          .shader_time = light->time,
+          .shader_padding = light->parameters.padding,
+          .shader_scale = data->scale,
+          .shader_coordinate_scale = light->parameters.coordinate_scale,
+          .shader_transform = node_transform,
+          .logical_width = border->width,
+          .logical_height = border->height,
+          .logical_hole = border->clipped_region.area,
+          .logical_corners = border->clipped_region.corners,
+          .inner_width = border->inner_width * data->scale,
+          .outer_width = border->outer_width * data->scale,
+          .inner_color =
+              {border->inner_color[0], border->inner_color[1], border->inner_color[2], border->inner_color[3]},
+          .outer_color = {
+              border->outer_color[0], border->outer_color[1], border->outer_color[2], border->outer_color[3]
+          },
+      };
+      fx_render_pass_add_decoration_light(
+          fx_pass, &light->light_cache, &ring, &light->parameters.light, &dst_box, &render_region
+      );
+      break;
+    }
     struct fx_corner_radii rect_corners = scene_rect->corners;
 
     fx_corner_radii_transform(node_transform, &rect_corners);
@@ -2506,11 +3226,22 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     fx_corner_radii_transform(node_transform, &border_seam_corners);
     fx_corner_radii_transform(node_transform, &border_outer_corners);
 
+    struct scene_decoration* decoration = scene_decoration_get(scene_border);
     fx_render_pass_add_border(
         fx_pass,
         &(struct fx_render_border_options){
             .box = dst_box,
             .clip = &render_region,
+            .shader = decoration != NULL ? decoration->shader : NULL,
+            .shader_time = decoration != NULL ? decoration->time : 0,
+            .shader_padding = decoration != NULL ? decoration->parameters.padding : 0,
+            .shader_scale = data->scale,
+            .shader_coordinate_scale = decoration != NULL ? decoration->parameters.coordinate_scale : 1,
+            .shader_transform = node_transform,
+            .logical_width = scene_border->width,
+            .logical_height = scene_border->height,
+            .logical_hole = scene_border->clipped_region.area,
+            .logical_corners = scene_border->clipped_region.corners,
             .clipped_region =
                 {
                     .area = border_clipped_region_box,
@@ -2713,7 +3444,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
         .release_timeline = data->output->in_timeline,
         .release_point = data->output->in_point,
     };
-    if (!data->shadow_capture) {
+    if (!data->shadow_capture && !data->postprocess_capture) {
       wl_signal_emit_mutable(&scene_buffer->events.output_sample, &sample_event);
     }
 
@@ -3046,7 +3777,8 @@ static void render_animated_range(
         const pixman_region32_t* composite_clip = has_output_clip && (int)slot == final_slot ? &output_clip : &clip;
         fx_render_pass_end_animation_with_history(
             pass, animation->shaders[slot], &animation->parameters[slot], &box, &logical_box, data->transform, &clip,
-            composite_clip, &animation->histories[slot], data->output->output, !data->shadow_capture
+            composite_clip, &animation->histories[slot], data->output->output,
+            !data->shadow_capture && !data->postprocess_capture
         );
       }
     }
@@ -3407,6 +4139,7 @@ struct render_list_constructor_data {
   bool highlight_transparent_region;
   bool fractional_scale;
   const float* background_color;
+  bool postprocess_active;
 };
 
 static bool scene_buffer_matches_background(struct wlr_scene_buffer* scene_buffer, const float background[static 4]) {
@@ -3470,7 +4203,7 @@ static bool construct_render_list_iterator(
   pixman_region32_intersect_rect(
       &intersection, &node->visible, data->box.x, data->box.y, data->box.width, data->box.height
   );
-  if (pixman_region32_empty(&intersection)) {
+  if (!data->postprocess_active && pixman_region32_empty(&intersection)) {
     pixman_region32_fini(&intersection);
     return false;
   }
@@ -3487,6 +4220,8 @@ static bool construct_render_list_iterator(
       .x = lx,
       .y = ly,
       .highlight_transparent_region = data->highlight_transparent_region,
+      .has_clip = acc_clip != NULL,
+      .clip = acc_clip != NULL ? *acc_clip : (struct wlr_box){0},
   };
 
   return false;
@@ -3984,11 +4719,32 @@ bool wlr_scene_output_build_state(
 
   render_data.logical.width = render_data.trans_width / render_data.scale;
   render_data.logical.height = render_data.trans_height / render_data.scale;
+  render_data.postprocess_active = scene_output_has_postprocess(scene_output);
+  if (!render_data.postprocess_active)
+    output_postprocess_release_captures(scene_output);
+  struct scene_output_postprocess* postprocess = output_postprocess_get(scene_output, false);
+  // Protocol toplevel sources create their own scene outputs, without the
+  // compositor's output policy/timer. Their histories belong to that source.
+  if (postprocess == NULL && render_data.postprocess_active) {
+    postprocess = output_postprocess_get(scene_output, true);
+    if (postprocess != NULL) {
+      postprocess->in_capture = true;
+      postprocess->isolated_capture = true;
+    }
+  }
+  if (postprocess != NULL && postprocess->isolated_capture) {
+    struct timespec current;
+    clock_gettime(CLOCK_MONOTONIC, &current);
+    wlr_scene_output_tick_postprocess(scene_output, current.tv_sec + current.tv_nsec / 1e9, false);
+  }
 
   struct render_list_constructor_data list_con = {
       .box = render_data.logical,
       .render_list = &scene_output->render_list,
-      .calculate_visibility = scene_output->scene->calculate_visibility && !scene_has_animations(scene_output->scene),
+      .calculate_visibility = scene_output->scene->calculate_visibility
+          && !scene_has_animations(scene_output->scene)
+          && !render_data.postprocess_active,
+      .postprocess_active = render_data.postprocess_active,
       .highlight_transparent_region = scene_output->scene->highlight_transparent_region,
       .fractional_scale = floor(render_data.scale) != render_data.scale,
       .background_color = scene_output->scene->background_color,
@@ -4006,6 +4762,10 @@ bool wlr_scene_output_build_state(
   if (debug_damage == WLR_SCENE_DEBUG_DAMAGE_RERENDER || scene_has_animations(scene_output->scene)) {
     scene_output_damage_whole(scene_output);
   }
+  // Recompose this output on a real frame; this does not request another frame.
+  // Sampling shaders can read any pixel in their source rectangle.
+  if (render_data.postprocess_active)
+    postprocess_damage_current_frame(scene_output);
 
   struct timespec now;
   if (debug_damage == WLR_SCENE_DEBUG_DAMAGE_HIGHLIGHT) {
@@ -4050,7 +4810,8 @@ bool wlr_scene_output_build_state(
   // - There are no color transforms that need to be applied
   // - Damage highlight debugging is not enabled
   enum scene_direct_scanout_result scanout_result = SCANOUT_INELIGIBLE;
-  if (!options->capture_sdr
+  if (!render_data.postprocess_active
+      && !options->capture_sdr
       && options->color_transform == NULL
       && !render_gamma_lut
       && list_len == 1
@@ -4261,7 +5022,7 @@ bool wlr_scene_output_build_state(
   // Cull areas of the background that are occluded by opaque regions of
   // scene nodes above. Those scene nodes will just render atop having us
   // never see the background.
-  if (scene_output->scene->calculate_visibility) {
+  if (scene_output->scene->calculate_visibility && !render_data.postprocess_active) {
     for (int i = list_len - 1; i >= 0; i--) {
       struct render_list_entry* entry = &list_data[i];
 
@@ -4305,7 +5066,35 @@ bool wlr_scene_output_build_state(
   );
   pixman_region32_fini(&background);
 
+  if (render_data.postprocess_active && (postprocess == NULL || !postprocess->in_capture)) {
+    struct render_data clean = render_data;
+    clean.postprocess_capture = true;
+    render_animated_range(list_data, list_len - 1, 0, NULL, &clean);
+    wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
+    fx_pass->output_buffer->effect_capture_owner = scene_output;
+    if (!fx_render_pass_save_effect_capture(fx_pass)) {
+      // Consistent fallback: display the unfiltered composition for this frame.
+      render_data.postprocess_capture = true;
+    }
+    wlr_render_pass_add_rect(
+        render_pass,
+        &(struct wlr_render_rect_options){
+            .box = {0, 0, buffer->width, buffer->height},
+            .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+            .color = {
+                scene_output->scene->background_color[0], scene_output->scene->background_color[1],
+                scene_output->scene->background_color[2], scene_output->scene->background_color[3]
+            }
+        }
+    );
+  }
   render_animated_range(list_data, list_len - 1, 0, NULL, &render_data);
+  if (postprocess != NULL && render_data.postprocess_active && !render_data.postprocess_capture) {
+    for (size_t i = 0; i < postprocess->count; ++i)
+      render_output_postprocess(postprocess, &postprocess->effects[i], &postprocess->states[i], &render_data);
+    if (!postprocess->reads_cursor)
+      render_output_postprocess(postprocess, &postprocess->global, &postprocess->global_state, &render_data);
+  }
   for (int i = list_len - 1; i >= 0; i--) {
     struct render_list_entry* entry = &list_data[i];
 
@@ -4347,6 +5136,11 @@ bool wlr_scene_output_build_state(
   }
 
   wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
+  if (postprocess != NULL
+      && render_data.postprocess_active
+      && !render_data.postprocess_capture
+      && postprocess->reads_cursor)
+    render_output_postprocess(postprocess, &postprocess->global, &postprocess->global_state, &render_data);
 
   if (blur_saved_pixels != NULL) {
     // Render the saved pixels over the blur artifacts

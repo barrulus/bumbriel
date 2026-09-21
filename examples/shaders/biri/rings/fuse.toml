@@ -1,0 +1,17 @@
+# Applies to the active complete border; padding reserves raster space only.
+[appearance]
+border_width = 6
+outer_border_width = 0
+
+[appearance.border_shader]
+enabled = true
+animated = true
+speed = 1
+padding = 48
+shader = "fuse.glsl"
+
+[appearance.border_shader.light]
+enabled = true
+spread = 90
+intensity = 1.4
+threshold = 0.5

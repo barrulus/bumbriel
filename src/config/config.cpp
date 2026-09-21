@@ -5,6 +5,7 @@
 #include "config/keybind_parse.h"
 #include "config/resolve.h"
 #include "config/section.h"
+#include "config/shaders.h"
 #include "config/store.h"
 #include "config/value_parse.h"
 #include "core/log.h"
@@ -125,6 +126,23 @@ namespace umbriel {
         return ContentType::Game;
       }
       return std::nullopt;
+    }
+
+    void readDecorationShader(Section& section, DecorationShaderConfig& target) {
+      section.boolean("enabled", target.enabled)
+          .boolean("animated", target.animated)
+          .real("speed", 0.0, 10.0, target.speed)
+          .integer("padding", 0, 1024, target.padding);
+      section.sub("light", [&](Section& light) {
+        light.boolean("enabled", target.light.enabled)
+            .real("spread", 1.0, 256.0, target.light.spread)
+            .real("intensity", 0.0, 4.0, target.light.intensity)
+            .real("threshold", 0.0, 1.0, target.light.threshold);
+      });
+      auto result = readAnimationShader(section, configStore().mutableDiagnostics());
+      target.shader = std::move(result.source);
+      for (auto& path : result.watchPaths)
+        configStore().addWatchPath(std::move(path));
     }
 
     void emitDiag(ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg) {
@@ -1128,6 +1146,42 @@ namespace umbriel {
         warnAt(node->source(), R"(invalid animation style "{}")", parsed);
       };
 
+      s.text("preset", animation.preset);
+      s.sub("pair", [&](Section& pairs) {
+        pairs.freeform();
+        for (const auto& [name, node] : pairs.table()) {
+          if (!node.is_table()) {
+            warnAt(node.source(), "animation pair must be a table");
+            continue;
+          }
+          Config::Animation::Pair pair;
+          pair.open.durationMs = 400;
+          pair.close.durationMs = 500;
+          pair.open.curve.easing = Easing::Linear;
+          pair.close.curve.easing = Easing::Linear;
+          pair.open.style = "none";
+          Section entry(
+              *node.as_table(), "animation.pair." + std::string(name.str()), configStore().mutableDiagnostics()
+          );
+          entry.sub("open", [&](Section& keys) {
+            readShader(keys, pair.open);
+            keys.integer("duration_ms", 1, 10000, pair.open.durationMs);
+            readCurve(keys, "animation.pair.open", pair.open.curve);
+          });
+          entry.sub("close", [&](Section& keys) {
+            readShader(keys, pair.close);
+            keys.integer("duration_ms", 1, 10000, pair.close.durationMs);
+            readCurve(keys, "animation.pair.close", pair.close.curve);
+          });
+          if (!pair.open.shader || !pair.close.shader) {
+            warnAt(node.source(), "animation pair requires both open and close shaders");
+            pair.open.shader.reset();
+            pair.close.shader.reset();
+          }
+          animation.pairs.insert_or_assign(std::string(name.str()), std::move(pair));
+        }
+      });
+
       s.sub("windows_in", [&](Section& section) {
         readShader(section, animation.windowsIn);
         section.boolean("enabled", animation.windowsIn.enabled)
@@ -1203,6 +1257,8 @@ namespace umbriel {
     void readAppearance(Section& root, Config& loaded) {
       auto& appearance = loaded.appearance;
       root.sub("appearance", [&](Section& s) {
+        s.sub("border_shader", [&](Section& shader) { readDecorationShader(shader, appearance.borderShader); });
+        s.integer("shader_fps", 0, 240, appearance.shaderFps);
         s.integer("border_width", 0, 100, appearance.borderWidth)
             .integer("outer_border_width", 0, 100, appearance.outerBorderWidth)
             .integer("corner_radius", 0, 100, appearance.cornerRadius)
@@ -1672,6 +1728,7 @@ namespace umbriel {
         }
         OutputRule rule;
         rule.name = name;
+        keys.text("shader", rule.shader);
         keys.boolean("enabled", rule.enabled)
             .boolean("tearing", rule.allowTearing)
             .boolean("direct_scanout", rule.directScanout);
@@ -2085,6 +2142,12 @@ namespace umbriel {
           }
         }
 
+        keys.sub("border_shader", [&](Section& shader) {
+          rule.borderShader.emplace();
+          readDecorationShader(shader, *rule.borderShader);
+        });
+        if (const auto* shader = keys.take("shader"))
+          rule.shader = shader->value<std::string>();
         keys.boolean("default_floating", rule.defaultFloating)
             .boolean("default_fullscreen", rule.defaultFullscreen)
             .boolean("default_maximize_to_edges", rule.defaultMaximizeToEdges)
@@ -2467,6 +2530,7 @@ namespace umbriel {
           readWorkspaceSettings(root, loaded);
           readInput(root, loaded);
           readOutputs(root, loaded);
+          readShaders(root, loaded);
           readKeybinds(root, loaded);
           readWindowRules(root, loaded);
           readLayerRules(root, loaded);

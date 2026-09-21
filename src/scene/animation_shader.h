@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/config.h"
 #include "core/animation.h"
 
 struct wlr_scene_node;
@@ -21,6 +22,9 @@ namespace umbriel {
   };
 
   [[nodiscard]] fx_animation_shader* animationShader(wlr_renderer* renderer, AnimationEvent event);
+  Config::Animation::WindowsIn selectedWindowsIn();
+  Config::Animation::WindowsOut selectedWindowsOut();
+  bool selectAnimationPair(std::string_view operation);
   void prepareAnimationShaders(wlr_renderer* renderer);
   void clearAnimationShaderCache();
   void updateAnimationShader(

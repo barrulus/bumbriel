@@ -18,6 +18,8 @@ namespace umbriel {
       std::shared_ptr<fx_animation_shader> shader;
     };
     std::array<CacheEntry, FX_ANIMATION_SLOTS> cache;
+    std::optional<std::string> pairSelection;
+    bool pairEnabled = true;
     static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
 
     template <typename Value>
@@ -41,8 +43,55 @@ namespace umbriel {
     }
   } // namespace
 
+  const Config::Animation::Pair* selectedPair() {
+    const auto& animation = config().animation;
+    auto found = animation.pairs.find(pairSelection.value_or(animation.preset));
+    if (found == animation.pairs.end())
+      found = animation.pairs.find(animation.preset);
+    return found == animation.pairs.end() ? nullptr : &found->second;
+  }
+  Config::Animation::WindowsIn selectedWindowsIn() {
+    const auto* pair = selectedPair();
+    auto result = pair != nullptr && pairEnabled ? pair->open : config().animation.windowsIn;
+    if (!pairEnabled)
+      result.shader.reset();
+    return result;
+  }
+  Config::Animation::WindowsOut selectedWindowsOut() {
+    const auto* pair = selectedPair();
+    auto result = pair != nullptr && pairEnabled ? pair->close : config().animation.windowsOut;
+    if (!pairEnabled)
+      result.shader.reset();
+    return result;
+  }
+  bool selectAnimationPair(std::string_view operation) {
+    const auto& pairs = config().animation.pairs;
+    if (operation == "toggle")
+      pairEnabled = !pairEnabled;
+    else if (operation == "off")
+      pairEnabled = false;
+    else if (operation == "on")
+      pairEnabled = true;
+    else if (operation == "default") {
+      pairSelection.reset();
+      pairEnabled = true;
+    } else if (operation == "cycle") {
+      const auto current = pairSelection ? pairs.find(*pairSelection) : pairs.end();
+      const auto next = current == pairs.end() ? pairs.begin() : std::next(current);
+      pairSelection = next == pairs.end() ? std::nullopt : std::optional(next->first);
+      pairEnabled = true;
+    } else if (pairs.contains(std::string(operation))) {
+      pairSelection = operation;
+      pairEnabled = true;
+    } else
+      return false;
+    return true;
+  }
+
   fx_animation_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
     const auto& settings = config().animation;
+    const auto open = selectedWindowsIn();
+    const auto close = selectedWindowsOut();
     const std::optional<AnimationShaderSource>* source = nullptr;
     bool enabled = false;
     const char* label = "animation";
@@ -56,8 +105,16 @@ namespace umbriel {
       EVENT(DimUnfocused, dimUnfocused, "dim_unfocused");
       EVENT(Border, border, "border");
       EVENT(WindowsMove, windowsMove, "windows_move");
-      EVENT(WindowsIn, windowsIn, "windows_in");
-      EVENT(WindowsOut, windowsOut, "windows_out");
+    case AnimationEvent::WindowsIn:
+      source = &open.shader;
+      enabled = open.enabled;
+      label = "animation.windows_in";
+      break;
+    case AnimationEvent::WindowsOut:
+      source = &close.shader;
+      enabled = close.enabled;
+      label = "animation.windows_out";
+      break;
       EVENT(Scratchpad, scratchpad, "scratchpad");
       EVENT(Layers, layers, "layers");
       EVENT(Workspaces, workspaces, "workspaces");

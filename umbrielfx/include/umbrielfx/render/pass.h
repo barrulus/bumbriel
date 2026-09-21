@@ -1,16 +1,17 @@
 #ifndef SCENE_FX_RENDER_PASS_H
 #define SCENE_FX_RENDER_PASS_H
 
-#include <stdbool.h>
-#include <GLES2/gl2.h>
-#include <wlr/render/color.h>
-#include <wlr/render/pass.h>
-#include <wlr/render/interface.h>
-#include <wlr/render/swapchain.h>
-
 #include "render/egl.h"
 #include "types/fx/clipped_region.h"
+
+#include <GLES2/gl2.h>
+#include <stdbool.h>
 #include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/decoration.h>
+#include <wlr/render/color.h>
+#include <wlr/render/interface.h>
+#include <wlr/render/pass.h>
+#include <wlr/render/swapchain.h>
 
 struct fx_gles_render_pass {
 	struct wlr_render_pass base;
@@ -34,8 +35,9 @@ struct fx_gles_render_pass {
 	// Set while an add_* call renders into an offscreen buffer instead of the
 	// pass target, so it must not extend updated_region.
 	bool suppress_updated;
+        bool effect_capture_saved;
 
-	// The region where there's blur
+        // The region where there's blur
 	pixman_region32_t blur_padding_region;
 	bool has_blur;
 	// Contains output-specific framebuffers.
@@ -47,9 +49,14 @@ struct fx_gles_render_pass {
 	struct wlr_texture *animation_textures[FX_ANIMATION_DEPTH];
 	bool animation_suppress[FX_ANIMATION_DEPTH];
 	struct wl_list animation_history_updates;
+        struct wl_list postprocess_updates;
 };
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass *pass);
+// Save an unfiltered composition for protocol imports of this display buffer.
+// Returns false on failure; callers must avoid displaying an effect without its
+// promised unfiltered capture rather than expose filtered pixels accidentally.
+bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass);
 void fx_render_pass_end_animation(struct fx_gles_render_pass *pass,
 	struct fx_animation_shader *shader, const struct fx_animation_parameters *parameters,
 	const struct wlr_box *box, const struct wlr_box *logical_box,
@@ -106,15 +113,21 @@ struct fx_render_rounded_rect_options {
 };
 
 struct fx_render_border_options {
-	struct wlr_box box;
-	const pixman_region32_t *clip;
-	struct clipped_fregion clipped_region;
-	struct fx_corner_fradii seam_corners;
-	struct fx_corner_fradii outer_corners;
-	float inner_width;
-	float outer_width;
-	struct wlr_render_color inner_color;
-	struct wlr_render_color outer_color;
+  struct fx_decoration_shader* shader;
+  float shader_time, shader_padding, shader_scale, shader_coordinate_scale;
+  enum wl_output_transform shader_transform;
+  int logical_width, logical_height;
+  struct wlr_box logical_hole;
+  struct fx_corner_radii logical_corners;
+  struct wlr_box box;
+  const pixman_region32_t* clip;
+  struct clipped_fregion clipped_region;
+  struct fx_corner_fradii seam_corners;
+  struct fx_corner_fradii outer_corners;
+  float inner_width;
+  float outer_width;
+  struct wlr_render_color inner_color;
+  struct wlr_render_color outer_color;
 };
 
 struct fx_render_rounded_rect_grad_options {

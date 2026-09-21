@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."screen.warmtint"]
+scope = "global"
+
+[[shaders.preset."screen.warmtint".passes]]
+shader = "warmtint.glsl"

@@ -2,6 +2,7 @@
 
 #include "core/dirty.h"
 #include "output/frame_schedule.h"
+#include "scene/postprocess.h"
 
 #include <cstdint>
 #include <memory>
@@ -67,6 +68,8 @@ namespace umbriel {
     void markDirty(Dirty what);
     void onGammaChanged(wlr_gamma_control_v1* control);
     void applyOutputState();
+    void applyPostprocessConfig();
+    ShaderSelection& shaderSelection() { return m_shaderSelection; }
     // Adopt a successfully committed wlr-output-management state in two
     // phases. Logical state changes first so callbacks cannot revive a
     // disabled output, then layout membership changes after transient UI has
@@ -145,6 +148,7 @@ namespace umbriel {
     wlr_output* m_output = nullptr;
     float m_defaultScale = 1.0F;
     wlr_scene_output* m_sceneOutput = nullptr;
+    ShaderSelection m_shaderSelection;
     wlr_scene_tree* m_layerTrees[kLayerCount]{};
     wlr_scene_tree* m_popupTree = nullptr;
     wlr_scene_tree* m_viewRoot = nullptr;
@@ -172,6 +176,7 @@ namespace umbriel {
     bool m_trackingPresentation = false;
     bool m_appliedConfiguredScale = false;
     wl_event_source* m_frameRetryTimer = nullptr;
+    wl_event_source* m_shaderFrameTimer = nullptr;
     View* m_autoHdrOwner = nullptr;
     std::string m_hdrFallbackReason;
     std::string m_tearingFallbackReason;

@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."cursor.rainbow-tunnel-bare"]
+scope = "global"
+
+[[shaders.preset."cursor.rainbow-tunnel-bare".passes]]
+shader = "rainbow-tunnel-bare.glsl"

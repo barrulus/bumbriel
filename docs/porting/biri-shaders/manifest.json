@@ -1,0 +1,463 @@
+{
+  "snapshot_date": "2026-09-21",
+  "source_repository": "/home/barrulus/dev/biri",
+  "source_head": "0cb779d1a4fd6d9a181711b130e1b5f871352a73",
+  "target_repository": "/home/barrulus/dev/bumbriel",
+  "target_head": "75e35316ae295714a3869d34242743e4952c422b",
+  "note": "Exact working-tree snapshots, including modified and untracked shaders. Original files are reference material, not Umbriel-ready assets. Symbol lists exclude line comments and are an inventory aid, not a GLSL parser.",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "e57f1c320b8cf8798a7d2ff83a6f9e06a33a03585f6e065fea97f1d86db84052",
+      "bytes": 35150,
+      "source_worktree_status": "clean"
+    },
+    {
+      "path": "docs/wiki/examples/close_custom_shader.frag",
+      "sha256": "b476a03ca64f72e0fbf6ede1711ba77d18b52aec897614ecc7f822658b1dc100",
+      "bytes": 5151,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_geo_to_tex",
+        "niri_progress",
+        "niri_random_seed",
+        "niri_tex"
+      ]
+    },
+    {
+      "path": "docs/wiki/examples/open_custom_shader.frag",
+      "sha256": "f8c70f0a91c7ba9051cdaff367df1468e8c2f2459dbabb71c797a616a59cb0d0",
+      "bytes": 4312,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_geo_to_tex",
+        "niri_progress",
+        "niri_random_seed",
+        "niri_tex"
+      ]
+    },
+    {
+      "path": "docs/wiki/examples/resize_custom_shader.frag",
+      "sha256": "e34916c0dc85354c04dfdc04fffd45dc1b53eb7678b0e38ced1da479fd2c1209",
+      "bytes": 8315,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_curr_geo_to_next_geo",
+        "niri_curr_geo_to_prev_geo",
+        "niri_geo_to_tex_next",
+        "niri_geo_to_tex_prev",
+        "niri_progress",
+        "niri_tex_next",
+        "niri_tex_prev"
+      ]
+    },
+    {
+      "path": "resources/shaders/README.md",
+      "sha256": "00c8e0f6150809f136f6dc14031b3a4c5d2f36f3c8c4047057f6029e93e32d48",
+      "bytes": 8374,
+      "source_worktree_status": " M resources/shaders/README.md"
+    },
+    {
+      "path": "resources/shaders/close/close-lightning.kdl",
+      "sha256": "fa329daf7b71823012d29cad94a82ecf959a6af95db610e0d683200bbafac044",
+      "bytes": 6604,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_geo_to_tex",
+        "niri_random_seed",
+        "niri_tex"
+      ]
+    },
+    {
+      "path": "resources/shaders/close/close-melt.kdl",
+      "sha256": "ec8c62aa4025dd9feb6cb3583018065e7729e4221597ce5a703cece853224c46",
+      "bytes": 4143,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_geo_to_tex",
+        "niri_random_seed",
+        "niri_tex"
+      ]
+    },
+    {
+      "path": "resources/shaders/close/close-ripple.kdl",
+      "sha256": "a765ee1ad3f4692980d64c2f80f5b1583a6368929bf09dc5653753e1f11732eb",
+      "bytes": 3514,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_geo_to_tex",
+        "niri_tex",
+        "ring_fade",
+        "ring_reveal"
+      ]
+    },
+    {
+      "path": "resources/shaders/close/close-whirlpool.kdl",
+      "sha256": "f36faf2ab52048bb732f2b962e433e04549772c2b5d2b88a0d2917b25cad90d9",
+      "bytes": 3365,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_clamped_progress",
+        "niri_geo_to_tex",
+        "niri_tex"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/adaptive.kdl",
+      "sha256": "bf5f65cfe2584cfbd59d408ff545d39cdf56c4aae6a506c468d99d82c82acbd5",
+      "bytes": 719,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/blueglow.kdl",
+      "sha256": "013e51338356623a58a1d4c9ac5fa3411aaca1af4cc4477efe846382590785ba",
+      "bytes": 580,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/comet-glow.kdl",
+      "sha256": "2ddafa895290fd3852270800a0616c1a708919d1621370e5d0bba2e1e1596607",
+      "bytes": 2016,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "niri_time",
+        "tex2D_prev",
+        "tex2D_screen",
+        "tex2D_source"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/comet.kdl",
+      "sha256": "cc0a3f0dfbfa5013e4955602cb60a9e5dafc49ef9a2387cd44b331aa73c2fca3",
+      "bytes": 2134,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "niri_time",
+        "tex2D_prev",
+        "tex2D_screen",
+        "tex2D_source"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/rainbow-tunnel-bare.kdl",
+      "sha256": "6217bfdcbdc84759f76ef36117ae3889fe2663bb3aada15d4ad1cc6e2cf960ba",
+      "bytes": 925,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/rainbow-tunnel.kdl",
+      "sha256": "d42eaa154e9a11878194a24f457f0bc57ed64742358b9a3f2360225e9628de9a",
+      "bytes": 1351,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/ripple.kdl",
+      "sha256": "cbd8eed592985d7c245f9282a0086bc242e673188e83451dabdd310f4f920b73",
+      "bytes": 402,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/shockwave.kdl",
+      "sha256": "6ff84fbcc95048640316f8c566928e7d27484a5db547e448819791671dcaff5b",
+      "bytes": 789,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/spotlight.kdl",
+      "sha256": "54dab879980be68373fe7a0a2a12e020b0832dd3e4fb7be6707c45603373cfe1",
+      "bytes": 460,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/cursor/trail.kdl",
+      "sha256": "cead11fe46498e27aa96b71eb9bbed058bc3f0b52cdf08e03fb6f926b26c3fe8",
+      "bytes": 1394,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_cursor",
+        "niri_output_size",
+        "tex2D_buffer",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/focus-ring/fuse.frag",
+      "sha256": "b6c823da027ee65f6872db5cf84d5e13f88201f7acb1a5d8237e3149c94b3495",
+      "bytes": 7202,
+      "source_worktree_status": "?? resources/shaders/focus-ring/fuse.frag",
+      "shader_symbols": [
+        "niri_scale",
+        "niri_time",
+        "ring_color",
+        "ring_distance",
+        "ring_padding",
+        "ring_size",
+        "ring_width"
+      ]
+    },
+    {
+      "path": "resources/shaders/focus-ring/fuse.kdl",
+      "sha256": "7620299382d6c554d5d484ba7affdb56a2fb4fa5884b1d2e7d8263b261b50b0b",
+      "bytes": 353,
+      "source_worktree_status": "?? resources/shaders/focus-ring/fuse.kdl",
+      "shader_symbols": []
+    },
+    {
+      "path": "resources/shaders/focus-ring/lightning.frag",
+      "sha256": "344bfd4adae4df874cd7e9883e2ad91e9861f5ff692ebd49f7f355f00bfee5e0",
+      "bytes": 4560,
+      "source_worktree_status": " M resources/shaders/focus-ring/lightning.frag",
+      "shader_symbols": [
+        "niri_scale",
+        "niri_time",
+        "ring_color",
+        "ring_distance",
+        "ring_padding",
+        "ring_size",
+        "ring_width"
+      ]
+    },
+    {
+      "path": "resources/shaders/focus-ring/pulse.frag",
+      "sha256": "a4fc089e39c05c685a55950b4960f4aff5fd8c309c4cb5ffbe0905fa62163cc6",
+      "bytes": 510,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_scale",
+        "niri_time",
+        "ring_color",
+        "ring_distance",
+        "ring_width"
+      ]
+    },
+    {
+      "path": "resources/shaders/focus-ring/rainbow-ripple.frag",
+      "sha256": "1ce2e90867a4a299d91543f55a4184f0871f5336a372da47d8ea96fa3655a8f1",
+      "bytes": 3185,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_scale",
+        "niri_time",
+        "ring_color",
+        "ring_distance",
+        "ring_size",
+        "ring_width"
+      ]
+    },
+    {
+      "path": "resources/shaders/focus-ring/rainbow-ripple.kdl",
+      "sha256": "f5a0bfaba40f006e331e5b53807ed7d8999c4e706348611a077a9ecde4ec425b",
+      "bytes": 373,
+      "source_worktree_status": "clean",
+      "shader_symbols": []
+    },
+    {
+      "path": "resources/shaders/off.kdl",
+      "sha256": "3215585cc92db2bcd7d97e063c3553e5ac30071d917ba3702c20bd351a91ab10",
+      "bytes": 190,
+      "source_worktree_status": "clean",
+      "shader_symbols": []
+    },
+    {
+      "path": "resources/shaders/screen/crt.kdl",
+      "sha256": "2d2d819c886ddc69f79aee00730170327f7ff10fd582a838bcb67a42febfd2b9",
+      "bytes": 224,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/screen/grayscale.kdl",
+      "sha256": "029c3550f8371d9e4d482aa418c549fb6c8e2c4e714453baa83e47639b33df20",
+      "bytes": 211,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/screen/vignette.kdl",
+      "sha256": "69538cb2020ac7dc2d7e2077c03f6f249820484d91f622f231377dc062c63351",
+      "bytes": 245,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/screen/warmtint.kdl",
+      "sha256": "718da833a3e9ffd3beb49d86be07a035878e071dc2273558a285f474ff801a44",
+      "bytes": 206,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/scripts/global-shader-cycle",
+      "sha256": "39a80d1b6768c135c58806e9ea7ba5f9febe0268b285df56b5c4a8508c3904ba",
+      "bytes": 2491,
+      "source_worktree_status": "clean"
+    },
+    {
+      "path": "resources/shaders/scripts/shader-cycle",
+      "sha256": "62e57257c426c7a0eaa3954c667938276bd3d8c351272965007b7209a6fafcac",
+      "bytes": 2326,
+      "source_worktree_status": "clean"
+    },
+    {
+      "path": "resources/shaders/window/adaptive-text-v4.frag",
+      "sha256": "97d2c973b10846d4145a9e99e82d7e7349b68aca249c1fa147e735e9a98fcf59",
+      "bytes": 2580,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/crt.frag",
+      "sha256": "c4711d4921112c1d7023dabdcbe4cb9018f489f9f84705646c3589af2bb3854c",
+      "bytes": 1677,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/fisheye-rgb.frag",
+      "sha256": "9d192fb15b11ce8ed22a37a5bd58228bb33bac18680733de3b147a305972ce60",
+      "bytes": 1296,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/mercury-sheen.frag",
+      "sha256": "443b25af2d21da046ec7f08eefad7077045c8a394b30d1e21564c4f49e601547",
+      "bytes": 3170,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/parchment-dark.frag",
+      "sha256": "81ad16073f379a97df090f0d6c39da287dfe7d4b557ac37aef4acd12b9bbb19d",
+      "bytes": 4884,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/parchment.frag",
+      "sha256": "9591ce6d6f0c945e958fb34704661c251c79b0bae2ac953f9bd81252a152016b",
+      "bytes": 5005,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/pixel-mosaic.frag",
+      "sha256": "d1be67cd27cc888384e2991a0b341cbf9723c3d432d9dbdc93686ac6ada25e46",
+      "bytes": 1073,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/rgb-shimmer.frag",
+      "sha256": "338b32efdd9c7aefd77d975ad2b8fb89322695dbd2a24bf7f7a94218177bf2c2",
+      "bytes": 2528,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/ripple-drops.frag",
+      "sha256": "d4def5d3f59e39bb22bfd4697ebe21aa6bc7f4d7e3b00ac6b0019e8a324869d6",
+      "bytes": 3000,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    },
+    {
+      "path": "resources/shaders/window/rorschach2.frag",
+      "sha256": "3db2831421f28a426739fdc8a67650ee71e55c366eca4f0c49b3a04be0dadd66",
+      "bytes": 3085,
+      "source_worktree_status": "clean",
+      "shader_symbols": [
+        "niri_size",
+        "niri_time",
+        "tex2D_screen"
+      ]
+    }
+  ]
+}

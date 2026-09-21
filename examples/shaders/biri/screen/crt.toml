@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."screen.crt"]
+scope = "global"
+
+[[shaders.preset."screen.crt".passes]]
+shader = "crt.glsl"

@@ -173,7 +173,14 @@ namespace umbriel {
         .sceneBlur = sceneBlur,
         // [colors] owns the border, backdrop, insert-hint, and shadow colors, so
         // any color edit refreshes window chrome.
-        .viewChrome = before.appearance != after.appearance
+        .viewChrome =
+            before.appearance != after.appearance
+            || before.shaders != after.shaders
+            || outputNamesChanged
+            || outputProjectionChanged(
+                before, after,
+                [](const OutputRule* a, const OutputRule* b) { return (a ? a->shader : "") == (b ? b->shader : ""); }
+            )
             || before.colors != after.colors
             || before.windowRules != after.windowRules
             || focusDim,
@@ -207,6 +214,7 @@ namespace umbriel {
         .colors = true,
         .appearance = true,
         .animation = true,
+        .shaders = true,
         .overview = true,
         .hotCorners = true,
         .layout = true,
@@ -231,6 +239,7 @@ namespace umbriel {
         .colors = before.colors != after.colors,
         .appearance = before.appearance != after.appearance,
         .animation = before.animation != after.animation,
+        .shaders = before.shaders != after.shaders,
         .overview = before.overview != after.overview,
         .hotCorners = before.hotCorners != after.hotCorners,
         .layout = before.layout != after.layout,
@@ -264,6 +273,7 @@ namespace umbriel {
     add(colors, "colors");
     add(appearance, "appearance");
     add(animation, "animation");
+    add(shaders, "shaders");
     add(overview, "overview");
     add(hotCorners, "hot corners");
     add(layout, "layout");

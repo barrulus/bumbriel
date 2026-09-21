@@ -31,6 +31,7 @@ umbrielfx_sources = files(
   'render/fx_renderer/fx_framebuffer.c',
   'render/fx_renderer/fx_offscreen_buffers.c',
   'render/fx_renderer/fx_pass.c',
+  'render/fx_renderer/postprocess.c',
   'render/fx_renderer/fx_renderer.c',
   'render/fx_renderer/fx_texture.c',
   'render/fx_renderer/pixel_format.c',
@@ -140,6 +141,10 @@ foreach shader : [
   'blur2.frag',
   'blur_effects.frag',
   'border.frag',
+  'decoration.frag',
+  'decoration_light.frag',
+  'postprocess.frag',
+  'postprocess_composite.frag',
   'box_shadow.frag',
   'common.vert',
   'corner_alpha.frag',
@@ -189,6 +194,31 @@ umbrielfx_dep = declare_dependency(
 )
 
 if build_tests
+  umbrielfx_postprocess_test = executable(
+    'umbrielfx-postprocess-test', 'tests/postprocess.c',
+    c_args: umbrielfx_c_args, dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib, build_by_default: false,
+  )
+  test('postprocess-collection', umbrielfx_postprocess_test,
+    args: meson.project_source_root() / 'examples/shaders/biri', suite: 'umbrielfx')
+
+  umbrielfx_biri_shader_test = executable(
+    'umbrielfx-biri-shader-test',
+    'tests/biri_shader.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test(
+    'biri-shader-collection',
+    umbrielfx_biri_shader_test,
+    args: meson.project_source_root() / 'examples/shaders/biri',
+    suite: 'umbrielfx',
+  )
+
   umbrielfx_color_test = executable(
     'umbrielfx-color-test',
     'tests/color.c',

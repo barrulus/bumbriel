@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."cursor.shockwave"]
+scope = "global"
+
+[[shaders.preset."cursor.shockwave".passes]]
+shader = "shockwave.glsl"

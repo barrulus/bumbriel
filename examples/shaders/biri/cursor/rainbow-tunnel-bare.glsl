@@ -1,0 +1,16 @@
+// Ported from Barrulus/biri; GPL-3.0-only, see ../LICENSE.
+// Descending smoothstep edges in the original are undefined in GLSL.
+float biri_smoothstep(float a, float b, float x) {
+    return a > b ? 1.0 - smoothstep(b, a, x) : smoothstep(a, b, x);
+}
+vec4 postprocess(vec3 c){
+        vec3 s  = tex2D_screen(c.xy).rgb;
+        vec2 px = c.xy*umbriel_output_size;
+        float d = length(px - umbriel_cursor);
+
+        // rainbow tunnel — concentric bands flowing inward toward the cursor
+        float t = d*0.07 + umbriel_time*1.0;                                 // inward flow (toward cursor)
+        vec3 tunnel = 0.5 + 0.5*cos(6.2831853*(t + vec3(0.0,0.33,0.67))); // IQ rainbow palette
+        float fill  = biri_smoothstep(60.0, 18.0, d);                          // soft falloff, no hard rim
+        return vec4(mix(s, tunnel, fill*0.09), 1.0);                      // light, see-through blend
+    }

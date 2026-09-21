@@ -592,6 +592,9 @@ UMBRIEL_TEST(payloadAlternativeMatchesTheDeclaredArgKind) {
     case ActionArgKind::OptionalWindowId:
     case ActionArgKind::SkipConfirmation:
       break;
+    case ActionArgKind::Shader:
+      input += ":global cycle";
+      break;
     case ActionArgKind::Command:
       input += ":value";
       break;
@@ -616,6 +619,9 @@ UMBRIEL_TEST(payloadAlternativeMatchesTheDeclaredArgKind) {
     switch (spec.argKind) {
     case ActionArgKind::None:
       CHECK(std::holds_alternative<std::monostate>(bind.payload));
+      break;
+    case ActionArgKind::Shader:
+      CHECK(umbriel::payloadIf<umbriel::ShaderArg>(bind) != nullptr);
       break;
     case ActionArgKind::Command:
       CHECK(
@@ -676,6 +682,9 @@ UMBRIEL_TEST(everyActionSpecRoundTripsThroughParseAction) {
     case ActionArgKind::OptionalScratchpad:
     case ActionArgKind::OptionalWindowId:
     case ActionArgKind::SkipConfirmation:
+      break;
+    case ActionArgKind::Shader:
+      input += ":global cycle";
       break;
     case ActionArgKind::Command:
       input += ":true";
@@ -795,6 +804,8 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
     switch (kind) {
     case ActionArgKind::None:
       return {};
+    case ActionArgKind::Shader:
+      return ":output toggle DP-1";
     case ActionArgKind::Command:
       return ":true";
     case ActionArgKind::Fraction:
@@ -822,6 +833,8 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
     switch (kind) {
     case ActionArgKind::None:
       return "";
+    case ActionArgKind::Shader:
+      return "<scope> <preset-or-operation> [<target>]";
     case ActionArgKind::Command:
       return "<cmd>";
     case ActionArgKind::Fraction:
@@ -869,6 +882,21 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
     ++swept;
   }
   CHECK(swept > 100);
+}
+
+UMBRIEL_TEST(shaderSelectorsKeepTargetAndCategorySemantics) {
+  Keybind bind;
+  CHECK(parseAction("shader:cursor cycle", bind));
+  CHECK_EQ(umbriel::payloadIf<umbriel::ShaderArg>(bind)->scope, std::string("cursor"));
+  CHECK(parseAction("shader:screen cycle", bind));
+  CHECK(parseAction("shader:animation whirlpool", bind));
+  CHECK(parseAction("shader:window off window-id", bind));
+  CHECK(parseAction("shader:output invert HDMI-A-1", bind));
+  CHECK_EQ(umbriel::payloadIf<umbriel::ShaderArg>(bind)->target, std::string("HDMI-A-1"));
+  CHECK(!parseAction("shader:cursor cycle HDMI-A-1", bind));
+  CHECK(!parseAction("shader:animation melt window-id", bind));
+  CHECK(!parseAction("shader:unknown off", bind));
+  CHECK(!parseAction("shader:window", bind));
 }
 
 int main() { return RUN_TESTS(); }

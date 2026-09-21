@@ -553,6 +553,75 @@ namespace umbriel {
       return nullptr;
     }
 
+    bool actionShader(Server& server, const Keybind& bind, std::string* error) {
+      const auto* arg = payloadIf<ShaderArg>(bind);
+      if (arg == nullptr)
+        return false;
+      if (arg->scope == "animation") {
+        if (!selectAnimationPair(arg->operation)) {
+          if (error != nullptr)
+            *error = "unknown animation pair: " + arg->operation;
+          return false;
+        }
+        prepareAnimationShaders(server.renderer());
+        return true;
+      }
+      ShaderSelection* selection = nullptr;
+      View* view = nullptr;
+      Output* output = nullptr;
+      if (arg->scope == "window") {
+        view = arg->target.empty() ? focusedWindow(server) : viewByForeignIdentifier(server, arg->target);
+        if (view != nullptr)
+          selection = &view->shaderSelection();
+      } else if (arg->scope == "output") {
+        if (arg->target.empty())
+          output = server.outputFromWlr(server.preferredOutput());
+        else
+          for (const auto& candidate : server.outputs())
+            if (outputNameMatch(candidate->identity(), arg->target) != OutputNameMatch::None) {
+              output = candidate.get();
+              break;
+            }
+        if (output != nullptr)
+          selection = &output->shaderSelection();
+      } else
+        selection = &globalShaderSelection();
+      if (selection == nullptr) {
+        if (error != nullptr)
+          *error = "shader target not found";
+        return false;
+      }
+      if (arg->operation == "toggle")
+        selection->enabled = !selection->enabled;
+      else if (arg->operation == "off")
+        selection->enabled = false;
+      else if (arg->operation == "on")
+        selection->enabled = true;
+      else if (arg->operation == "default") {
+        selection->preset.reset();
+        selection->enabled = true;
+      } else if (arg->operation == "cycle")
+        cycleShader(*selection, arg->scope);
+      else if (postprocessPreset(arg->operation) != nullptr) {
+        selection->preset = arg->operation;
+        selection->enabled = true;
+      } else {
+        if (error != nullptr)
+          *error = "unknown shader preset: " + arg->operation;
+        return false;
+      }
+      if (view != nullptr) {
+        view->refreshWindowShader();
+        if (server.overview() != nullptr && server.overview()->active())
+          server.overview()->onFocusChanged();
+      } else if (output != nullptr)
+        output->applyPostprocessConfig();
+      else
+        for (const auto& candidate : server.outputs())
+          candidate->applyPostprocessConfig();
+      return true;
+    }
+
     bool warpCursorToWindow(Server& server, View& view) { return server.cursor()->warpToView(view); }
 
     bool maybeWarpCursorToWindow(Server& server, View* view) {
@@ -1752,6 +1821,7 @@ namespace umbriel {
         &actionWindowMoveToWorkspaceAdjacent<1>,
         &actionWindowMoveToWorkspaceAdjacent<-1>,
         &actionConfigReload,
+        &actionShader,
         &actionKeyboardLayoutNext,
         &actionShortcutsInhibitToggle,
         &actionLayoutScrollDrag,

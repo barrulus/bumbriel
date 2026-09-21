@@ -1,6 +1,10 @@
 #include "overview/overview.h"
 
 #include "scene/animation_shader.h"
+#include "scene/decoration_shader.h"
+
+#include <umbrielfx/render/decoration.h>
+#include <umbrielfx/render/postprocess.h>
 extern "C" {
 #include <umbrielfx/render/animation.h>
 }
@@ -239,11 +243,39 @@ namespace umbriel {
     const int outerWidth = scaledWidth(appearance.outerBorderWidth);
     const int surfaceRadius = nestedRadius(outerRadius, innerWidth + outerWidth);
     const bool borderVisible = decorated && innerWidth + outerWidth > 0;
+    if (card.shader != nullptr) {
+      wlr_scene_rect_set_postprocess(card.shader, view->windowShader());
+      wlr_scene_rect_set_size(card.shader, contentW, contentH);
+      wlr_scene_rect_set_corner_radius(card.shader, surfaceRadius);
+      wlr_scene_node_place_below(&card.shader->node, &card.border->node);
+    }
     wlr_scene_node_set_enabled(&card.border->node, borderVisible);
     if (borderVisible) {
-      applyBorderGeometry(
-          card.border, makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth), innerWidth, outerWidth
-      );
+      const auto& overrideSettings = view->resolvedRules().borderShader;
+      const auto& settings = overrideSettings ? *overrideSettings : appearance.borderShader;
+      auto* shader = view == liveTarget ? decorationShader(settings) : nullptr;
+      const int padding = shader != nullptr ? static_cast<int>(std::ceil(settings.padding * z)) : 0;
+      const fx_decoration_parameters parameters{
+          .speed = static_cast<float>(settings.speed),
+          .padding = static_cast<float>(padding),
+          .coordinate_scale = static_cast<float>(z),
+          .animated = settings.animated,
+          .light = {
+              .enabled = settings.light.enabled,
+              .spread = static_cast<float>(settings.light.spread),
+              .intensity = static_cast<float>(settings.light.intensity),
+              .threshold = static_cast<float>(settings.light.threshold)
+          },
+      };
+      wlr_scene_border_set_shader(card.border, shader, &parameters);
+      auto ring = makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth);
+      ring.box.x -= padding;
+      ring.box.y -= padding;
+      ring.box.width += 2 * padding;
+      ring.box.height += 2 * padding;
+      ring.hole.x += padding;
+      ring.hole.y += padding;
+      applyBorderGeometry(card.border, ring, innerWidth, outerWidth);
       const std::array<float, 4> innerColor = tint(cardBorderColor(card, liveTarget), presentedOpacity);
       const std::array<float, 4> outerColor = tint(config().colors.border.outer, presentedOpacity);
       wlr_scene_border_set_colors(card.border, innerColor.data(), outerColor.data());
@@ -895,6 +927,7 @@ namespace umbriel {
     const std::array<float, 4> innerColor = tint(config().colors.border.unfocused, 1.0);
     const std::array<float, 4> outerColor = tint(config().colors.border.outer, 1.0);
     card->border = wlr_scene_border_create(card->tree, innerColor.data(), outerColor.data());
+    card->shader = wlr_scene_rect_create(card->tree, 0, 0, std::array<float, 4>{0, 0, 0, 0}.data());
     if (card->border == nullptr) {
       wlr_scene_node_destroy(&card->tree->node);
       return nullptr;
@@ -966,6 +999,7 @@ namespace umbriel {
         wlr_scene_node_set_position(
             &copy->node, card.tree->node.x + card.border->node.x, card.tree->node.y + card.border->node.y
         );
+        wlr_scene_border_copy_shader(copy, card.border);
         std::array<float, 4> innerColor = cardBorderColor(card, liveTargetView());
         std::array<float, 4> outerColor = config().colors.border.outer;
         const float presentedOpacity = card.view->presentedOpacity();

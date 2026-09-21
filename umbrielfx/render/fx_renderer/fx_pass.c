@@ -1,7 +1,9 @@
 #include "render/color.h"
 #include "render/egl.h"
 #include "render/fx_renderer/animation_history.h"
+#include "render/fx_renderer/decoration.h"
 #include "render/fx_renderer/fx_renderer.h"
+#include "render/fx_renderer/postprocess.h"
 #include "render/fx_renderer/shaders.h"
 #include "render/pass.h"
 #include "render/tracy.h"
@@ -347,6 +349,58 @@ static bool render_pass_apply_output_transform(struct fx_gles_render_pass* pass)
   return true;
 }
 
+bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass) {
+  struct fx_framebuffer* output = pass->output_buffer;
+  struct fx_renderer* renderer = output->renderer;
+  struct fx_framebuffer** capture = &output->effect_capture_buffer;
+  if (*capture != NULL && (*capture)->buffer->n_locks > 0) {
+    (*capture)->effect_capture_parent = NULL;
+    wlr_buffer_drop((*capture)->buffer);
+    *capture = NULL;
+  }
+  bool failed = false, ok = false;
+  if (renderer->allocator == NULL)
+    return false;
+  fx_framebuffer_get_or_create_custom(
+      renderer, renderer->allocator, output->buffer->width, output->buffer->height, output->drm_format, capture, &failed
+  );
+  if (failed || *capture == NULL)
+    goto restore;
+  (*capture)->effect_capture_parent = output;
+  if (!pass->has_color_transform || output->capture_sdr) {
+    struct wlr_texture* source = fx_texture_from_buffer(&renderer->wlr_renderer, pass->buffer->buffer);
+    if (source == NULL)
+      goto restore;
+    struct wlr_render_pass* copy = wlr_renderer_begin_buffer_pass(&renderer->wlr_renderer, (*capture)->buffer, NULL);
+    if (copy != NULL) {
+      wlr_render_pass_add_texture(
+          copy,
+          &(struct wlr_render_texture_options){
+              .texture = source,
+              .dst_box = {0, 0, output->buffer->width, output->buffer->height},
+              .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+              .filter_mode = WLR_SCALE_FILTER_NEAREST,
+              .transfer_function =
+                  pass->has_color_transform ? WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR : WLR_COLOR_TRANSFER_FUNCTION_SRGB
+          }
+      );
+      ok = wlr_render_pass_submit(copy);
+    }
+    wlr_texture_destroy(source);
+  } else {
+    pass->output_buffer = *capture;
+    ok = render_pass_apply_output_transform(pass);
+    pass->output_buffer = output;
+  }
+  // Publish only after submission. Internal imports during the subsequent
+  // display composition must continue to read the live render target.
+  pass->effect_capture_saved = ok;
+restore:
+  fx_framebuffer_bind(pass->buffer);
+  glViewport(0, 0, pass->buffer->buffer->width, pass->buffer->buffer->height);
+  return ok;
+}
+
 static bool render_pass_submit(struct wlr_render_pass* wlr_pass) {
   struct fx_gles_render_pass* pass = fx_get_render_pass(wlr_pass);
   struct fx_renderer* renderer = pass->buffer->renderer;
@@ -408,6 +462,14 @@ static bool render_pass_submit(struct wlr_render_pass* wlr_pass) {
 
 out:
   animation_history_commit_updates(pass, ok);
+  fx_postprocess_commit(&pass->postprocess_updates, ok);
+  pass->output_buffer->effect_capture_valid = ok && pass->effect_capture_saved;
+  if (!pass->effect_capture_saved && pass->output_buffer->effect_capture_buffer != NULL) {
+    struct fx_framebuffer* capture = pass->output_buffer->effect_capture_buffer;
+    capture->effect_capture_parent = NULL;
+    pass->output_buffer->effect_capture_buffer = NULL;
+    wlr_buffer_drop(capture->buffer);
+  }
   if (pass->output_buffers != NULL) {
     if (ok) {
       pass->output_buffers->blend_valid = true;
@@ -1668,6 +1730,259 @@ void fx_render_pass_add_rounded_rect(
   TRACY_BOTH_ZONES_END;
 }
 
+static void
+decoration_uniforms(struct fx_decoration_shader* shader, const struct fx_render_border_options* options, bool linear) {
+  const float coordinate_scale = options->shader_coordinate_scale > 0 ? options->shader_coordinate_scale : 1;
+  glUniform2f(
+      shader->size, options->logical_hole.width / coordinate_scale, options->logical_hole.height / coordinate_scale
+  );
+  glUniform2f(shader->raster, options->logical_width / coordinate_scale, options->logical_height / coordinate_scale);
+  glUniform2f(shader->origin, options->logical_hole.x / coordinate_scale, options->logical_hole.y / coordinate_scale);
+  glUniform4f(
+      shader->radius, options->logical_corners.top_left / coordinate_scale,
+      options->logical_corners.top_right / coordinate_scale, options->logical_corners.bottom_right / coordinate_scale,
+      options->logical_corners.bottom_left / coordinate_scale
+  );
+  glUniform1f(
+      shader->width, (options->inner_width + options->outer_width) / (options->shader_scale * coordinate_scale)
+  );
+  glUniform1f(shader->padding, options->shader_padding / coordinate_scale);
+  glUniform1f(shader->time, options->shader_time);
+  glUniform1f(shader->scale, options->shader_scale * coordinate_scale);
+  // User GLSL is authored in sRGB. Convert its straight result before blending
+  // into the linear working target, preserving the normal colour pipeline.
+  const struct wlr_render_color base = options->inner_width > 0 ? options->inner_color : options->outer_color;
+  const float alpha = base.a;
+  glUniform4f(
+      shader->color, alpha > 0 ? base.r / alpha : 0, alpha > 0 ? base.g / alpha : 0, alpha > 0 ? base.b / alpha : 0,
+      alpha
+  );
+  glUniform1i(shader->linear, linear);
+  glUniform1i(shader->emission, false);
+}
+
+// Each ring owns its small logical-resolution pyramid. Reusing it across outputs
+// is safe: emission never samples the scene. AA scale is part of the cache key.
+struct fx_decoration_light {
+  struct fx_decoration_shader* shader;
+  GLuint textures[7], framebuffers[7];
+  int widths[7], heights[7], levels;
+  float key[24];
+  bool valid, failed;
+};
+
+static void decoration_light_clear(struct fx_decoration_light* light) {
+  glDeleteFramebuffers(7, light->framebuffers);
+  glDeleteTextures(7, light->textures);
+  memset(light->framebuffers, 0, sizeof(light->framebuffers));
+  memset(light->textures, 0, sizeof(light->textures));
+  light->valid = false;
+}
+
+void fx_decoration_light_destroy(struct fx_decoration_light* light) {
+  if (light == NULL)
+    return;
+  if (light->shader->renderer != NULL) {
+    struct wlr_egl_context previous;
+    if (wlr_egl_make_current(light->shader->renderer->egl, &previous)) {
+      decoration_light_clear(light);
+      wlr_egl_restore_context(&previous);
+    }
+  }
+  fx_decoration_shader_unref(light->shader);
+  free(light);
+}
+
+static bool decoration_light_allocate(struct fx_decoration_light* light, GLenum type) {
+  GLint maximum;
+  glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
+  if (light->widths[0] > maximum || light->heights[0] > maximum)
+    return false;
+  for (int i = 0; i <= light->levels; ++i) {
+    glGenTextures(1, &light->textures[i]);
+    glBindTexture(GL_TEXTURE_2D, light->textures[i]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, light->widths[i], light->heights[i], 0, GL_RGBA, type, NULL);
+    glGenFramebuffers(1, &light->framebuffers[i]);
+    glBindFramebuffer(GL_FRAMEBUFFER, light->framebuffers[i]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, light->textures[i], 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+      return false;
+  }
+  return true;
+}
+
+static void decoration_light_blur(
+    struct fx_decoration_light* light, int source, int target, struct blur_shader* shader, float offset, bool down
+) {
+  glBindFramebuffer(GL_FRAMEBUFFER, light->framebuffers[target]);
+  glViewport(0, 0, light->widths[target], light->heights[target]);
+  glBindTexture(GL_TEXTURE_2D, light->textures[source]);
+  glUseProgram(shader->program);
+  const struct wlr_box box = {.width = light->widths[target], .height = light->heights[target]};
+  float projection[9];
+  matrix_projection(projection, box.width, box.height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  set_proj_matrix(shader->proj, projection, &box);
+  // Existing Kawase shaders account for the level ratio in their UV expression.
+  const struct wlr_fbox uv = {.width = down ? 0.5 : 2, .height = down ? 0.5 : 2};
+  set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+  glUniform1i(shader->tex, 0);
+  glUniform1f(shader->radius, offset);
+  glUniform2f(shader->halfpixel, 0.5f / light->widths[source], 0.5f / light->heights[source]);
+  glUniform4f(
+      shader->sample_bounds, 0.5f / light->widths[source], 0.5f / light->heights[source],
+      1 - 0.5f / light->widths[source], 1 - 0.5f / light->heights[source]
+  );
+  render(&box, NULL, shader->pos_attrib);
+}
+
+bool fx_render_pass_add_decoration_light(
+    struct fx_gles_render_pass* pass, struct fx_decoration_light** cache, const struct fx_render_border_options* ring,
+    const struct fx_decoration_light_parameters* parameters, const struct wlr_box* box, const pixman_region32_t* clip
+) {
+  struct fx_decoration_shader* shader = ring->shader;
+  if (!parameters->enabled
+      || parameters->intensity <= 0
+      || shader == NULL
+      || shader->renderer != pass->buffer->renderer
+      || shader->light_program == 0)
+    return false;
+  if (*cache != NULL && (*cache)->shader != shader) {
+    fx_decoration_light_destroy(*cache);
+    *cache = NULL;
+  }
+  if (*cache == NULL) {
+    *cache = calloc(1, sizeof(**cache));
+    if (*cache == NULL)
+      return false;
+    (*cache)->shader = fx_decoration_shader_ref(shader);
+  }
+  struct fx_decoration_light* light = *cache;
+  if (light->failed)
+    return false;
+  const float z = ring->shader_coordinate_scale > 0 ? ring->shader_coordinate_scale : 1;
+  const float margin = ceilf(parameters->spread * 2 + 8);
+  const float width = ring->logical_width / z + margin * 2;
+  const float height = ring->logical_height / z + margin * 2;
+  const float key[] = {
+      width,
+      height,
+      ring->logical_hole.x / z,
+      ring->logical_hole.y / z,
+      ring->logical_hole.width / z,
+      ring->logical_hole.height / z,
+      ring->logical_corners.top_left / z,
+      ring->logical_corners.top_right / z,
+      ring->logical_corners.bottom_right / z,
+      ring->logical_corners.bottom_left / z,
+      ring->inner_width / ring->shader_scale / z,
+      ring->outer_width / ring->shader_scale / z,
+      ring->inner_color.r,
+      ring->inner_color.g,
+      ring->inner_color.b,
+      ring->inner_color.a,
+      ring->outer_color.r,
+      ring->outer_color.g,
+      ring->outer_color.b,
+      ring->outer_color.a,
+      ring->shader_time,
+      ring->shader_scale * z,
+      parameters->threshold,
+      parameters->spread
+  };
+  const bool changed = !light->valid || memcmp(key, light->key, sizeof(key)) != 0;
+  GLint viewport[4];
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST), stencil = glIsEnabled(GL_STENCIL_TEST);
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_STENCIL_TEST);
+  glActiveTexture(GL_TEXTURE0);
+  if (changed) {
+    const int w = (int)ceilf(width * 0.5f), h = (int)ceilf(height * 0.5f);
+    const float radius = parameters->spread * 0.5f;
+    const int levels = fminf(6, fmaxf(1, ceilf(log2f(radius / 3 + 1))));
+    if (light->textures[0] == 0 || light->widths[0] != w || light->heights[0] != h || light->levels != levels) {
+      decoration_light_clear(light);
+      light->levels = levels;
+      for (int i = 0; i <= levels; ++i) {
+        light->widths[i] = fmaxf(1, (w + (1 << i) - 1) >> i);
+        light->heights[i] = fmaxf(1, (h + (1 << i) - 1) >> i);
+      }
+      bool allocated =
+          shader->renderer->exts.OES_texture_half_float_linear && decoration_light_allocate(light, GL_HALF_FLOAT_OES);
+      if (!allocated) {
+        decoration_light_clear(light);
+        allocated = decoration_light_allocate(light, GL_UNSIGNED_BYTE);
+      }
+      if (!allocated) {
+        decoration_light_clear(light);
+        light->failed = true;
+        wlr_log(WLR_ERROR, "Cannot allocate decoration illumination; keeping the ordinary ring");
+        goto restore;
+      }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, light->framebuffers[0]);
+    glViewport(0, 0, w, h);
+    glDisable(GL_BLEND);
+    glUseProgram(shader->program);
+    float projection[9];
+    matrix_projection(projection, w, h, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+    const struct wlr_box emission_box = {.width = w, .height = h};
+    set_proj_matrix(shader->proj, projection, &emission_box);
+    const struct wlr_fbox uv = {.width = 1, .height = 1};
+    set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+    decoration_uniforms(shader, ring, false);
+    glUniform2f(shader->raster, width, height);
+    glUniform2f(shader->origin, ring->logical_hole.x / z + margin, ring->logical_hole.y / z + margin);
+    glUniform1i(shader->emission, true);
+    glUniform1f(shader->threshold, parameters->threshold);
+    glUniform4f(
+        shader->emission_bounds, -ring->logical_hole.x / z, -ring->logical_hole.y / z,
+        (ring->logical_width - ring->logical_hole.x) / z, (ring->logical_height - ring->logical_hole.y) / z
+    );
+    render(&emission_box, NULL, shader->position);
+    glUniform1i(shader->emission, false);
+    const float offset = radius / (3 * ((1 << levels) - 1));
+    for (int i = 1; i <= levels; ++i)
+      decoration_light_blur(light, i - 1, i, &shader->renderer->shaders.blur1, offset, true);
+    for (int i = levels; i > 0; --i)
+      decoration_light_blur(light, i, i - 1, &shader->renderer->shaders.blur2, offset, false);
+    memcpy(light->key, key, sizeof(key));
+    light->valid = true;
+  }
+restore:
+  fx_framebuffer_bind(pass->buffer);
+  glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+  if (scissor)
+    glEnable(GL_SCISSOR_TEST);
+  if (stencil)
+    glEnable(GL_STENCIL_TEST);
+  setup_blending(WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
+  if (!light->valid)
+    return false;
+  glUseProgram(shader->light_program);
+  glBindTexture(GL_TEXTURE_2D, light->textures[0]);
+  glUniform1i(shader->light_tex, 0);
+  glUniform1f(
+      shader->light_gain,
+      parameters->intensity
+          * fmaxf(1, parameters->spread / fmaxf(1, (ring->inner_width + ring->outer_width) / ring->shader_scale / z))
+  );
+  glUniform1i(shader->light_linear, pass->has_color_transform);
+  set_proj_matrix(shader->light_proj, pass->projection_matrix, box);
+  const struct wlr_fbox uv = {.width = 1, .height = 1};
+  set_tex_matrix(shader->light_tex_proj, ring->shader_transform, &uv);
+  glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_COLOR, GL_ZERO, GL_ONE);
+  render(box, clip, shader->light_position);
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  render_pass_mark_updated(pass, box, clip);
+  return true;
+}
+
 void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx_render_border_options* options) {
   struct fx_renderer* renderer = pass->buffer->renderer;
   const struct wlr_render_color inner_color = pass_color(pass, &options->inner_color);
@@ -1686,6 +2001,20 @@ void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx
   TRACY_BOTH_ZONES_START(renderer);
   push_fx_debug(renderer);
   setup_blending(WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
+
+  if (options->shader != NULL && options->shader->renderer == renderer) {
+    struct fx_decoration_shader* shader = options->shader;
+    glUseProgram(shader->program);
+    set_proj_matrix(shader->proj, pass->projection_matrix, &options->box);
+    const struct wlr_fbox unit = {.width = 1, .height = 1};
+    set_tex_matrix(shader->tex_proj, options->shader_transform, &unit);
+    decoration_uniforms(shader, options, pass->has_color_transform);
+    render(&options->box, &clip_region, shader->position);
+    pixman_region32_fini(&clip_region);
+    pop_fx_debug(renderer);
+    TRACY_BOTH_ZONES_END;
+    return;
+  }
 
   struct border_shader shader = renderer->shaders.border;
   glUseProgram(shader.program);
@@ -2388,6 +2717,7 @@ struct fx_gles_render_pass* fx_begin_buffer_pass(
   struct wlr_buffer* wlr_buffer = buffer->buffer;
   const bool has_color_transform = color_transform != NULL;
   buffer->capture_sdr = false;
+  buffer->effect_capture_valid = false;
   buffer->sdr_capture_valid = false;
   buffer->output_buffers = output_buffers;
   buffer->output_generation = 0;
@@ -2492,6 +2822,7 @@ struct fx_gles_render_pass* fx_begin_buffer_pass(
   pixman_region32_init(&pass->updated_region);
   pass->has_blur = false;
   wl_list_init(&pass->animation_history_updates);
+  wl_list_init(&pass->postprocess_updates);
 
   matrix_projection(pass->projection_matrix, wlr_buffer->width, wlr_buffer->height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
 

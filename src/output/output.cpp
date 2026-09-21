@@ -4,6 +4,7 @@
 #include "config/resolve.h"
 #include "core/log.h"
 #include "core/tracy.h"
+#include "input/cursor.h"
 #include "input/seat.h"
 #include "layer/layer_surface.h"
 #include "output/frame_schedule.h"
@@ -27,6 +28,8 @@
 #include <ctime>
 #include <drm_fourcc.h>
 #include <format>
+#include <umbrielfx/render/decoration.h>
+#include <umbrielfx/render/postprocess.h>
 
 namespace umbriel {
 
@@ -68,10 +71,14 @@ namespace umbriel {
     m_frameRetryTimer =
         wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onFrameRetryTimer, this);
 
+    m_shaderFrameTimer =
+        wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onFrameRetryTimer, this);
+
     applyCursorConfig();
     m_desktopEnabled = configuredEnabled();
     (void)applyConfiguredState();
     m_sceneOutput = wlr_scene_output_create(m_server->scene(), m_output);
+    applyPostprocessConfig();
     wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
     updateSceneSdrWhite();
     if (desktopEnabled()) {
@@ -204,6 +211,37 @@ namespace umbriel {
 
   void Output::applyDirectScanoutConfig() {
     wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
+  }
+
+  void Output::applyPostprocessConfig() {
+    if (m_sceneOutput == nullptr)
+      return;
+    const auto& shaders = config().shaders;
+    std::vector<fx_scene_postprocess> effects;
+    for (const auto& region : shaders.regions) {
+      if (!region.output.empty() && outputNameMatch(identity(), region.output) == OutputNameMatch::None)
+        continue;
+      if (auto* chain = postprocessShader(region.preset))
+        effects.push_back({chain, {region.x, region.y, region.width, region.height}, 0});
+    }
+    const auto* rule = findOutputRule(config(), identity());
+    const auto outputName =
+        selectedShader(m_shaderSelection, rule != nullptr && !rule->shader.empty() ? rule->shader : shaders.output);
+    if (auto* chain = postprocessShader(outputName))
+      effects.push_back({chain, {}, 0});
+    const auto globalName = selectedShader(globalShaderSelection(), shaders.global);
+    const auto* preset = postprocessPreset(globalName);
+    const fx_scene_postprocess global{
+        postprocessShader(globalName), {}, preset != nullptr ? static_cast<float>(preset->cursorRadius) : 0
+    };
+    const auto redraw = shaders.redraw == "continuous" ? FX_POSTPROCESS_CONTINUOUS
+        : shaders.redraw == "on-damage"                ? FX_POSTPROCESS_ON_DAMAGE
+                                                       : FX_POSTPROCESS_AUTO;
+    wlr_scene_output_set_postprocess(
+        m_sceneOutput, effects.data(), effects.size(), global, shaders.inCapture, shaders.readsCursor, redraw
+    );
+    if (const auto* cursor = m_server->cursor())
+      wlr_scene_postprocess_pointer(m_server->scene(), cursor->wlr()->x, cursor->wlr()->y, !cursor->hidden());
   }
 
   void Output::setHdrFallbackReason(std::string_view reason) {
@@ -667,6 +705,8 @@ namespace umbriel {
   }
 
   Output::~Output() {
+    if (m_shaderFrameTimer != nullptr)
+      wl_event_source_remove(m_shaderFrameTimer);
     if (m_frameRetryTimer != nullptr) {
       wl_event_source_remove(m_frameRetryTimer);
       m_frameRetryTimer = nullptr;
@@ -978,6 +1018,8 @@ namespace umbriel {
       wl_event_source_timer_update(m_frameRetryTimer, 0);
     }
 
+    if (m_shaderFrameTimer != nullptr)
+      wl_event_source_timer_update(m_shaderFrameTimer, 0);
     flushDirty();
     if (m_hasDeferredMode) {
       m_hasDeferredMode = false;
@@ -995,7 +1037,17 @@ namespace umbriel {
     // A direct-scanned fullscreen client may stop submitting as soon as it loses focus. On VRR outputs that can leave
     // the first workspace-switch frame waiting on the old client, so the compositor never gets a vblank to advance the
     // slide. Keep animated outputs on the render path until their final composed frame has settled.
-    const bool animationsActive = m_server->animationsActiveFor(this);
+    const bool decorationActive = !m_server->sessionLocked()
+        && wlr_scene_output_tick_decoration_shaders(
+            m_sceneOutput, static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / 1e9
+        );
+    const bool nativeAnimationsActive = m_server->animationsActiveFor(this);
+    const bool postprocessActive = wlr_scene_output_tick_postprocess(
+        m_sceneOutput, static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / 1e9,
+        m_server->sessionLocked()
+    );
+    const bool shadersActive = decorationActive || postprocessActive;
+    const bool animationsActive = nativeAnimationsActive || shadersActive;
     if (animationsActive != m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, animationsActive);
       m_animationRenderLocked = animationsActive;
@@ -1171,7 +1223,16 @@ namespace umbriel {
     // would recreate the same immediate retry loop.
     switch (outputFrameFollowup(m_server->stopping(), m_server->session(), commitFailed, animationsActive)) {
     case OutputFrameFollowup::Schedule:
-      wlr_output_schedule_frame(m_output);
+      if (shadersActive
+          && !nativeAnimationsActive
+          && config().appearance.shaderFps > 0
+          && m_shaderFrameTimer != nullptr) {
+        wl_event_source_timer_update(
+            m_shaderFrameTimer, (1000 + config().appearance.shaderFps - 1) / config().appearance.shaderFps
+        );
+      } else {
+        wlr_output_schedule_frame(m_output);
+      }
       break;
     case OutputFrameFollowup::RetryDelayed:
       armFrameRetry();

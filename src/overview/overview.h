@@ -167,6 +167,7 @@ namespace umbriel {
       size_t workspaceIndex = 0; // workspace index inside the output's group
       wlr_scene_tree* tree = nullptr;
       wlr_scene_border* border = nullptr;
+      wlr_scene_rect* shader = nullptr;
       SurfaceBlur blur;
       std::vector<std::unique_ptr<CardSurface>> surfaces;
       wlr_box box{}; // content box in layout coordinates

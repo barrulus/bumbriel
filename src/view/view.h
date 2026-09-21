@@ -2,6 +2,7 @@
 #include "config/config.h"
 #include "core/animation.h"
 #include "scene/node.h"
+#include "scene/postprocess.h"
 #include "view/decoration.h"
 #include "view/deferred_unfullscreen.h"
 #include "view/floating.h"
@@ -68,6 +69,9 @@ namespace umbriel {
     // Effective optional window-rule override used by tearing diagnostics.
     [[nodiscard]] std::optional<bool> tearingRuleOverride();
     [[nodiscard]] bool onActiveWorkspace() const { return m_onActiveWorkspace; }
+    fx_postprocess_chain* windowShader();
+    void refreshWindowShader();
+    ShaderSelection& shaderSelection() { return m_shaderSelection; }
     [[nodiscard]] bool tiled() const { return m_tiled; }
     [[nodiscard]] bool floating() const { return !m_tiled; }
     [[nodiscard]] bool isAloneInLayout() const;
@@ -545,6 +549,9 @@ namespace umbriel {
     // must never sample the composited desktop behind translucent content.
     wlr_scene* m_captureScene = nullptr;
     ViewDecoration m_decoration;
+    ShaderSelection m_shaderSelection;
+    wlr_scene_rect* m_shaderRect = nullptr;
+    wlr_scene_rect* m_captureShaderRect = nullptr;
     ViewPresentation m_presentation;
     wlr_box m_presentedBox{};
     wlr_foreign_toplevel_handle_v1* m_foreign = nullptr;

@@ -77,6 +77,10 @@ curve = "easeout"
 
 ## Event tables
 
+The [Biri collection](biri-shaders.md) provides matched open/close presets and
+persistent active-border shaders. Persistent rings have their own settings and
+continue after the `animation.border` colour transition ends.
+
 Each event table accepts `enabled`, `duration_ms`, and `curve`. The following
 fields are specific to individual event tables:
 

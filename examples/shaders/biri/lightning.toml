@@ -1,0 +1,23 @@
+# Include this file from your config; paths resolve beside this file.
+[animation.windows_in]
+enabled = true
+duration_ms = 400
+curve = "linear"
+shader = "lightning-open.glsl"
+
+[animation.windows_out]
+enabled = true
+duration_ms = 400
+curve = "linear"
+shader = "lightning-close.glsl"
+
+# Named pair for shader:animation selection and cycling.
+[animation.pair.lightning.open]
+shader = "lightning-open.glsl"
+duration_ms = 400
+curve = "linear"
+
+[animation.pair.lightning.close]
+shader = "lightning-close.glsl"
+duration_ms = 400
+curve = "linear"

@@ -1,0 +1,7 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."cursor.adaptive"]
+scope = "global"
+cursor_radius = 130
+
+[[shaders.preset."cursor.adaptive".passes]]
+shader = "adaptive.glsl"

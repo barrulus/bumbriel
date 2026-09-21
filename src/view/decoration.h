@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/config.h"
 #include "scene/border_rect.h"
 #include "scene/surface_blur.h"
 #include "scene/surface_shadow.h"
@@ -33,6 +34,8 @@ namespace umbriel {
     [[nodiscard]] bool bordersVisible() const;
     [[nodiscard]] wlr_scene_tree* borderTree() const { return m_borderTree; }
     void setBordersEnabled(bool enabled);
+    void setShaderFocused(bool focused);
+    void setLightSuppressed(bool suppressed);
     void updateBorderGeometry(int contentWidth, int contentHeight);
     // `alpha` premultiplies the border color so a fading view's ring fades with it.
     void setBorderColor(bool focused, bool scratchpad, float alpha);
@@ -77,6 +80,11 @@ namespace umbriel {
     void hideEffects();
 
   private:
+    void updateShader();
+    DecorationShaderConfig m_shaderConfig;
+    bool m_shaderFocused = false;
+    bool m_lightSuppressed = false;
+    int m_shaderPadding = 0;
     wlr_scene_tree* m_borderTree = nullptr;
     wlr_scene_border* m_border = nullptr;
     SurfaceBlur m_blur;

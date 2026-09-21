@@ -528,15 +528,16 @@ static struct wlr_texture *fx_texture_from_dmabuf(
 	}
 
 	struct fx_framebuffer *texture_buffer = buffer;
-	if (buffer->capture_sdr) {
-		if (!update_sdr_capture_buffer(buffer)) {
-			return NULL;
-		}
-		texture_buffer = buffer->output_buffers != NULL
-			? buffer->output_buffers->sdr_capture_buffer
-			: buffer->sdr_capture_buffer;
-	}
-	return fx_texture_from_framebuffer(renderer, texture_buffer,
+        if (buffer->effect_capture_valid && buffer->effect_capture_buffer != NULL) {
+          texture_buffer = buffer->effect_capture_buffer;
+        } else if (buffer->capture_sdr) {
+          if (!update_sdr_capture_buffer(buffer)) {
+            return NULL;
+          }
+          texture_buffer =
+              buffer->output_buffers != NULL ? buffer->output_buffers->sdr_capture_buffer : buffer->sdr_capture_buffer;
+        }
+        return fx_texture_from_framebuffer(renderer, texture_buffer,
 		texture_buffer->buffer);
 }
 

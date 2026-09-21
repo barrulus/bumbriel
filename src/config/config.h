@@ -203,7 +203,24 @@ namespace umbriel {
   tearingEnabled(bool outputAllowed, std::optional<bool> windowOverride, bool clientHintAsync) {
     return outputAllowed && windowOverride.value_or(clientHintAsync);
   }
+  struct DecorationShaderConfig {
+    bool enabled = true;
+    bool animated = true;
+    double speed = 1.0;
+    int padding = 0;
+    struct Light {
+      bool enabled = false;
+      double spread = 80;
+      double intensity = 1;
+      double threshold = 0.5;
+      bool operator==(const Light&) const = default;
+    } light;
+    std::optional<AnimationShaderSource> shader;
+    bool operator==(const DecorationShaderConfig&) const = default;
+  };
+
   struct OutputRule {
+    std::string shader;
     std::string name;
     // False powers the monitor off, removes it from the layout, and hides its
     // workspaces from the desktop. Content is preserved while disabled.
@@ -331,6 +348,8 @@ namespace umbriel {
     // true forces async preference, and false vetoes it.
     std::optional<bool> allowTearing;
     std::optional<HdrMode> hdr;
+    std::optional<DecorationShaderConfig> borderShader;
+    std::optional<std::string> shader;
     std::optional<double> opacity; // 0.0-1.0
     std::optional<bool> blur;
     std::optional<bool> blurPopups;
@@ -372,6 +391,8 @@ namespace umbriel {
           && vrr == other.vrr
           && allowTearing == other.allowTearing
           && hdr == other.hdr
+          && borderShader == other.borderShader
+          && shader == other.shader
           && opacity == other.opacity
           && blur == other.blur
           && blurPopups == other.blurPopups
@@ -404,6 +425,8 @@ namespace umbriel {
     std::optional<VrrMode> vrr;
     std::optional<bool> allowTearing;
     std::optional<HdrMode> hdr;
+    std::optional<DecorationShaderConfig> borderShader;
+    std::optional<std::string> shader;
     std::optional<double> opacity;
     std::optional<bool> blur;
     std::optional<bool> blurPopups;
@@ -456,6 +479,33 @@ namespace umbriel {
   };
 
   struct Config {
+    struct Shaders {
+      struct Pass {
+        std::optional<AnimationShaderSource> source;
+        bool buffer = false;
+        bool operator==(const Pass&) const = default;
+      };
+      struct Preset {
+        std::string name;
+        std::string scope = "global";
+        int cursorRadius = 0;
+        std::vector<Pass> passes;
+        bool operator==(const Preset&) const = default;
+      };
+      struct Region {
+        std::string output, preset;
+        int x = 0, y = 0, width = 0, height = 0;
+        bool operator==(const Region&) const = default;
+      };
+      std::vector<Preset> presets;
+      std::vector<Region> regions;
+      std::string window, output, global;
+      std::string redraw = "auto";
+      bool enabled = true;
+      bool inCapture = false;
+      bool readsCursor = false;
+      bool operator==(const Shaders&) const = default;
+    } shaders;
     // Every color Umbriel draws, each an independent literal. `background`
     // through `error` are the palette Umbriel's own panels paint with: the
     // cheatsheet, the diagnostics banner, the quit confirmation, and overview
@@ -497,6 +547,8 @@ namespace umbriel {
     } colors;
 
     struct Appearance {
+      DecorationShaderConfig borderShader;
+      int shaderFps = 0;
       int borderWidth = 2;
       int outerBorderWidth = 0;
       int cornerRadius = 10;
@@ -550,6 +602,14 @@ namespace umbriel {
         std::string style = "fade";
         bool operator==(const WindowsOut&) const = default;
       } windowsOut;
+
+      struct Pair {
+        WindowsIn open;
+        WindowsOut close;
+        bool operator==(const Pair&) const = default;
+      };
+      std::map<std::string, Pair> pairs;
+      std::string preset;
 
       struct WindowsMove {
         std::optional<AnimationShaderSource> shader;

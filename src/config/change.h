@@ -12,6 +12,7 @@ namespace umbriel {
     bool colors = false;
     bool appearance = false;
     bool animation = false;
+    bool shaders = false;
     bool overview = false;
     bool hotCorners = false;
     bool layout = false;
@@ -33,6 +34,7 @@ namespace umbriel {
       return colors
           || appearance
           || animation
+          || shaders
           || overview
           || hotCorners
           || layout

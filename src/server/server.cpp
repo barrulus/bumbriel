@@ -20,7 +20,9 @@
 #include "scene/cheatsheet.h"
 #include "scene/color.h"
 #include "scene/config_banner.h"
+#include "scene/decoration_shader.h"
 #include "scene/hint_rect.h"
+#include "scene/postprocess.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
 #include "server/ipc.h"
@@ -30,6 +32,8 @@
 #include "workspace/scratchpad.h"
 #include "workspace/workspace.h"
 #include "xwayland/supervisor.h"
+
+#include <umbrielfx/render/decoration.h>
 
 extern "C" {
 #include <umbrielfx/render/animation.h>
@@ -328,6 +332,8 @@ namespace umbriel {
     }
 
     prepareAnimationShaders(m_renderer);
+    prepareDecorationShaders(m_renderer);
+    preparePostprocessShaders(m_renderer);
     m_compositor = wlr_compositor_create(m_display, 5, m_renderer);
     wlr_subcompositor_create(m_display);
     wlr_data_device_manager_create(m_display);
@@ -436,6 +442,9 @@ namespace umbriel {
     m_dragShadowTree = wlr_scene_tree_create(&m_scene->tree);
     m_dragTree = wlr_scene_tree_create(&m_scene->tree);
     m_dragIconTree = wlr_scene_tree_create(&m_scene->tree);
+    // Local illumination stays below panels. Pinned/fullscreen content retains
+    // its existing privileged position above panels and therefore above spill.
+    wlr_scene_set_decoration_light_layer(m_scene, wlr_scene_tree_create(&m_scene->tree));
     m_shellLayerTrees[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(&m_scene->tree);
     m_fullscreenTree = wlr_scene_tree_create(&m_scene->tree);
     m_pinnedShadowTree = wlr_scene_tree_create(&m_scene->tree);
@@ -646,6 +655,8 @@ namespace umbriel {
     wlr_scene_node_destroy(&m_scene->tree.node);
     wlr_allocator_destroy(m_allocator);
     clearAnimationShaderCache();
+    clearDecorationShaderCache();
+    clearPostprocessShaders();
     wlr_renderer_destroy(m_renderer);
     m_backendManager.reset();
     m_backend = nullptr;
@@ -1242,7 +1253,7 @@ namespace umbriel {
       style = overrides->style;
     } else {
       const auto& animation = config().animation;
-      const auto& close = animation.windowsOut;
+      const auto close = selectedWindowsOut();
       if (!animation.enabled || !close.enabled) {
         if (shadow.tree != nullptr) {
           wlr_scene_node_destroy(&shadow.tree->node);

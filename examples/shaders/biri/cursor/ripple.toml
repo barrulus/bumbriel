@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."cursor.ripple"]
+scope = "global"
+
+[[shaders.preset."cursor.ripple".passes]]
+shader = "ripple.glsl"

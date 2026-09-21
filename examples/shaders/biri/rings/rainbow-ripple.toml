@@ -1,0 +1,11 @@
+# Applies to the active complete border; padding reserves raster space only.
+[appearance]
+border_width = 6
+outer_border_width = 0
+
+[appearance.border_shader]
+enabled = true
+animated = true
+speed = 1
+padding = 14
+shader = "rainbow-ripple.glsl"
