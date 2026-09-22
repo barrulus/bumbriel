@@ -1,4 +1,3 @@
-# Register all postprocess presets and lifecycle pairs without selecting an effect.
 [include]
 files = [
   "windows.toml",

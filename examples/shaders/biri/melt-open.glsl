@@ -1,11 +1,7 @@
-// Adapted from Biri resources/shaders/close/close-melt.kdl.
-// Original shader collection by Barrulus. GPL-3.0; see LICENSE in this directory.
-// Editable native Umbriel animation shader; returns premultiplied RGBA.
-
+// Adapted from Biri resources/shaders/close/close-melt.kdl; GPL-3.0-only, see LICENSE.
 vec4 animation(vec2 uv) {
     float progress = umbriel_clamped_progress;
 
-    // Exact lifecycle endpoints; no native fade is applied by the host.
     if (progress <= 0.0) return vec4(0.0);
     if (progress >= 1.0) return umbriel_sample(uv);
 
@@ -13,18 +9,14 @@ vec4 animation(vec2 uv) {
         return vec4(0.0);
     }
 
-    // Reverse melt: window rises from a puddle at the bottom
     float inv = 1.0 - progress;
 
-    // Vertical stretch from squashed to full height
     float squash = 0.3 + 0.7 * progress;
     float new_y = 1.0 - (1.0 - uv.y) / squash;
 
-    // Horizontal squeeze from wide puddle to normal width
     float h_stretch = 1.0 + inv * 0.4 * smoothstep(0.5, 1.0, uv.y);
     float new_x = 0.5 + (uv.x - 0.5) * h_stretch;
 
-    // Wavy distortion that settles as window forms
     float wave = sin(uv.x * 15.0 + inv * 8.0) * 0.01 * inv;
     new_y += wave;
 
@@ -34,7 +26,6 @@ vec4 animation(vec2 uv) {
 
     vec4 color = umbriel_sample(vec3(new_x, new_y, 1.0).xy);
 
-    // Fade in
     float fade = smoothstep(0.0, 0.5, progress);
 
     return color * fade;

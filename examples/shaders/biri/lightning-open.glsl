@@ -1,7 +1,4 @@
-// Adapted from Biri resources/shaders/close/close-lightning.kdl.
-// Original shader collection by Barrulus. GPL-3.0; see LICENSE in this directory.
-// Editable native Umbriel animation shader; returns premultiplied RGBA.
-
+// Adapted from Biri resources/shaders/close/close-lightning.kdl; GPL-3.0-only, see LICENSE.
 float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -33,7 +30,6 @@ float fbm(vec2 p) {
 vec4 animation(vec2 uv) {
     float progress = umbriel_clamped_progress;
 
-    // Exact lifecycle endpoints; no native fade is applied by the host.
     if (progress <= 0.0) return vec4(0.0);
     if (progress >= 1.0) return umbriel_sample(uv);
 
@@ -46,7 +42,6 @@ vec4 animation(vec2 uv) {
 
     vec2 noise_uv = uv * 8.0 + vec2(umbriel_random_seed.x * 100.0);
 
-    // Expand the revealed region from the centre. The source ran this backwards.
     float noise_val = fbm(noise_uv) * 0.35;
     float reveal_radius = progress * 1.55 - 0.35 + noise_val;
 
@@ -56,10 +51,8 @@ vec4 animation(vec2 uv) {
     float inner_edge = reveal_radius - edge_width;
 
     if (dist < inner_edge) {
-        // Already revealed
         return color;
     } else if (dist < reveal_radius) {
-        // Electrical edge
         float edge_progress = (dist - inner_edge) / edge_width;
 
         vec3 lightning_white = vec3(1.0, 1.0, 1.0);
@@ -72,7 +65,6 @@ vec4 animation(vec2 uv) {
 
         return vec4(glow_color * glow_alpha, glow_alpha);
     } else {
-        // Not yet reached
         return vec4(0.0);
     }
 }

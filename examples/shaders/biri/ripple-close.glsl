@@ -1,11 +1,7 @@
-// Adapted from Biri resources/shaders/close/close-ripple.kdl.
-// Original shader collection by Barrulus. GPL-3.0; see LICENSE in this directory.
-// Editable native Umbriel animation shader; returns premultiplied RGBA.
-
+// Adapted from Biri resources/shaders/close/close-ripple.kdl; GPL-3.0-only, see LICENSE.
 vec4 animation(vec2 uv) {
     float progress = umbriel_clamped_progress;
 
-    // Exact lifecycle endpoints; no native fade is applied by the host.
     if (progress <= 0.0) return umbriel_sample(uv);
     if (progress >= 1.0) return vec4(0.0);
 
@@ -16,7 +12,6 @@ vec4 animation(vec2 uv) {
     vec2 center = vec2(0.5, 0.5);
     float dist = distance(uv, center);
 
-    // Ripple parameters
     float wave_count = 4.0;
     float amplitude = 0.015 * smoothstep(0.0, 0.3, progress) * (1.0 - smoothstep(0.4, 1.0, progress));
     float speed = progress * 6.0;
@@ -34,7 +29,6 @@ vec4 animation(vec2 uv) {
 
     vec4 color = umbriel_sample(vec3(displaced_uv, 1.0).xy);
 
-    // Gentle fade out with expanding ring transparency
     float fade = 1.0 - smoothstep(0.2, 1.0, progress);
     float ring_fade = smoothstep(0.0, progress * 0.8 + 0.1, dist);
     fade *= mix(1.0, 1.0 - ring_fade, smoothstep(0.1, 0.7, progress));

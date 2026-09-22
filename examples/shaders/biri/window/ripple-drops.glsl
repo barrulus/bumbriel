@@ -1,57 +1,40 @@
 // Ported from Barrulus/biri; GPL-3.0-only, see ../LICENSE.
-// Descending smoothstep edges in the original are undefined in GLSL.
+// Descending smoothstep edges are undefined in GLSL.
 float biri_smoothstep(float a, float b, float x) {
     return a > b ? 1.0 - smoothstep(b, a, x) : smoothstep(a, b, x);
 }
-// Ripple drops — small water ripples spawn at RANDOM origins and flow outward across the window,
-// each a refracting wavefront that bends the content and leaves a faint bright crest, then fades.
-// A few independent drops, each with its own random position, tempo and phase — and a DUTY CYCLE
-// so every slot goes quiet between drops. That keeps only ~1 (occasionally 2) rippling at once,
-// like the odd raindrop rather than a downpour.
-//
-// Contract: vec4 postprocess(vec3 c); c.xy = 0..1 across the window (c.y = 0 at the TOP);
-// tex2D_screen(uv) samples the window; umbriel_size = window size in px; umbriel_time = seconds.
-//
-// Tuning knobs:
-//   N        -> number of drop slots (more = busier)
-//   DUTY     -> fraction of each slot's period that's active (lower = sparser, more dead time)
-//   period   -> 3.0 + up to 3.5s; overall tempo of new drops (bigger = calmer)
-//   0.55     -> how far each ripple expands (fraction of the window)
-//   0.010    -> refraction amount (bigger = stronger distortion)
-//   90.0     -> wave frequency (more = tighter concentric rings)
-//   hi*0.12  -> brightness of the ripple crests
 
 float hash11(float n){ return fract(sin(n*127.1)      * 43758.5453); }
 vec2  hash21(float n){ return fract(sin(vec2(n*127.1, n*311.7)) * 43758.5453); }
 
 vec4 postprocess(vec3 c){
     vec2 uv = c.xy;
-    vec2 ar = vec2(umbriel_size.x / max(umbriel_size.y, 1.0), 1.0);   // aspect correction -> round ripples
+    vec2 ar = vec2(umbriel_size.x / max(umbriel_size.y, 1.0), 1.0);
 
     const int   N    = 3;
-    const float DUTY = 0.5;                                      // active for half the period, idle the rest
+    const float DUTY = 0.5;
     vec2  disp = vec2(0.0);
     float hi   = 0.0;
 
     for (int i = 0; i < N; i++) {
         float fi     = float(i);
-        float period = 3.0 + hash11(fi + 0.3) * 3.5;            // each drop its own (slower) tempo
+        float period = 3.0 + hash11(fi + 0.3) * 3.5;
         float t      = umbriel_time / period + hash11(fi + 5.7) * 7.0;
-        float life   = fract(t);                                // 0..1 within the slot's period
-        vec2  origin = hash21(floor(t)*3.19 + fi*11.0);         // new random spot each cycle
+        float life   = fract(t);
+        vec2  origin = hash21(floor(t)*3.19 + fi*11.0);
 
-        float p    = life / DUTY;                               // 0..1 while active, >1 while idle
+        float p    = life / DUTY;
         vec2  delta = uv - origin;
-        float d    = length(delta * ar);                        // round distance to the drop
-        float r    = p * 0.55;                                  // wavefront expands outward
-        float env  = biri_smoothstep(0.0, 0.08, p) * biri_smoothstep(1.0, 0.5, p);  // fade in, out, and ZERO when idle (p>1)
-        float wave = sin((d - r)*90.0) * exp(-abs(d - r)*22.0) * env;      // wavelets at the front
+        float d    = length(delta * ar);
+        float r    = p * 0.55;
+        float env  = biri_smoothstep(0.0, 0.08, p) * biri_smoothstep(1.0, 0.5, p);
+        float wave = sin((d - r)*90.0) * exp(-abs(d - r)*22.0) * env;
 
-        vec2 dir = delta / max(length(delta), 1e-4);            // radial direction (uv space)
-        disp += dir * wave * 0.010;                             // refract the content
-        hi   += max(wave, 0.0);                                 // crest highlight
+        vec2 dir = delta / max(length(delta), 1e-4);
+        disp += dir * wave * 0.010;
+        hi   += max(wave, 0.0);
     }
 
     vec4 s = tex2D_screen(uv + disp);
-    return vec4(s.rgb + hi*0.12, s.a);                          // content + subtle bright crests
+    return vec4(s.rgb + hi*0.12, s.a);
 }

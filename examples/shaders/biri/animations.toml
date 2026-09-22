@@ -1,5 +1,3 @@
-# Register the four matched lifecycle pairs for shader:animation selection.
-
 [animation.pair.whirlpool.open]
 shader = "whirlpool-open.glsl"
 duration_ms = 400

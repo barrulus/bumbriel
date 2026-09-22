@@ -1,4 +1,3 @@
-# Register every window preset without enabling an effect.
 [include]
 files = [
   "window/adaptive-text-v3.toml",

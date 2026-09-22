@@ -1,18 +1,6 @@
-// Adapted from Biri resources/shaders/focus-ring/fuse.frag.
-// Barrulus shader collection; GPL-3.0, see ../LICENSE.
-// An irregular braided fuse with one to four travelling embers, ash and sparks.
-// File-based focus-ring shader: return straight RGBA; no main() or #version.
-// Suggested settings: width 6; padding 48;
-// shader { path "~/.config/niri/focus-ring/fuse.frag"; padding 48;
-//          light spread=90 intensity=1.4 threshold=0.5; }
-// Padding should be at least 8 * width for sparks, not window spacing.
-// The cord itself stays within the nominal ring width, including its bends.
-// This fits a width-6 ring into ordinary 6-pixel gaps, even at output edges.
-// The charred trail gradually recovers to make the animation repeat seamlessly.
-// Number of burning tips (1-4; out-of-range values are clamped).
-const int EMBER_COUNT = 1;
+// Adapted from Biri resources/shaders/focus-ring/fuse.frag; GPL-3.0-only, see ../LICENSE.
+const int EMBER_COUNT = 1; // 1-4, clamped
 const float FUSE_SECONDS = 10.0;
-// Fire brightness only: the unburnt cord stays below the 0.5 light threshold.
 const float FUSE_BRIGHTNESS = 1.0;
 const float FUSE_WANDER = 1.0;
 const float FUSE_TAU = 6.28318530718;
@@ -25,7 +13,6 @@ float fuse_wrap(float x) {
     return fract(x + 0.5) - 0.5;
 }
 
-// Clockwise, continuous across the four sides, including the closing seam.
 float fuse_perimeter(vec2 p) {
     vec2 half_size = max(ring_size * 0.5, vec2(1.0));
     p -= half_size;
@@ -39,7 +26,6 @@ float fuse_perimeter(vec2 p) {
     return s / (2.0 * (ring_size.x + ring_size.y));
 }
 
-// Integer harmonics keep the handmade bends continuous at the perimeter seam.
 float fuse_path(float u, float turns) {
     float bend = 0.64 * sin(FUSE_TAU * u * turns + 0.8)
         + 0.30 * sin(FUSE_TAU * u * (turns * 2.0 + 1.0) + 2.1)
@@ -66,14 +52,11 @@ vec4 ring_color(vec2 coords) {
     float phase = fract(umbriel_time / max(FUSE_SECONDS, 0.1));
     float centre = fuse_path(u, turns);
     float across = d - centre;
-    // Use the nearest tip for the burn and the most recent tip for the ash trail.
-    // Dividing by count retains each ember's size and speed around the whole window.
     float count = clamp(float(EMBER_COUNT), 1.0, 4.0);
     float spacing = perimeter / count;
     float ahead = fuse_wrap((u - phase) * count) * spacing;
     float behind = fract((phase - u) * count) * spacing;
 
-    // Uneven thickness, twisted strands and small loose fibres. These never animate.
     float strands = max(1.0, floor(perimeter / 5.0));
     float twist = FUSE_TAU * u * strands + across / w * 5.5;
     float rib = 0.5 + 0.5 * sin(twist);
@@ -90,7 +73,6 @@ vec4 ring_color(vec2 coords) {
     float alpha = max(rope, fibres);
     vec3 premul = colour * alpha;
 
-    // A ragged incandescent tip, with a shorter orange afterglow on the burnt cord.
     float flicker = 0.86 + 0.09 * sin(FUSE_TAU * phase * 73.0)
         + 0.05 * sin(FUSE_TAU * phase * 119.0 + 1.0);
     float tip = exp(-pow(ahead / (w * 1.20), 2.0));
@@ -103,8 +85,6 @@ vec4 ring_color(vec2 coords) {
     premul = mix(premul, fire, fire_alpha);
     alpha += fire_alpha * (1.0 - alpha);
 
-    // Small ballistic streaks are born on the rope at the tip's earlier position.
-    // Their IDs repeat every lap, so neither the rope nor the particles jump at wrap.
     for (int emitter = 0; emitter < 4; emitter++) {
         if (float(emitter) >= count) break;
         float emitter_phase = fract(phase + float(emitter) / count);

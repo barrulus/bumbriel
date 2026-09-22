@@ -1,19 +1,9 @@
 // Ported from Barrulus/biri; GPL-3.0-only, see ../LICENSE.
-// Descending smoothstep edges in the original are undefined in GLSL.
+// Descending smoothstep edges are undefined in GLSL.
 float biri_smoothstep(float a, float b, float x) {
     return a > b ? 1.0 - smoothstep(b, a, x) : smoothstep(a, b, x);
 }
-// Parchment / vellum — aged treasure-map paper laid OVER the window.
-// Builds a standalone parchment "sheet" (tan tone + crackle veins + burnt
-// edges) and composites it so dark areas BECOME the paper while bright,
-// coloured content (text/icons) stays its own colour, like ink on parchment.
-//
-// biri/niri window shader (niri mode). Static: does NOT use umbriel_time.
-//   c.xy : 0..1 across the window, c.y = 0 at the TOP
-//   umbriel_size : window size in physical pixels
-//   tex2D_screen(uv) : samples the window's own composited pixels
 
-// --- static procedural noise (seeded by pixel position, no time) -------------
 float hash(vec2 p) {
     p = fract(p * vec2(123.34, 345.45));
     p += dot(p, p + 34.345);
@@ -46,7 +36,6 @@ float fbm(vec2 p) {
     return s;
 }
 
-// Crackle veins: Worley/Voronoi cell-border lines. ~1 on a crack, 0 off.
 float cracks(vec2 p, float width) {
     vec2 n = floor(p);
     vec2 f = fract(p);
@@ -71,19 +60,16 @@ vec4 postprocess(vec3 c) {
     vec4 src = tex2D_screen(uv);
     vec2 px  = uv * umbriel_size;
 
-    // ---- knobs -------------------------------------------------------------
-    float crackAmount   = 0.22; // brightness of the crackle veins on the paper
-    float crumpleAmount = 0.40; // strength of the cloudy crumple shading
-    float paperOpacity  = 0.92; // how fully dark areas turn into paper (1 = opaque)
-    float inkKeep       = 0.55; // content brighter than this keeps its own colour
-    float desat         = 0.45; // pull content toward neutral so it reads as ink
-    float warmth        = 0.22; // warm wash over everything (0 = none)
-    float edgeBurn      = 0.95; // darkness of the burnt border
-    float burnWidth     = 0.50; // 0..1, lower = wider/thicker dark border
-    vec3  paperTan      = vec3(0.86, 0.66, 0.42); // base parchment hue
-    // ------------------------------------------------------------------------
+    float crackAmount   = 0.22;
+    float crumpleAmount = 0.40;
+    float paperOpacity  = 0.92;
+    float inkKeep       = 0.55;
+    float desat         = 0.45;
+    float warmth        = 0.22;
+    float edgeBurn      = 0.95;
+    float burnWidth     = 0.50;
+    vec3  paperTan      = vec3(0.86, 0.66, 0.42);
 
-    // Domain-warp so the texture looks organic, not regular.
     vec2 w  = vec2(fbm(px * 0.010), fbm(px * 0.010 + 19.0)) - 0.5;
     vec2 pw = px + w * 60.0;
 
@@ -92,38 +78,27 @@ vec4 postprocess(vec3 c) {
     float cr = cracks(pw * 0.020, 0.05);
     cr = max(cr, cracks(pw * 0.045 + 5.0, 0.05) * 0.7);
 
-    // Irregular burnt edge (box-distance to border, warped by noise).
     vec2 e = abs(uv - 0.5) * 2.0;
     float edge = max(e.x, e.y) + (fbm(px * 0.03) - 0.5) * 0.35;
     float burn = biri_smoothstep(burnWidth, 1.05, edge);
 
-    // ---- build the standalone parchment sheet ------------------------------
     float tone = 0.72 + crumpleAmount * (crumple - 0.5) * 2.0;
     vec3 sheet = tone * paperTan;
-    sheet += vec3(0.95, 0.85, 0.60) * cr * crackAmount;   // light veins
-    sheet *= 0.97 + 0.05 * vnoise(px * 1.7);              // fine tooth
-    sheet *= mix(1.0, 0.22, burn * edgeBurn);             // burnt darkening
-    sheet = mix(sheet, vec3(0.20, 0.11, 0.05), burn * edgeBurn * 0.65); // scorch tint
+    sheet += vec3(0.95, 0.85, 0.60) * cr * crackAmount;
+    sheet *= 0.97 + 0.05 * vnoise(px * 1.7);
+    sheet *= mix(1.0, 0.22, burn * edgeBurn);
+    sheet = mix(sheet, vec3(0.20, 0.11, 0.05), burn * edgeBurn * 0.65);
 
-    // ---- compose over the real window content ------------------------------
     float lum = dot(src.rgb, vec3(0.299, 0.587, 0.114));
-    // Desaturate so a strongly-coloured window (e.g. a transparent terminal over
-    // a warm wallpaper) reads as aged ink rather than glowing.
     vec3 content = mix(src.rgb, vec3(lum), desat);
 
-    // Hue-preserving texture modulation for bright (content) areas: gentle tone
-    // only (NO veins here — cracks belong to the paper, not the content, or they
-    // glow over bright windows). Normalised so average paper => 1.0.
     float texMod = (tone / 0.72);
     texMod *= mix(1.0, 0.30, burn * edgeBurn);
     vec3 col = content * texMod;
 
-    // Replace dark areas with the actual paper sheet so backgrounds become
-    // parchment; bright coloured content stays itself (ink on paper).
     float paperMix = (1.0 - biri_smoothstep(0.06, inkKeep, lum)) * paperOpacity;
     col = mix(col, sheet, paperMix);
 
-    // Gentle warm aging wash (keeps hue).
     col *= mix(vec3(1.0), vec3(1.05, 1.00, 0.86), warmth);
 
     return vec4(col, src.a);

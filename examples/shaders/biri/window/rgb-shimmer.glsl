@@ -1,22 +1,8 @@
 // Ported from Barrulus/biri; GPL-3.0-only, see ../LICENSE.
-// Descending smoothstep edges in the original are undefined in GLSL.
+// Descending smoothstep edges are undefined in GLSL.
 float biri_smoothstep(float a, float b, float x) {
     return a > b ? 1.0 - smoothstep(b, a, x) : smoothstep(a, b, x);
 }
-// RGB shimmer — a faint iridescent oil-slick sheen that drifts across the window in soft patches.
-// Deliberately SUBTLE and NON-UNIFORM: most of the window shows nothing, and where the sheen does
-// appear it's organic blobs of shifting rainbow (noise-driven), not regular bands. The content
-// stays fully readable; this is a gentle holographic glimmer, not a colour wash.
-//
-// Contract: vec4 postprocess(vec3 c); c.xy = 0..1 across the window (c.y = 0 at the TOP);
-// tex2D_screen(uv) samples the window; umbriel_size = window px; umbriel_time = seconds.
-//
-// Tuning knobs:
-//   STRENGTH   -> peak opacity of the sheen (raise for more presence; still patchy)
-//   COVERAGE   -> the two smoothstep edges below set how much of the window is ever touched
-//   *3.0 / *2.0 -> spatial scale of the hue field / the coverage patches (bigger = finer)
-//   umbriel_time*0.03..0.05 -> drift / hue-cycle speeds (all slow on purpose)
-//   spark      -> faint sparse twinkle; drop the 0.35 to kill it entirely
 
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -31,27 +17,23 @@ float vnoise(vec2 p){
 float fbm(vec2 p){
     float v = 0.0, a = 0.5;
     for (int i = 0; i < 3; i++){ v += a*vnoise(p); p *= 2.0; a *= 0.5; }
-    return v;   // ~0 .. ~0.875
+    return v;
 }
 
 vec4 postprocess(vec3 c){
     vec4 s  = tex2D_screen(c.xy);
-    vec2 ar = vec2(umbriel_size.x / max(umbriel_size.y, 1.0), 1.0);   // keep patches round-ish
+    vec2 ar = vec2(umbriel_size.x / max(umbriel_size.y, 1.0), 1.0);
     vec2 p  = c.xy * ar;
 
-    // Organic hue field — soft blobs of colour that drift and cycle.
     float f   = fbm(p*3.0 + vec2(umbriel_time*0.13, umbriel_time*0.08));
     float hue = fract(f + umbriel_time*0.08);
-    vec3  rb  = 0.5 + 0.5*cos(6.2831853*(hue + vec3(0.0, 0.33, 0.67)));  // IQ rainbow
+    vec3  rb  = 0.5 + 0.5*cos(6.2831853*(hue + vec3(0.0, 0.33, 0.67)));
 
-    // Coverage mask — a DIFFERENT drifting noise decides WHERE the sheen shows, so it's patchy:
-    // large clear areas, occasional soft iridescent patches.
     float patch = biri_smoothstep(0.35, 0.62, fbm(p*2.0 - vec2(umbriel_time*0.10, 0.0)));
 
-    // Very sparse faint twinkle sitting on the patches.
     float spark = pow(vnoise(p*38.0 + umbriel_time*1.5), 22.0) * 0.35;
 
-    const float STRENGTH = 0.38;                 // subtle but visible; still patchy
-    float amt = patch * STRENGTH;                // modulated -> never uniform
+    const float STRENGTH = 0.38;
+    float amt = patch * STRENGTH;
     return vec4(mix(s.rgb, rb + spark, amt), s.a);
 }

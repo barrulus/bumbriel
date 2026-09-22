@@ -1,7 +1,4 @@
-// Adapted from Biri resources/shaders/focus-ring/rainbow-ripple.frag.
-// Barrulus shader collection; GPL-3.0, see ../LICENSE.
-// Editable wax-like rainbow focus ring. Save this file to reload the effect.
-// These constants are shader-specific: change them or replace the whole algorithm.
+// Adapted from Biri resources/shaders/focus-ring/rainbow-ripple.frag; GPL-3.0-only, see ../LICENSE.
 #ifndef WAX_STRENGTH
 #define WAX_STRENGTH 0.75
 #endif
@@ -12,9 +9,6 @@
 #define WAX_PHASE mod(umbriel_time / 4.0, 1.0)
 #endif
 
-// Uneven periodic fields rather than equally spaced waves. Warping the sampling
-// coordinate makes the lobes bunch up and stretch; all frequencies stay integral
-// so the perimeter seam and the four-second animation loop remain continuous.
 float wax_field(float u, float phase) {
     const float tau = 6.28318530718;
     return 0.46 * sin(tau * (3.0 * u - phase) + 0.7)
@@ -36,9 +30,6 @@ vec4 ring_color(vec2 coords) {
     float fine = wax_field(drift * 2.0 + 0.31, phase + 0.21);
     float pool = smoothstep(-0.65, 0.65, wax_field(drift + 0.43, phase + 0.37));
 
-    // Both contours wander. Keep the inner edge outside the client, while the outer
-    // one swells into broad pools joined by thin necks. Max outward reach is
-    // width * (1 + 2.07 * strength), within FocusRing's reserved envelope.
     float inner_edge = width * strength * max(0.0, 0.40 + 0.34 * bend + 0.20 * fine);
     float thickness = width * mix(1.0, 0.28 + 1.65 * pool + 0.20 * fine, strength);
     float outer_edge = inner_edge + thickness;
@@ -47,9 +38,6 @@ vec4 ring_color(vec2 coords) {
     float coverage = smoothstep(inner_edge - half_px, inner_edge + half_px, distance)
         * (1.0 - smoothstep(outer_edge - half_px, outer_edge + half_px, distance));
 
-    // Swirled pastel pigment and narrow, broken highlights give the pools a waxy
-    // surface. The highlight meanders across the band instead of whitening its
-    // entire cross-section like a light travelling through a tube.
     float across = clamp((distance - inner_edge) / max(thickness, 0.01), 0.0, 1.0);
     float pigment = u - phase + 0.10 * bend + 0.025 * fine
         + 0.025 * sin(tau * (across * 0.65 + drift * 8.0 + phase));
@@ -64,4 +52,3 @@ vec4 ring_color(vec2 coords) {
     rgb = clamp(rgb * WAX_BRIGHTNESS, 0.0, 1.0);
     return vec4(rgb, coverage);
 }
-

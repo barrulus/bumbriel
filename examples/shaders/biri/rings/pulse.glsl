@@ -1,7 +1,4 @@
-// Adapted from Biri resources/shaders/focus-ring/pulse.frag.
-// Barrulus shader collection; GPL-3.0, see ../LICENSE.
-// A second, independent ring shader: cyan pigment gently brightens and fades.
-// No deformation, so it needs no extra padding. Coordinates use logical pixels.
+// Adapted from Biri resources/shaders/focus-ring/pulse.frag; GPL-3.0-only, see ../LICENSE.
 vec4 ring_color(vec2 coords) {
     float d = ring_distance(coords);
     float half_px = 0.5 / umbriel_scale;

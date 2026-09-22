@@ -1,7 +1,4 @@
-// Adapted from Biri resources/shaders/close/close-lightning.kdl.
-// Original shader collection by Barrulus. GPL-3.0; see LICENSE in this directory.
-// Editable native Umbriel animation shader; returns premultiplied RGBA.
-
+// Adapted from Biri resources/shaders/close/close-lightning.kdl; GPL-3.0-only, see LICENSE.
 float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -33,7 +30,6 @@ float fbm(vec2 p) {
 vec4 animation(vec2 uv) {
     float progress = umbriel_clamped_progress;
 
-    // Exact lifecycle endpoints; no native fade is applied by the host.
     if (progress <= 0.0) return umbriel_sample(uv);
     if (progress >= 1.0) return vec4(0.0);
 
@@ -46,7 +42,6 @@ vec4 animation(vec2 uv) {
 
     vec2 noise_uv = uv * 8.0 + vec2(umbriel_random_seed.x * 100.0);
 
-    // Jagged expanding burn radius
     float noise_val = fbm(noise_uv) * 0.35;
     float burn_radius = progress * 1.55 - 0.35 + noise_val;
 
@@ -56,10 +51,8 @@ vec4 animation(vec2 uv) {
     float inner_edge = burn_radius - edge_width;
 
     if (dist < inner_edge) {
-        // Burned away
         return vec4(0.0);
     } else if (dist < burn_radius) {
-        // Burning edge - white core -> cyan -> blue
         float edge_progress = (dist - inner_edge) / edge_width;
 
         vec3 lightning_white = vec3(1.0, 1.0, 1.0);
@@ -74,7 +67,6 @@ vec4 animation(vec2 uv) {
 
         return vec4(glow_color * glow_alpha, glow_alpha);
     } else {
-        // Not yet reached - subtle distortion near edge
         float distortion = fbm(noise_uv + vec2(progress * 5.0)) * 0.005;
         float proximity = 1.0 - smoothstep(burn_radius, burn_radius + 0.15, dist);
         vec2 distorted_uv = uv + distortion * proximity * vec2(1.0, 1.0);

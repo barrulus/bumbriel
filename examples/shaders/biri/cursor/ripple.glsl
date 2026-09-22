@@ -1,5 +1,5 @@
 // Ported from Barrulus/biri; GPL-3.0-only, see ../LICENSE.
-// Descending smoothstep edges in the original are undefined in GLSL.
+// Descending smoothstep edges are undefined in GLSL.
 float biri_smoothstep(float a, float b, float x) {
     return a > b ? 1.0 - smoothstep(b, a, x) : smoothstep(a, b, x);
 }

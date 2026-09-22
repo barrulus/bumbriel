@@ -1,11 +1,7 @@
-// Adapted from Biri resources/shaders/close/close-whirlpool.kdl.
-// Original shader collection by Barrulus. GPL-3.0; see LICENSE in this directory.
-// Editable native Umbriel animation shader; returns premultiplied RGBA.
-
+// Adapted from Biri resources/shaders/close/close-whirlpool.kdl; GPL-3.0-only, see LICENSE.
 vec4 animation(vec2 uv) {
     float progress = umbriel_clamped_progress;
 
-    // Exact lifecycle endpoints; no native fade is applied by the host.
     if (progress <= 0.0) return umbriel_sample(uv);
     if (progress >= 1.0) return vec4(0.0);
 
@@ -18,11 +14,9 @@ vec4 animation(vec2 uv) {
     float dist = length(delta);
     float angle = atan(delta.y, delta.x);
 
-    // 1.5 rotations instead of 3 - less chaotic
     float max_rotation = 6.28318 * 1.5;
     float rotation = progress * max_rotation * (1.0 - dist * 0.5);
 
-    // Pull toward center
     float pull = 1.0 - progress * 0.8;
     float new_dist = dist * pull;
 
@@ -36,11 +30,8 @@ vec4 animation(vec2 uv) {
 
     vec4 color = umbriel_sample(vec3(new_uv, 1.0).xy);
 
-    // Smooth single fade instead of double-multiply
     float fade = 1.0 - smoothstep(0.1, 0.9, progress);
 
-    // Edge dissolve - outer pixels go first
-    // Ordered smoothstep edges are defined on GLES; start with the entire window.
     float dissolve = 1.0 - smoothstep(max(0.0, 0.72 - progress),
         max(0.001, 1.0 - progress), dist);
 
