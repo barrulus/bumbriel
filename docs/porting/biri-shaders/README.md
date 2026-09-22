@@ -7,6 +7,8 @@ port. Its scope is every effect in Biri's repository shader bundle and the rende
 features needed to retain their appearance and everyday controls.
 
 Current implementation and remaining work: [STATUS.md](STATUS.md).
+The later live-window extension is preserved separately in [window-source/](window-source/);
+this handoff and its original snapshot describe the initial repository bundle.
 The reference below describes the full intended scope.
 
 ## Start here

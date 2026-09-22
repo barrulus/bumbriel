@@ -1,7 +1,7 @@
 # Biri shader collection
 
-The port provides all 32 effect families: four matched lifecycle pairs, four
-persistent borders with optional illumination, ten window effects, four screen
+The port provides 53 effect families: four matched lifecycle pairs, four
+persistent borders with optional illumination, 31 window effects, four screen
 effects and ten cursor effects. The complete inventory and rendering contracts are in [the porting reference](../porting/biri-shaders/README.md).
 
 ## Development environment
@@ -158,13 +158,18 @@ shader = "window.adaptive-text-v4"
 ```
 
 Use an installed package path for `collection.toml` just as for lifecycle presets.
+Use `windows.toml` to register only the full window collection. It selects no
+effect; `shader:window cycle` and `shader:window toggle` control the focused
+window. Preset names follow filenames, for example `window.fire-tendrils`,
+`window.snowfall`, and `window.cvd-deutan-alphabet`.
+
 Alternatively include individual `window/*.toml`, `screen/*.toml`, or
 `cursor/*.toml` files. Preset names are their directory and filename joined by a
 dot. All shader paths remain relative to the declaring preset file.
 
 | Scope | Presets |
 | --- | --- |
-| Window | `crt`, `parchment`, `parchment-dark`, `pixel-mosaic`, `fisheye-rgb`, `adaptive-text-v4`, `rgb-shimmer`, `ripple-drops`, `rorschach2`, `mercury-sheen` |
+| Window | 31 presets; see [the complete window inventory](../../examples/shaders/biri/windows.toml). This includes the live Biri fire, weather, rainbow and CVD variants. |
 | Screen | `crt`, `grayscale`, `vignette`, `warmtint` |
 | Cursor | `adaptive`, `blueglow`, `comet`, `comet-glow`, `rainbow-tunnel`, `rainbow-tunnel-bare`, `ripple`, `shockwave`, `spotlight`, `trail` |
 

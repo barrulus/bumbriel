@@ -35,6 +35,12 @@ for scope in ("window", "screen", "cursor"):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("// Biri reference; GPL v3, see original/LICENSE.\n" + macros + source)
             count += 1
-if count != 26:
-    raise ValueError(f"Expected 26 pass sources, extracted {count}")
+# The live window snapshot supersedes the older window-only reference bodies.
+for path in sorted((original.parents[2] / "window-source").glob("*.frag")):
+    target = args.destination / "window" / f"{path.stem}.glsl"
+    if not (original / "window" / path.name).exists():
+        count += 1
+    target.write_text("// Biri reference; GPL v3, see original/LICENSE.\n" + macros + path.read_text())
+if count != 47:
+    raise ValueError(f"Expected 47 pass sources, extracted {count}")
 print(f"Extracted {count} reference pass sources into {args.destination}")

@@ -1,0 +1,188 @@
+{
+  "adaptive-text-v3.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/adaptive-text-v3.frag",
+    "sha256": "3833175dc1289f6aaa576bdd9071b2811a7f0b82ac60ac4184a83100ba00719a",
+    "preset": "window.adaptive-text-v3",
+    "reused_existing_port": false
+  },
+  "adaptive-text-v4.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/adaptive-text-v4.frag",
+    "sha256": "97d2c973b10846d4145a9e99e82d7e7349b68aca249c1fa147e735e9a98fcf59",
+    "preset": "window.adaptive-text-v4",
+    "reused_existing_port": true
+  },
+  "autumn-leaves.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/autumn-leaves.frag",
+    "sha256": "53c29ea7936f13da5ab55915b29ca55a7aec3a834e3b54786abcbeea5005e6fe",
+    "preset": "window.autumn-leaves",
+    "reused_existing_port": false
+  },
+  "crt.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/crt.frag",
+    "sha256": "c4711d4921112c1d7023dabdcbe4cb9018f489f9f84705646c3589af2bb3854c",
+    "preset": "window.crt",
+    "reused_existing_port": true
+  },
+  "cvd-deutan-alphabet.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-deutan-alphabet.frag",
+    "sha256": "85e4e15d95be739438b6d6f4ee271d91ded2aed94bb1f876b88a51655c8b50f2",
+    "preset": "window.cvd-deutan-alphabet",
+    "reused_existing_port": false
+  },
+  "cvd-deutan-combo.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-deutan-combo.frag",
+    "sha256": "92beb64b53868f9c9635c78886392ca4599ae514c82d1d1411aa29108101f5f6",
+    "preset": "window.cvd-deutan-combo",
+    "reused_existing_port": false
+  },
+  "cvd-deutan-drift.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-deutan-drift.frag",
+    "sha256": "0520d5aa2eb365a9bd2ff96ae844858a5ee67f681dffad8ce405931be4c277ba",
+    "preset": "window.cvd-deutan-drift",
+    "reused_existing_port": false
+  },
+  "cvd-deutan-oriented.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-deutan-oriented.frag",
+    "sha256": "9153fd592b1df9d0e52b3089483f737f3f0af6f74d712392a1aefa4dc29415cf",
+    "preset": "window.cvd-deutan-oriented",
+    "reused_existing_port": false
+  },
+  "cvd-deutan.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-deutan.frag",
+    "sha256": "effde1cbc4f76eef9568e73ba95788ea30992dc7bd4bafa6e81ea9c3ad42542c",
+    "preset": "window.cvd-deutan",
+    "reused_existing_port": false
+  },
+  "cvd-protan.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-protan.frag",
+    "sha256": "29450b4c2bb4edd0aaed14c569dcb403e4c298daeba35f734ff4ac64b595b6e9",
+    "preset": "window.cvd-protan",
+    "reused_existing_port": false
+  },
+  "cvd-tritan.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/cvd-tritan.frag",
+    "sha256": "fee148c88d9b4fe8ee8368a37a869b52d9ac046660acc8dab21cbe32a6dfef82",
+    "preset": "window.cvd-tritan",
+    "reused_existing_port": false
+  },
+  "film-grain.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/film-grain.frag",
+    "sha256": "ec8610971b58a53197ba001ee986783c2c07ee678fa608cff4752878ce0bb1c6",
+    "preset": "window.film-grain",
+    "reused_existing_port": false
+  },
+  "fire-tendrils.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/fire-tendrils.frag",
+    "sha256": "c2b471f9eda1a9511527e5aaad6462c2b1cd953549f0de21b1ec7ebde3335c25",
+    "preset": "window.fire-tendrils",
+    "reused_existing_port": false
+  },
+  "fire.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/fire.frag",
+    "sha256": "0063c141a5a35189c0eed7b9f41c0b9a7e7eb63c8e73ef6d0efa5905c425e61f",
+    "preset": "window.fire",
+    "reused_existing_port": false
+  },
+  "fisheye-rgb.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/fisheye-rgb.frag",
+    "sha256": "9d192fb15b11ce8ed22a37a5bd58228bb33bac18680733de3b147a305972ce60",
+    "preset": "window.fisheye-rgb",
+    "reused_existing_port": true
+  },
+  "mercury-sheen.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/mercury-sheen.frag",
+    "sha256": "443b25af2d21da046ec7f08eefad7077045c8a394b30d1e21564c4f49e601547",
+    "preset": "window.mercury-sheen",
+    "reused_existing_port": true
+  },
+  "parchment-dark.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/parchment-dark.frag",
+    "sha256": "81ad16073f379a97df090f0d6c39da287dfe7d4b557ac37aef4acd12b9bbb19d",
+    "preset": "window.parchment-dark",
+    "reused_existing_port": true
+  },
+  "parchment.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/parchment.frag",
+    "sha256": "9591ce6d6f0c945e958fb34704661c251c79b0bae2ac953f9bd81252a152016b",
+    "preset": "window.parchment",
+    "reused_existing_port": true
+  },
+  "pixel-mosaic.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/pixel-mosaic.frag",
+    "sha256": "50fc484acc2934f54579d555e895934b5f0ea91c17c35c5a026d2cdc206f99c0",
+    "preset": "window.pixel-mosaic",
+    "reused_existing_port": false
+  },
+  "prairie-wind.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/prairie-wind.frag",
+    "sha256": "47f413850cb1046c61c594f78ba46785ff6e0c98500144c070c2fef862213fbc",
+    "preset": "window.prairie-wind",
+    "reused_existing_port": false
+  },
+  "rainbow-radial.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rainbow-radial.frag",
+    "sha256": "72381384b908178df2671455f2075ce92250118c4de1f673f063ceef895d682f",
+    "preset": "window.rainbow-radial",
+    "reused_existing_port": false
+  },
+  "rainbow-smoke.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rainbow-smoke.frag",
+    "sha256": "f8a8bee9936f2a1d3b0cb7150578c81ec84b7253ef7fab6d936cfb60d3135f45",
+    "preset": "window.rainbow-smoke",
+    "reused_existing_port": false
+  },
+  "rainbow-waves.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rainbow-waves.frag",
+    "sha256": "a3b04d177782dd3e7660089c88777bf3cb60c521903e88bbd1a3a7f343775c3b",
+    "preset": "window.rainbow-waves",
+    "reused_existing_port": false
+  },
+  "rainfall.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rainfall.frag",
+    "sha256": "4469a393dc3b8908cc5a59d6ef44df501c8f972a58525648426af1b44c67dc65",
+    "preset": "window.rainfall",
+    "reused_existing_port": false
+  },
+  "rgb-border.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rgb-border.frag",
+    "sha256": "9cfd72e20b4df387b622c79da077509974d150b50316b258d086f5860e94e830",
+    "preset": "window.rgb-border",
+    "reused_existing_port": false
+  },
+  "rgb-shimmer.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rgb-shimmer.frag",
+    "sha256": "338b32efdd9c7aefd77d975ad2b8fb89322695dbd2a24bf7f7a94218177bf2c2",
+    "preset": "window.rgb-shimmer",
+    "reused_existing_port": true
+  },
+  "ripple-drops.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/ripple-drops.frag",
+    "sha256": "d4def5d3f59e39bb22bfd4697ebe21aa6bc7f4d7e3b00ac6b0019e8a324869d6",
+    "preset": "window.ripple-drops",
+    "reused_existing_port": true
+  },
+  "rolling-clouds.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rolling-clouds.frag",
+    "sha256": "cb9c7f8364ff269312b62436f722b7407bcf57a5e1c09f063acbf9b46372ad35",
+    "preset": "window.rolling-clouds",
+    "reused_existing_port": false
+  },
+  "rorschach.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rorschach.frag",
+    "sha256": "490881ae2131eb64e0cbc3518cce140d280de2e25433e54fc468dd17c5fd268c",
+    "preset": "window.rorschach",
+    "reused_existing_port": false
+  },
+  "rorschach2.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/rorschach2.frag",
+    "sha256": "3db2831421f28a426739fdc8a67650ee71e55c366eca4f0c49b3a04be0dadd66",
+    "preset": "window.rorschach2",
+    "reused_existing_port": true
+  },
+  "snowfall.frag": {
+    "source": "/home/barrulus/.config/biri/global-shaders/window/snowfall.frag",
+    "sha256": "12f86ef39b9caccf63c4fc0bf2a5093c8f0ab7a1c3ce4d2b669736decc826ee1",
+    "preset": "window.snowfall",
+    "reused_existing_port": false
+  }
+}

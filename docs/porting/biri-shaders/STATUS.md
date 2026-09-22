@@ -1,10 +1,10 @@
 # Port status
 
-All **32 effect families** are implemented in native Bumbriel configuration and
-UmbrielFX: four lifecycle pairs (eight shaders), four borders, ten window effects,
+All **53 effect families** are implemented in native Bumbriel configuration and
+UmbrielFX: four lifecycle pairs (eight shaders), four borders, 31 window effects,
 four screen effects and ten cursor effects. Optional ring illumination, output
 filters, ordered scoped chains, feedback, file reload and runtime controls are
-implemented. The converted bundle contains **38 editable GLSL files**.
+implemented. The converted bundle contains **59 editable GLSL files**.
 
 | Milestone | Delivered | Evidence |
 | --- | --- | --- |
@@ -21,7 +21,22 @@ See [configuration and authoring](../../user/biri-shaders.md) and
 includes `collection.toml`, which registers all postprocess presets and animation
 pairs without selecting an effect.
 
-## Verification
+## Live window collection extension (2026-09-21)
+
+The 31 shaders from `~/.config/biri/global-shaders/window/` are now included:
+9 existing ports match, pixel-mosaic is refreshed, and 21 missing effects are
+ported. Sources and hashes live in [window-source/](window-source/); the original
+frozen snapshot remains unchanged. `windows.toml` registers the complete window
+collection without enabling other shader scopes.
+
+The expanded GPU test renders all 45 postprocess families, checks static versus
+animated behaviour and visible changes, and compares original-source rendering.
+All 31 window presets match their live Biri source pixels exactly at the tested
+frame; the 14 existing cursor/screen families also retain exact comparisons.
+Feedback, capture, scheduling and cleanup checks pass in the same run.
+The checks below document the earlier full renderer implementation.
+
+## Original implementation verification
 
 - The existing project `nix develop` shell works with pinned wlroots 0.20.2.
   The local `.envrc` uses that flake. Debug-shell Fortify is disabled because

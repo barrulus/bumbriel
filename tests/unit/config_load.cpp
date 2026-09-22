@@ -3230,7 +3230,7 @@ UMBRIEL_TEST(collectionRegistersEveryPresetAndRuntimeAnimationPairs) {
   const auto path = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/biri/collection.toml";
   CHECK(store.load(path.c_str()));
   CHECK(store.diagnostics().empty());
-  CHECK_EQ(store.config().shaders.presets.size(), size_t{24});
+  CHECK_EQ(store.config().shaders.presets.size(), size_t{45});
   CHECK_EQ(store.config().animation.pairs.size(), size_t{4});
   CHECK(store.config().shaders.global.empty());
   CHECK(store.config().shaders.window.empty());

@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."window.cvd-protan"]
+scope = "window"
+
+[[shaders.preset."window.cvd-protan".passes]]
+shader = "cvd-protan.glsl"

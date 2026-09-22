@@ -278,16 +278,37 @@ int main(int argc, char** argv) {
     return 77;
   }
   const char* names[] = {
-      "window/crt",
-      "window/parchment",
-      "window/parchment-dark",
-      "window/pixel-mosaic",
-      "window/fisheye-rgb",
+      "window/adaptive-text-v3",
       "window/adaptive-text-v4",
+      "window/autumn-leaves",
+      "window/crt",
+      "window/cvd-deutan-alphabet",
+      "window/cvd-deutan-combo",
+      "window/cvd-deutan-drift",
+      "window/cvd-deutan-oriented",
+      "window/cvd-deutan",
+      "window/cvd-protan",
+      "window/cvd-tritan",
+      "window/film-grain",
+      "window/fire-tendrils",
+      "window/fire",
+      "window/fisheye-rgb",
+      "window/mercury-sheen",
+      "window/parchment-dark",
+      "window/parchment",
+      "window/pixel-mosaic",
+      "window/prairie-wind",
+      "window/rainbow-radial",
+      "window/rainbow-smoke",
+      "window/rainbow-waves",
+      "window/rainfall",
+      "window/rgb-border",
       "window/rgb-shimmer",
       "window/ripple-drops",
+      "window/rolling-clouds",
+      "window/rorschach",
       "window/rorschach2",
-      "window/mercury-sheen",
+      "window/snowfall",
       "screen/crt",
       "screen/grayscale",
       "screen/vignette",
@@ -303,8 +324,10 @@ int main(int argc, char** argv) {
       "cursor/comet-glow",
       "cursor/trail"
   };
-  const bool animated[] = {false, false, false, false, false, false, true, true, true,  true, false, false,
-                           false, false, false, false, true,  true,  true, true, false, true, true,  true};
+  const bool animated[] = {false, false, true,  false, true,  true,  true,  true,  true,  true,  true,  true,
+                           true,  true,  false, true,  false, false, false, true,  true,  true,  true,  true,
+                           true,  true,  true,  true,  true,  true,  true,  false, false, false, false, false,
+                           false, true,  true,  true,  true,  false, true,  true,  true};
   uint32_t baseline[SIZE * SIZE], first[SIZE * SIZE], second[SIZE * SIZE];
   struct fx_postprocess_state* empty = NULL;
   bool ok = render_effect(&fixture, NULL, &empty, 0, 64, 1, true, false, baseline);
@@ -313,10 +336,12 @@ int main(int argc, char** argv) {
     struct fx_postprocess_state* state = NULL;
     ok = check(chain != NULL, names[i])
         && check(fx_postprocess_chain_animated(chain) == animated[i], "compiled animation capability");
-    const float cursor = i == 20 ? -100 : 64;
+    const float cursor = strcmp(names[i], "cursor/spotlight") == 0 ? -100 : 64;
     if (ok)
       ok = render_effect(&fixture, chain, &state, 0.1, cursor, 1, true, false, first)
-          && render_effect(&fixture, chain, &state, 1.3, i == 23 ? 90 : cursor, 1, true, false, second)
+          && render_effect(
+               &fixture, chain, &state, 1.3, strcmp(names[i], "cursor/trail") == 0 ? 90 : cursor, 1, true, false, second
+          )
           && check(
                differences(first, baseline) + differences(second, baseline) > 20,
                "preset must visibly change the composed scene"

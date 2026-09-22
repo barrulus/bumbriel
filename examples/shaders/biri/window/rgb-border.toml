@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."window.rgb-border"]
+scope = "window"
+
+[[shaders.preset."window.rgb-border".passes]]
+shader = "rgb-border.glsl"

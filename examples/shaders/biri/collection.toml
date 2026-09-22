@@ -1,16 +1,7 @@
 # Register all postprocess presets and lifecycle pairs without selecting an effect.
 [include]
 files = [
-  "window/adaptive-text-v4.toml",
-  "window/crt.toml",
-  "window/fisheye-rgb.toml",
-  "window/mercury-sheen.toml",
-  "window/parchment-dark.toml",
-  "window/parchment.toml",
-  "window/pixel-mosaic.toml",
-  "window/rgb-shimmer.toml",
-  "window/ripple-drops.toml",
-  "window/rorschach2.toml",
+  "windows.toml",
   "screen/crt.toml",
   "screen/grayscale.toml",
   "screen/vignette.toml",

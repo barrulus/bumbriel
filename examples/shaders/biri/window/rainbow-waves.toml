@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."window.rainbow-waves"]
+scope = "window"
+
+[[shaders.preset."window.rainbow-waves".passes]]
+shader = "rainbow-waves.glsl"

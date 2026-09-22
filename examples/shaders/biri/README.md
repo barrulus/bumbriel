@@ -6,9 +6,9 @@ The source collection's GPL v3 license is retained in [LICENSE](LICENSE).
 These assets are not covered by the compositor's MIT license.
 
 The `rings/` directory contains four persistent border presets; `window/`,
-`screen/`, and `cursor/` contain the remaining 24 families (26 GLSL files).
+`screen/`, and `cursor/` contain the remaining 45 families (47 GLSL files).
 `collection.toml` registers all postprocess presets and four animation pairs
-without enabling any effect. See
+without enabling any effect. `windows.toml` registers only the 31 window presets. See
 [configuration and authoring](../../../docs/user/biri-shaders.md).
 
 Include one matched pair in your configuration:
@@ -58,3 +58,9 @@ repository and are unchanged. These destination fixes avoid visible jumps:
 
 The procedural pattern constants, stable transition seed, displacement strengths,
 matched durations and separate open/close functions otherwise follow the source.
+
+The window collection also includes the user-configured Biri effects captured on
+2026-09-21. Their original sources and hashes are preserved in
+[`window-source`](../../../docs/porting/biri-shaders/window-source/). Matching ports
+are retained, pixel-mosaic uses its current tuning, and 21 additional effects
+include fire, weather, rainbow, grain and colour-vision variants.

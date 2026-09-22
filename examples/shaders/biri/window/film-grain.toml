@@ -1,0 +1,6 @@
+# Biri collection; GPL-3.0-only, see ../LICENSE.
+[shaders.preset."window.film-grain"]
+scope = "window"
+
+[[shaders.preset."window.film-grain".passes]]
+shader = "film-grain.glsl"
