@@ -545,88 +545,88 @@ bool link_blur_effects_program(struct blur_effects_shader *shader) {
 	return true;
 }
 
-static void decoration_renderer_destroy(struct wl_listener* listener, void* data) {
-  struct fx_decoration_shader* shader = wl_container_of(listener, shader, destroy);
-  shader->renderer = NULL;
-  shader->program = 0;
-  shader->light_program = 0;
-  wl_list_remove(&shader->destroy.link);
+static void decoration_renderer_destroy(struct wl_listener *listener, void *data) {
+	struct fx_decoration_shader *shader = wl_container_of(listener, shader, destroy);
+	shader->renderer = NULL;
+	shader->program = 0;
+	shader->light_program = 0;
+	wl_list_remove(&shader->destroy.link);
 }
 
-struct fx_decoration_shader* fx_decoration_shader_ref(struct fx_decoration_shader* shader) {
-  if (shader != NULL)
-    shader->references++;
-  return shader;
+struct fx_decoration_shader *fx_decoration_shader_ref(struct fx_decoration_shader *shader) {
+	if (shader != NULL)
+		shader->references++;
+	return shader;
 }
 
-void fx_decoration_shader_unref(struct fx_decoration_shader* shader) {
-  if (shader == NULL || --shader->references != 0)
-    return;
-  if (shader->renderer != NULL) {
-    struct wlr_egl_context previous;
-    if (wlr_egl_make_current(shader->renderer->egl, &previous)) {
-      glDeleteProgram(shader->program);
-      glDeleteProgram(shader->light_program);
-      wlr_egl_restore_context(&previous);
-    }
-    wl_list_remove(&shader->destroy.link);
-  }
-  free(shader);
+void fx_decoration_shader_unref(struct fx_decoration_shader *shader) {
+	if (shader == NULL || --shader->references != 0)
+		return;
+	if (shader->renderer != NULL) {
+		struct wlr_egl_context previous;
+		if (wlr_egl_make_current(shader->renderer->egl, &previous)) {
+			glDeleteProgram(shader->program);
+			glDeleteProgram(shader->light_program);
+			wlr_egl_restore_context(&previous);
+		}
+		wl_list_remove(&shader->destroy.link);
+	}
+	free(shader);
 }
 
-struct fx_decoration_shader*
-fx_decoration_shader_create(struct wlr_renderer* renderer, const char* source, const char* label) {
-  if (source == NULL || !wlr_renderer_is_fx(renderer))
-    return NULL;
-  struct fx_renderer* fx = fx_get_renderer(renderer);
-  struct wlr_egl_context previous;
-  if (!wlr_egl_make_current(fx->egl, &previous))
-    return NULL;
-  struct fx_decoration_shader* shader = calloc(1, sizeof(*shader));
-  char* fragment = malloc(sizeof(decoration_frag_src) + strlen(source) + 16);
-  if (shader == NULL || fragment == NULL) {
-    free(shader);
-    free(fragment);
-    wlr_egl_restore_context(&previous);
-    return NULL;
-  }
-  sprintf(fragment, "%s\n#line 1\n%s", decoration_frag_src, source);
-  wlr_log(WLR_DEBUG, "Compiling decoration shader: %s", label);
-  shader->program = link_program(fragment);
-  free(fragment);
-  if (shader->program == 0) {
-    wlr_log(WLR_ERROR, "Decoration shader '%s' rejected; using normal border", label);
-    free(shader);
-    wlr_egl_restore_context(&previous);
-    return NULL;
-  }
-  shader->renderer = fx;
-  shader->references = 1;
-  shader->destroy.notify = decoration_renderer_destroy;
-  wl_signal_add(&renderer->events.destroy, &shader->destroy);
-  shader->proj = glGetUniformLocation(shader->program, "proj");
-  shader->tex_proj = glGetUniformLocation(shader->program, "tex_proj");
-  shader->position = glGetAttribLocation(shader->program, "pos");
-  shader->size = glGetUniformLocation(shader->program, "ring_size");
-  shader->raster = glGetUniformLocation(shader->program, "ring_raster");
-  shader->origin = glGetUniformLocation(shader->program, "ring_origin");
-  shader->radius = glGetUniformLocation(shader->program, "ring_radius");
-  shader->width = glGetUniformLocation(shader->program, "ring_width");
-  shader->padding = glGetUniformLocation(shader->program, "ring_padding");
-  shader->time = glGetUniformLocation(shader->program, "umbriel_time");
-  shader->scale = glGetUniformLocation(shader->program, "umbriel_scale");
-  shader->color = glGetUniformLocation(shader->program, "ring_color_base");
-  shader->linear = glGetUniformLocation(shader->program, "ring_linear");
-  shader->emission = glGetUniformLocation(shader->program, "ring_emission");
-  shader->threshold = glGetUniformLocation(shader->program, "ring_threshold");
-  shader->emission_bounds = glGetUniformLocation(shader->program, "ring_emission_bounds");
-  shader->light_program = link_program(decoration_light_frag_src);
-  shader->light_proj = glGetUniformLocation(shader->light_program, "proj");
-  shader->light_tex_proj = glGetUniformLocation(shader->light_program, "tex_proj");
-  shader->light_position = glGetAttribLocation(shader->light_program, "pos");
-  shader->light_tex = glGetUniformLocation(shader->light_program, "tex");
-  shader->light_gain = glGetUniformLocation(shader->light_program, "gain");
-  shader->light_linear = glGetUniformLocation(shader->light_program, "linear");
-  wlr_egl_restore_context(&previous);
-  return shader;
+struct fx_decoration_shader *fx_decoration_shader_create(struct wlr_renderer *renderer,
+		const char *source, const char *label) {
+	if (source == NULL || !wlr_renderer_is_fx(renderer))
+		return NULL;
+	struct fx_renderer *fx = fx_get_renderer(renderer);
+	struct wlr_egl_context previous;
+	if (!wlr_egl_make_current(fx->egl, &previous))
+		return NULL;
+	struct fx_decoration_shader *shader = calloc(1, sizeof(*shader));
+	char *fragment = malloc(sizeof(decoration_frag_src) + strlen(source) + 16);
+	if (shader == NULL || fragment == NULL) {
+		free(shader);
+		free(fragment);
+		wlr_egl_restore_context(&previous);
+		return NULL;
+	}
+	sprintf(fragment, "%s\n#line 1\n%s", decoration_frag_src, source);
+	wlr_log(WLR_DEBUG, "Compiling decoration shader: %s", label);
+	shader->program = link_program(fragment);
+	free(fragment);
+	if (shader->program == 0) {
+		wlr_log(WLR_ERROR, "Decoration shader '%s' rejected; using normal border", label);
+		free(shader);
+		wlr_egl_restore_context(&previous);
+		return NULL;
+	}
+	shader->renderer = fx;
+	shader->references = 1;
+	shader->destroy.notify = decoration_renderer_destroy;
+	wl_signal_add(&renderer->events.destroy, &shader->destroy);
+	shader->proj = glGetUniformLocation(shader->program, "proj");
+	shader->tex_proj = glGetUniformLocation(shader->program, "tex_proj");
+	shader->position = glGetAttribLocation(shader->program, "pos");
+	shader->size = glGetUniformLocation(shader->program, "ring_size");
+	shader->raster = glGetUniformLocation(shader->program, "ring_raster");
+	shader->origin = glGetUniformLocation(shader->program, "ring_origin");
+	shader->radius = glGetUniformLocation(shader->program, "ring_radius");
+	shader->width = glGetUniformLocation(shader->program, "ring_width");
+	shader->padding = glGetUniformLocation(shader->program, "ring_padding");
+	shader->time = glGetUniformLocation(shader->program, "umbriel_time");
+	shader->scale = glGetUniformLocation(shader->program, "umbriel_scale");
+	shader->color = glGetUniformLocation(shader->program, "ring_color_base");
+	shader->linear = glGetUniformLocation(shader->program, "ring_linear");
+	shader->emission = glGetUniformLocation(shader->program, "ring_emission");
+	shader->threshold = glGetUniformLocation(shader->program, "ring_threshold");
+	shader->emission_bounds = glGetUniformLocation(shader->program, "ring_emission_bounds");
+	shader->light_program = link_program(decoration_light_frag_src);
+	shader->light_proj = glGetUniformLocation(shader->light_program, "proj");
+	shader->light_tex_proj = glGetUniformLocation(shader->light_program, "tex_proj");
+	shader->light_position = glGetAttribLocation(shader->light_program, "pos");
+	shader->light_tex = glGetUniformLocation(shader->light_program, "tex");
+	shader->light_gain = glGetUniformLocation(shader->light_program, "gain");
+	shader->light_linear = glGetUniformLocation(shader->light_program, "linear");
+	wlr_egl_restore_context(&previous);
+	return shader;
 }

@@ -4,7 +4,7 @@
 #include "postprocess_frag_src.h"
 #include "render/egl.h"
 #include "render/fx_renderer/fx_renderer.h"
-#include "umbrielfx/render/pass.h"
+#include "render/pass.h"
 #include "util/matrix.h"
 
 #include <assert.h>
@@ -14,8 +14,6 @@
 #include <string.h>
 #include <wlr/util/log.h>
 #include <wlr/util/transform.h>
-
-#define MAX_PASSES 16
 
 struct effect_program {
   GLuint program;
@@ -32,7 +30,7 @@ struct fx_postprocess_chain {
   struct wl_listener destroy;
   size_t count;
   bool animated, pointer, screen_previous;
-  struct effect_pass passes[MAX_PASSES];
+  struct effect_pass passes[FX_POSTPROCESS_MAX_PASSES];
   GLuint composite;
   GLint proj, tex_proj, pos, tex, linear, size, radius, mask;
 };
@@ -50,7 +48,7 @@ struct fx_postprocess_state {
   bool linear, valid, failed;
   unsigned current;
   struct effect_target source[2], black;
-  struct effect_storage passes[MAX_PASSES];
+  struct effect_storage passes[FX_POSTPROCESS_MAX_PASSES];
 };
 struct effect_update {
   struct wl_list link;
@@ -136,7 +134,7 @@ static bool compile_effect(struct effect_program* p, const struct fx_postprocess
 
 struct fx_postprocess_chain*
 fx_postprocess_chain_create(struct wlr_renderer* renderer, const struct fx_postprocess_source* sources, size_t count) {
-  if (!wlr_renderer_is_fx(renderer) || count == 0 || count > MAX_PASSES)
+  if (!wlr_renderer_is_fx(renderer) || count == 0 || count > FX_POSTPROCESS_MAX_PASSES)
     return NULL;
   struct fx_renderer* fx = fx_get_renderer(renderer);
   struct wlr_egl_context previous;
@@ -200,19 +198,9 @@ static bool target_init(struct effect_target* target, int width, int height, boo
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
   if (width <= 0 || height <= 0 || width > maximum || height > maximum)
     return false;
-  glGenTextures(1, &target->texture);
-  glBindTexture(GL_TEXTURE_2D, target->texture);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(
-      GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, linear ? GL_HALF_FLOAT_OES : GL_UNSIGNED_BYTE, NULL
-  );
-  glGenFramebuffers(1, &target->fbo);
-  glBindFramebuffer(GL_FRAMEBUFFER, target->fbo);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->texture, 0);
-  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+  if (!fx_render_target_init(
+          &target->texture, &target->fbo, width, height, linear ? GL_HALF_FLOAT_OES : GL_UNSIGNED_BYTE
+      ))
     return false;
   glClearColor(0, 0, 0, 0);
   glClear(GL_COLOR_BUFFER_BIT);
@@ -255,49 +243,6 @@ void fx_postprocess_commit(struct wl_list* updates, bool success) {
     wl_list_remove(&update->link);
     free(update);
   }
-}
-
-static void texture_matrix(float matrix[9], enum wl_output_transform transform) {
-  wlr_matrix_identity(matrix);
-  wlr_matrix_translate(matrix, 0.5, 0.5);
-  wlr_matrix_transform(matrix, transform & WL_OUTPUT_TRANSFORM_90 ? wlr_output_transform_invert(transform) : transform);
-  wlr_matrix_translate(matrix, -0.5, -0.5);
-}
-static void effect_draw(
-    GLint proj, GLint tex_proj, GLint pos, const float projection[9], const struct wlr_box* box,
-    enum wl_output_transform transform, const pixman_region32_t* clip, const struct wlr_fbox* source
-) {
-  float matrix[9];
-  wlr_matrix_identity(matrix);
-  wlr_matrix_translate(matrix, box->x, box->y);
-  wlr_matrix_scale(matrix, box->width, box->height);
-  wlr_matrix_multiply(matrix, projection, matrix);
-  glUniformMatrix3fv(proj, 1, GL_FALSE, matrix);
-  texture_matrix(matrix, transform);
-  if (source != NULL) {
-    float uv[9];
-    wlr_matrix_identity(uv);
-    wlr_matrix_translate(uv, source->x, source->y);
-    wlr_matrix_scale(uv, source->width, source->height);
-    wlr_matrix_multiply(matrix, uv, matrix);
-  }
-  glUniformMatrix3fv(tex_proj, 1, GL_FALSE, matrix);
-  pixman_region32_t region;
-  pixman_region32_init_rect(&region, box->x, box->y, box->width, box->height);
-  if (clip != NULL)
-    pixman_region32_intersect(&region, &region, clip);
-  int count;
-  pixman_box32_t* rectangles = pixman_region32_rectangles(&region, &count);
-  glEnableVertexAttribArray(pos);
-  for (int i = 0; i < count; ++i) {
-    float x1 = (float)(rectangles[i].x1 - box->x) / box->width, x2 = (float)(rectangles[i].x2 - box->x) / box->width;
-    float y1 = (float)(rectangles[i].y1 - box->y) / box->height, y2 = (float)(rectangles[i].y2 - box->y) / box->height;
-    const GLfloat vertices[] = {x1, y1, x2, y1, x1, y2, x2, y2};
-    glVertexAttribPointer(pos, 2, GL_FLOAT, GL_FALSE, 0, vertices);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-  }
-  glDisableVertexAttribArray(pos);
-  pixman_region32_fini(&region);
 }
 
 static bool state_prepare(
@@ -360,8 +305,7 @@ bool fx_render_pass_postprocess(
     *owner = state_create(chain);
   if (*owner == NULL)
     return false;
-  // Capture draws use scratch storage, so they cannot overwrite even a pending
-  // display update whose submit has not happened yet.
+  // Captures render into scratch state so a pending display update survives.
   struct fx_postprocess_state* state = advance ? *owner : state_create(chain);
   if (state == NULL)
     return false;
@@ -389,8 +333,7 @@ bool fx_render_pass_postprocess(
   glBindFramebuffer(GL_FRAMEBUFFER, state->source[next].fbo);
   glClearColor(0, 0, 0, 0);
   glClear(GL_COLOR_BUFFER_BIT);
-  // Sampling supports RGBX output targets too. GLES CopyTexSubImage cannot
-  // up-convert an RGB framebuffer into the RGBA feedback source on all drivers.
+  // Sampled rather than copied: RGBX targets cannot CopyTexSubImage into RGBA.
   struct wlr_texture* source = fx_texture_from_buffer(&chain->renderer->wlr_renderer, pass->buffer->buffer);
   if (source == NULL) {
     ok = false;
@@ -418,16 +361,16 @@ bool fx_render_pass_postprocess(
       (double)parameters->box.x / source->width, (double)parameters->box.y / source->height,
       (double)parameters->box.width / source->width, (double)parameters->box.height / source->height
   };
-  effect_draw(
-      chain->proj, chain->tex_proj, chain->pos, copy_projection,
-      &(struct wlr_box){0, 0, parameters->box.width, parameters->box.height}, WL_OUTPUT_TRANSFORM_NORMAL, &source_clip,
-      &source_box
-  );
+  const struct wlr_box copy_box = {.width = parameters->box.width, .height = parameters->box.height};
+  fx_set_proj_matrix(chain->proj, copy_projection, &copy_box);
+  fx_set_tex_matrix(chain->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &source_box);
+  fx_render_box(&copy_box, &source_clip, chain->pos);
   pixman_region32_fini(&source_clip);
   wlr_texture_destroy(source);
   GLuint input = original;
   float source_matrix[9], projection[9];
-  texture_matrix(source_matrix, wlr_output_transform_invert(parameters->transform));
+  const struct wlr_fbox unit = {.width = 1, .height = 1};
+  fx_make_tex_matrix(source_matrix, wlr_output_transform_invert(parameters->transform), &unit);
   matrix_projection(projection, width, height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
   const struct wlr_box local = {.width = width, .height = height};
   glViewport(0, 0, width, height);
@@ -462,7 +405,9 @@ bool fx_render_pass_postprocess(
       glUniform1i(p->first, i == 0);
       glUniform1i(p->linear, pass->has_color_transform);
       glUniformMatrix3fv(p->source_matrix, 1, GL_FALSE, source_matrix);
-      effect_draw(p->proj, p->tex_proj, p->pos, projection, &local, WL_OUTPUT_TRANSFORM_NORMAL, NULL, NULL);
+      fx_set_proj_matrix(p->proj, projection, &local);
+      fx_set_tex_matrix(p->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &unit);
+      fx_render_box(&local, NULL, p->pos);
       if (step == 0)
         accumulator = target->texture;
       else
@@ -486,10 +431,9 @@ bool fx_render_pass_postprocess(
       chain->radius, parameters->corners.top_left, parameters->corners.top_right, parameters->corners.bottom_right,
       parameters->corners.bottom_left
   );
-  effect_draw(
-      chain->proj, chain->tex_proj, chain->pos, pass->projection_matrix, &parameters->box, parameters->transform, clip,
-      NULL
-  );
+  fx_set_proj_matrix(chain->proj, pass->projection_matrix, &parameters->box);
+  fx_set_tex_matrix(chain->tex_proj, parameters->transform, &unit);
+  fx_render_box(&parameters->box, clip, chain->pos);
   if (!pass->suppress_updated) {
     pixman_region32_t updated;
     pixman_region32_init_rect(&updated, intersection.x, intersection.y, intersection.width, intersection.height);

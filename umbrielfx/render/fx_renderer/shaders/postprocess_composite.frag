@@ -14,8 +14,7 @@ void main() {
     r = min(r, min(size.x, size.y) * 0.5);
     vec2 q = abs(p) - size * 0.5 + r;
     float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-    // The effect replaces an already-composited rectangle. Keep native corner
-    // antialiasing outside its fully covered interior rather than darkening it twice.
+    // Keep the native corner antialiasing instead of applying it twice.
     if (mask && d > -0.5) discard;
     vec4 value = texture2D(tex, v_texcoord);
     if (linear && value.a > 0.0) value.rgb = to_linear(value.rgb / value.a) * value.a;

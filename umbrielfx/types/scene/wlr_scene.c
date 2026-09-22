@@ -1385,8 +1385,7 @@ static void output_postprocess_release_captures(struct wlr_scene_output* output)
   if (output->output->renderer == NULL || !wlr_renderer_is_fx(output->output->renderer))
     return;
   struct fx_renderer* renderer = fx_get_renderer(output->output->renderer);
-  // Dropping a child can also remove the next renderer-list entry. Restart
-  // after each drop; retained capture textures keep their own buffer locks.
+  // A drop can unlink the next entry, so restart after each one.
   bool found;
   do {
     found = false;
@@ -1608,8 +1607,7 @@ void wlr_scene_postprocess_pointer(struct wlr_scene* scene, double x, double y, 
         fx_postprocess_state_destroy(settings->states[i]);
         settings->states[i] = NULL;
       }
-    // Both old and new footprints are covered, including cross-output motion.
-    // Full composition is retained until a region-damage optimization is proven.
+    // Whole-output damage covers both pointer footprints.
     if (reads && !settings->suspended)
       scene_output_damage_whole(output);
   }
@@ -1703,8 +1701,7 @@ static void decoration_sync_light(struct scene_decoration* effect) {
       && (border->inner_width > 0 ? border->inner_color[3] : border->outer_color[3]) > 0
       && wlr_scene_node_coords(&border->node, &x, &y)
       && wlr_scene_node_coords(&layer->tree->node, &px, &py);
-  // A detached spill cannot follow an arbitrary ancestor vertex deformation.
-  // Suppress it during shader-driven transforms; snapshots never create spill.
+  // Spill cannot follow an animated ancestor's deformation.
   for (struct wlr_scene_node* node = &border->node; enabled && node != NULL;
        node = node->parent != NULL ? &node->parent->node : NULL) {
     if (node != &border->node && scene_animation_get(node) != NULL)
@@ -1718,8 +1715,7 @@ static void decoration_sync_light(struct scene_decoration* effect) {
   const float z = effect->parameters.coordinate_scale > 0 ? effect->parameters.coordinate_scale : 1;
   const int margin = ceilf(ceilf(effect->parameters.light.spread * 2 + 8) * z);
   if (effect->light_node == NULL) {
-    // The rect supplies scene visibility/damage bookkeeping; its addon supplies
-    // rendering. Non-opaque and input-transparent, even over opaque clients.
+    // The rect only tracks visibility and damage; the addon renders.
     effect->light_node = wlr_scene_rect_create(layer->tree, 0, 0, (float[4]){0, 0, 0, 0.5});
     if (effect->light_node == NULL)
       return;
@@ -1863,12 +1859,10 @@ bool wlr_scene_output_tick_decoration_shaders(struct wlr_scene_output* output, d
     scene_node_get_size(damage_node, &box.width, &box.height);
     if (!wlr_scene_node_coords(damage_node, &box.x, &box.y) || !wlr_box_intersection(&intersection, &box, &output_box))
       continue;
-    // Enabled, intersecting geometry may still be fully occluded by another window.
     if (!pixman_region32_not_empty(&damage_node->visible))
       continue;
     effect->time = (seconds - decoration_clock_origin) * effect->parameters.speed;
     active = true;
-    // Only this output is damaged; no global animation/scanout suppression.
     pixman_region32_t damage;
     pixman_region32_init_rect(
         &damage, intersection.x - output->x, intersection.y - output->y, intersection.width, intersection.height
@@ -1878,8 +1872,7 @@ bool wlr_scene_output_tick_decoration_shaders(struct wlr_scene_output* output, d
     wlr_output_transform_coords(output->output->transform, &width, &height);
     wlr_region_transform(&damage, &damage, wlr_output_transform_invert(output->output->transform), width, height);
     pixman_region32_intersect_rect(&damage, &damage, 0, 0, output->output->width, output->output->height);
-    // Called during the current frame. Scheduling here would defeat the idle
-    // shader timer; C++ owns the next-frame policy.
+    // The compositor schedules the next frame; never request one here.
     wlr_damage_ring_add(&output->damage_ring, &damage);
     pixman_region32_union(&output->pending_commit_damage, &output->pending_commit_damage, &damage);
     pixman_region32_fini(&damage);
@@ -3039,7 +3032,6 @@ static void render_output_postprocess(
     struct fx_postprocess_state** state, const struct render_data* data
 ) {
   if (!output_postprocess_chain_visible(settings, effect)) {
-    // Leaving an output or hiding the pointer also clears its history.
     fx_postprocess_state_destroy(*state);
     *state = NULL;
     return;
@@ -4723,8 +4715,7 @@ bool wlr_scene_output_build_state(
   if (!render_data.postprocess_active)
     output_postprocess_release_captures(scene_output);
   struct scene_output_postprocess* postprocess = output_postprocess_get(scene_output, false);
-  // Protocol toplevel sources create their own scene outputs, without the
-  // compositor's output policy/timer. Their histories belong to that source.
+  // Toplevel capture sources own scene outputs the compositor never configures.
   if (postprocess == NULL && render_data.postprocess_active) {
     postprocess = output_postprocess_get(scene_output, true);
     if (postprocess != NULL) {
@@ -4762,8 +4753,7 @@ bool wlr_scene_output_build_state(
   if (debug_damage == WLR_SCENE_DEBUG_DAMAGE_RERENDER || scene_has_animations(scene_output->scene)) {
     scene_output_damage_whole(scene_output);
   }
-  // Recompose this output on a real frame; this does not request another frame.
-  // Sampling shaders can read any pixel in their source rectangle.
+  // Sampling shaders read any source pixel, so recompose the whole output.
   if (render_data.postprocess_active)
     postprocess_damage_current_frame(scene_output);
 
@@ -5073,7 +5063,7 @@ bool wlr_scene_output_build_state(
     wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
     fx_pass->output_buffer->effect_capture_owner = scene_output;
     if (!fx_render_pass_save_effect_capture(fx_pass)) {
-      // Consistent fallback: display the unfiltered composition for this frame.
+      // Show the unfiltered frame rather than a filtered one without its capture.
       render_data.postprocess_capture = true;
     }
     wlr_render_pass_add_rect(

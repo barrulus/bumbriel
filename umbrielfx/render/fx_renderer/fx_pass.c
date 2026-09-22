@@ -282,11 +282,8 @@ struct fx_framebuffer* fx_render_pass_blur_saved_pixels_buffer(struct fx_gles_re
 
 static const struct wlr_render_pass_impl render_pass_impl;
 
-static void render(const struct wlr_box* box, const pixman_region32_t* clip, GLint attrib);
 static void
 render_pass_mark_updated(struct fx_gles_render_pass* pass, const struct wlr_box* box, const pixman_region32_t* clip);
-static void set_proj_matrix(GLint loc, const float proj[9], const struct wlr_box* box);
-static void set_tex_matrix(GLint loc, enum wl_output_transform trans, const struct wlr_fbox* box);
 
 struct fx_gles_render_pass* fx_get_render_pass(struct wlr_render_pass* render_pass) {
   assert(render_pass->impl == &render_pass_impl);
@@ -337,9 +334,9 @@ static bool render_pass_apply_output_transform(struct fx_gles_render_pass* pass)
     glUniform1i(shader->lut, 1);
   }
 
-  set_proj_matrix(shader->proj, pass->projection_matrix, &box);
-  set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &src_box);
-  render(&box, &pass->updated_region, shader->pos_attrib);
+  fx_set_proj_matrix(shader->proj, pass->projection_matrix, &box);
+  fx_set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &src_box);
+  fx_render_box(&box, &pass->updated_region, shader->pos_attrib);
 
   glActiveTexture(GL_TEXTURE1);
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -392,8 +389,7 @@ bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass) {
     ok = render_pass_apply_output_transform(pass);
     pass->output_buffer = output;
   }
-  // Publish only after submission. Internal imports during the subsequent
-  // display composition must continue to read the live render target.
+  // Valid only once the pass submits.
   pass->effect_capture_saved = ok;
 restore:
   fx_framebuffer_bind(pass->buffer);
@@ -571,7 +567,7 @@ static void stencil_mask_fini(void) {
   glDisable(GL_STENCIL_TEST);
 }
 
-static void render(const struct wlr_box* box, const pixman_region32_t* clip, GLint attrib) {
+void fx_render_box(const struct wlr_box* box, const pixman_region32_t* clip, GLint attrib) {
   pixman_region32_t region;
   pixman_region32_init_rect(&region, box->x, box->y, box->width, box->height);
 
@@ -620,7 +616,7 @@ static void render(const struct wlr_box* box, const pixman_region32_t* clip, GLi
   pixman_region32_fini(&region);
 }
 
-static void set_proj_matrix(GLint loc, const float proj[9], const struct wlr_box* box) {
+void fx_set_proj_matrix(GLint loc, const float proj[9], const struct wlr_box* box) {
   float gl_matrix[9];
   wlr_matrix_identity(gl_matrix);
   wlr_matrix_translate(gl_matrix, box->x, box->y);
@@ -629,7 +625,7 @@ static void set_proj_matrix(GLint loc, const float proj[9], const struct wlr_box
   glUniformMatrix3fv(loc, 1, GL_FALSE, gl_matrix);
 }
 
-static void make_tex_matrix(float tex_matrix[9], enum wl_output_transform trans, const struct wlr_fbox* box) {
+void fx_make_tex_matrix(float tex_matrix[9], enum wl_output_transform trans, const struct wlr_fbox* box) {
   wlr_matrix_identity(tex_matrix);
   wlr_matrix_translate(tex_matrix, box->x, box->y);
   wlr_matrix_scale(tex_matrix, box->width, box->height);
@@ -645,10 +641,24 @@ static void make_tex_matrix(float tex_matrix[9], enum wl_output_transform trans,
   wlr_matrix_translate(tex_matrix, -.5, -.5);
 }
 
-static void set_tex_matrix(GLint loc, enum wl_output_transform trans, const struct wlr_fbox* box) {
+void fx_set_tex_matrix(GLint loc, enum wl_output_transform trans, const struct wlr_fbox* box) {
   float tex_matrix[9];
-  make_tex_matrix(tex_matrix, trans, box);
+  fx_make_tex_matrix(tex_matrix, trans, box);
   glUniformMatrix3fv(loc, 1, GL_FALSE, tex_matrix);
+}
+
+bool fx_render_target_init(GLuint* texture, GLuint* framebuffer, int width, int height, GLenum type) {
+  glGenTextures(1, texture);
+  glBindTexture(GL_TEXTURE_2D, *texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, type, NULL);
+  glGenFramebuffers(1, framebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, *framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *texture, 0);
+  return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
 }
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
@@ -705,7 +715,7 @@ static void draw_animation_texture(
   glUniform4fv(shader->random_seed, 1, parameters->random_seed);
   const struct wlr_fbox unit = {.width = 1, .height = 1};
   float uv_matrix[9], inverse[9], sample_matrix[9];
-  make_tex_matrix(uv_matrix, transform, &unit);
+  fx_make_tex_matrix(uv_matrix, transform, &unit);
   matrix_invert(inverse, uv_matrix);
   wlr_matrix_identity(sample_matrix);
   wlr_matrix_translate(
@@ -741,7 +751,7 @@ static void draw_animation_texture(
     glUniformMatrix3fv(shader->previous_sample_matrix, 1, GL_FALSE, sample_matrix);
     glActiveTexture(GL_TEXTURE0);
   }
-  set_proj_matrix(shader->proj, projection, box);
+  fx_set_proj_matrix(shader->proj, projection, box);
   if (blend) {
     glEnable(GL_BLEND);
   } else {
@@ -752,7 +762,7 @@ static void draw_animation_texture(
   if (mark_updated) {
     render_pass_mark_updated(pass, box, clip);
   }
-  render(box, clip, shader->position);
+  fx_render_box(box, clip, shader->position);
   glBindTexture(GL_TEXTURE_2D, 0);
   if (shader->previous_tex >= 0) {
     glActiveTexture(GL_TEXTURE1);
@@ -1464,10 +1474,10 @@ void fx_render_pass_add_texture(struct fx_gles_render_pass* pass, const struct f
     uniform_corner_radii_set(&shader->effects.clip_radius, &clipped_region_corners);
   }
 
-  set_proj_matrix(shader->proj, pass->projection_matrix, &dst_box);
-  set_tex_matrix(shader->tex_proj, options->transform, &src_fbox);
+  fx_set_proj_matrix(shader->proj, pass->projection_matrix, &dst_box);
+  fx_set_tex_matrix(shader->tex_proj, options->transform, &src_fbox);
 
-  render(&dst_box, &clip_region, shader->pos_attrib);
+  fx_render_box(&dst_box, &clip_region, shader->pos_attrib);
   pixman_region32_fini(&clip_region);
 
   glBindTexture(texture->target, 0);
@@ -1576,14 +1586,14 @@ void fx_render_pass_add_rect(struct fx_gles_render_pass* pass, const struct fx_r
     setup_blending(blend_mode);
     struct quad_shader* shader = should_clip ? &renderer->shaders.quad_clip : &renderer->shaders.quad;
     glUseProgram(shader->program);
-    set_proj_matrix(shader->proj, pass->projection_matrix, &box);
+    fx_set_proj_matrix(shader->proj, pass->projection_matrix, &box);
     glUniform4f(shader->color, color->r, color->g, color->b, color->a);
     if (should_clip) {
       glUniform2f(shader->effects.clip_size, clipped_region_box->width, clipped_region_box->height);
       glUniform2f(shader->effects.clip_position, clipped_region_box->x, clipped_region_box->y);
       uniform_corner_radii_set(&shader->effects.clip_radius, clipped_region_corners);
     }
-    render(&box, &clip_region, shader->pos_attrib);
+    fx_render_box(&box, &clip_region, shader->pos_attrib);
 
     pixman_region32_fini(&clip_region);
   }
@@ -1644,7 +1654,7 @@ void fx_render_pass_add_rect_grad(
   struct quad_grad_shader shader = renderer->shaders.quad_grad;
   glUseProgram(shader.program);
 
-  set_proj_matrix(shader.proj, pass->projection_matrix, &box);
+  fx_set_proj_matrix(shader.proj, pass->projection_matrix, &box);
   glUniform4fv(shader.colors, fx_options->gradient.count, gradient_colors);
   glUniform1i(shader.count, fx_options->gradient.count);
   glUniform2f(shader.size, fx_options->gradient.range.width, fx_options->gradient.range.height);
@@ -1654,7 +1664,7 @@ void fx_render_pass_add_rect_grad(
   glUniform2f(shader.grad_box, fx_options->gradient.range.x, fx_options->gradient.range.y);
   glUniform2f(shader.origin, fx_options->gradient.origin[0], fx_options->gradient.origin[1]);
 
-  render(&box, options->clip, shader.pos_attrib);
+  fx_render_box(&box, options->clip, shader.pos_attrib);
   if (gradient_colors != fx_options->gradient.colors) {
     free(gradient_colors);
   }
@@ -1711,7 +1721,7 @@ void fx_render_pass_add_rounded_rect(
 
   glUseProgram(shader.program);
 
-  set_proj_matrix(shader.proj, pass->projection_matrix, &box);
+  fx_set_proj_matrix(shader.proj, pass->projection_matrix, &box);
   glUniform4f(shader.color, color->r, color->g, color->b, color->a);
 
   glUniform2f(shader.size, box.width, box.height);
@@ -1723,7 +1733,7 @@ void fx_render_pass_add_rounded_rect(
   struct fx_corner_fradii corners = fx_options->corners;
   uniform_corner_radii_set(&shader.radius, &corners);
 
-  render(&box, &clip_region, renderer->shaders.quad_round.pos_attrib);
+  fx_render_box(&box, &clip_region, renderer->shaders.quad_round.pos_attrib);
   pixman_region32_fini(&clip_region);
 
   pop_fx_debug(renderer);
@@ -1749,8 +1759,7 @@ decoration_uniforms(struct fx_decoration_shader* shader, const struct fx_render_
   glUniform1f(shader->padding, options->shader_padding / coordinate_scale);
   glUniform1f(shader->time, options->shader_time);
   glUniform1f(shader->scale, options->shader_scale * coordinate_scale);
-  // User GLSL is authored in sRGB. Convert its straight result before blending
-  // into the linear working target, preserving the normal colour pipeline.
+  // User GLSL is sRGB; convert before blending into a linear target.
   const struct wlr_render_color base = options->inner_width > 0 ? options->inner_color : options->outer_color;
   const float alpha = base.a;
   glUniform4f(
@@ -1761,8 +1770,7 @@ decoration_uniforms(struct fx_decoration_shader* shader, const struct fx_render_
   glUniform1i(shader->emission, false);
 }
 
-// Each ring owns its small logical-resolution pyramid. Reusing it across outputs
-// is safe: emission never samples the scene. AA scale is part of the cache key.
+// Per-ring emission pyramid; the key covers everything the blur depends on.
 struct fx_decoration_light {
   struct fx_decoration_shader* shader;
   GLuint textures[7], framebuffers[7];
@@ -1798,20 +1806,9 @@ static bool decoration_light_allocate(struct fx_decoration_light* light, GLenum 
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
   if (light->widths[0] > maximum || light->heights[0] > maximum)
     return false;
-  for (int i = 0; i <= light->levels; ++i) {
-    glGenTextures(1, &light->textures[i]);
-    glBindTexture(GL_TEXTURE_2D, light->textures[i]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, light->widths[i], light->heights[i], 0, GL_RGBA, type, NULL);
-    glGenFramebuffers(1, &light->framebuffers[i]);
-    glBindFramebuffer(GL_FRAMEBUFFER, light->framebuffers[i]);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, light->textures[i], 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+  for (int i = 0; i <= light->levels; ++i)
+    if (!fx_render_target_init(&light->textures[i], &light->framebuffers[i], light->widths[i], light->heights[i], type))
       return false;
-  }
   return true;
 }
 
@@ -1825,10 +1822,10 @@ static void decoration_light_blur(
   const struct wlr_box box = {.width = light->widths[target], .height = light->heights[target]};
   float projection[9];
   matrix_projection(projection, box.width, box.height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
-  set_proj_matrix(shader->proj, projection, &box);
-  // Existing Kawase shaders account for the level ratio in their UV expression.
+  fx_set_proj_matrix(shader->proj, projection, &box);
+  // The Kawase shaders expect the level ratio in the UV scale.
   const struct wlr_fbox uv = {.width = down ? 0.5 : 2, .height = down ? 0.5 : 2};
-  set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+  fx_set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
   glUniform1i(shader->tex, 0);
   glUniform1f(shader->radius, offset);
   glUniform2f(shader->halfpixel, 0.5f / light->widths[source], 0.5f / light->heights[source]);
@@ -1836,7 +1833,7 @@ static void decoration_light_blur(
       shader->sample_bounds, 0.5f / light->widths[source], 0.5f / light->heights[source],
       1 - 0.5f / light->widths[source], 1 - 0.5f / light->heights[source]
   );
-  render(&box, NULL, shader->pos_attrib);
+  fx_render_box(&box, NULL, shader->pos_attrib);
 }
 
 bool fx_render_pass_add_decoration_light(
@@ -1931,9 +1928,9 @@ bool fx_render_pass_add_decoration_light(
     float projection[9];
     matrix_projection(projection, w, h, WL_OUTPUT_TRANSFORM_FLIPPED_180);
     const struct wlr_box emission_box = {.width = w, .height = h};
-    set_proj_matrix(shader->proj, projection, &emission_box);
+    fx_set_proj_matrix(shader->proj, projection, &emission_box);
     const struct wlr_fbox uv = {.width = 1, .height = 1};
-    set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+    fx_set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
     decoration_uniforms(shader, ring, false);
     glUniform2f(shader->raster, width, height);
     glUniform2f(shader->origin, ring->logical_hole.x / z + margin, ring->logical_hole.y / z + margin);
@@ -1943,7 +1940,7 @@ bool fx_render_pass_add_decoration_light(
         shader->emission_bounds, -ring->logical_hole.x / z, -ring->logical_hole.y / z,
         (ring->logical_width - ring->logical_hole.x) / z, (ring->logical_height - ring->logical_hole.y) / z
     );
-    render(&emission_box, NULL, shader->position);
+    fx_render_box(&emission_box, NULL, shader->position);
     glUniform1i(shader->emission, false);
     const float offset = radius / (3 * ((1 << levels) - 1));
     for (int i = 1; i <= levels; ++i)
@@ -1972,11 +1969,11 @@ restore:
           * fmaxf(1, parameters->spread / fmaxf(1, (ring->inner_width + ring->outer_width) / ring->shader_scale / z))
   );
   glUniform1i(shader->light_linear, pass->has_color_transform);
-  set_proj_matrix(shader->light_proj, pass->projection_matrix, box);
+  fx_set_proj_matrix(shader->light_proj, pass->projection_matrix, box);
   const struct wlr_fbox uv = {.width = 1, .height = 1};
-  set_tex_matrix(shader->light_tex_proj, ring->shader_transform, &uv);
+  fx_set_tex_matrix(shader->light_tex_proj, ring->shader_transform, &uv);
   glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_COLOR, GL_ZERO, GL_ONE);
-  render(box, clip, shader->light_position);
+  fx_render_box(box, clip, shader->light_position);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glBindTexture(GL_TEXTURE_2D, 0);
   render_pass_mark_updated(pass, box, clip);
@@ -2005,11 +2002,11 @@ void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx
   if (options->shader != NULL && options->shader->renderer == renderer) {
     struct fx_decoration_shader* shader = options->shader;
     glUseProgram(shader->program);
-    set_proj_matrix(shader->proj, pass->projection_matrix, &options->box);
+    fx_set_proj_matrix(shader->proj, pass->projection_matrix, &options->box);
     const struct wlr_fbox unit = {.width = 1, .height = 1};
-    set_tex_matrix(shader->tex_proj, options->shader_transform, &unit);
+    fx_set_tex_matrix(shader->tex_proj, options->shader_transform, &unit);
     decoration_uniforms(shader, options, pass->has_color_transform);
-    render(&options->box, &clip_region, shader->position);
+    fx_render_box(&options->box, &clip_region, shader->position);
     pixman_region32_fini(&clip_region);
     pop_fx_debug(renderer);
     TRACY_BOTH_ZONES_END;
@@ -2018,7 +2015,7 @@ void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx
 
   struct border_shader shader = renderer->shaders.border;
   glUseProgram(shader.program);
-  set_proj_matrix(shader.proj, pass->projection_matrix, &options->box);
+  fx_set_proj_matrix(shader.proj, pass->projection_matrix, &options->box);
   glUniform4f(shader.color, outer_color.r, outer_color.g, outer_color.b, outer_color.a);
   glUniform4f(shader.inner_color, inner_color.r, inner_color.g, inner_color.b, inner_color.a);
   glUniform2f(shader.clip_size, options->clipped_region.area.width, options->clipped_region.area.height);
@@ -2029,7 +2026,7 @@ void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx
   glUniform1f(shader.inner_width, options->inner_width);
   glUniform1f(shader.outer_width, options->outer_width);
 
-  render(&options->box, &clip_region, shader.pos_attrib);
+  fx_render_box(&options->box, &clip_region, shader.pos_attrib);
   pixman_region32_fini(&clip_region);
   pop_fx_debug(renderer);
   TRACY_BOTH_ZONES_END;
@@ -2091,7 +2088,7 @@ void fx_render_pass_add_rounded_rect_grad(
   struct quad_grad_round_shader shader = renderer->shaders.quad_grad_round;
   glUseProgram(shader.program);
 
-  set_proj_matrix(shader.proj, pass->projection_matrix, &box);
+  fx_set_proj_matrix(shader.proj, pass->projection_matrix, &box);
 
   glUniform2f(shader.size, box.width, box.height);
   glUniform2f(shader.position, box.x, box.y);
@@ -2108,7 +2105,7 @@ void fx_render_pass_add_rounded_rect_grad(
   struct fx_corner_fradii corners = fx_options->corners;
   uniform_corner_radii_set(&shader.radius, &corners);
 
-  render(&box, options->clip, shader.pos_attrib);
+  fx_render_box(&box, options->clip, shader.pos_attrib);
   if (gradient_colors != fx_options->gradient.colors) {
     free(gradient_colors);
   }
@@ -2163,7 +2160,7 @@ void fx_render_pass_add_box_shadow(
 
   const struct wlr_render_color converted_color = pass_color(pass, &options->color);
   const struct wlr_render_color* color = &converted_color;
-  set_proj_matrix(renderer->shaders.box_shadow.proj, pass->projection_matrix, &box);
+  fx_set_proj_matrix(renderer->shaders.box_shadow.proj, pass->projection_matrix, &box);
   glUniform4f(renderer->shaders.box_shadow.color, color->r, color->g, color->b, color->a);
   glUniform1f(renderer->shaders.box_shadow.blur_sigma, options->blur_sigma);
   glUniform2f(renderer->shaders.box_shadow.size, box.width, box.height);
@@ -2175,7 +2172,7 @@ void fx_render_pass_add_box_shadow(
   glUniform2f(renderer->shaders.box_shadow.clip_position, clipped_region_box.x, clipped_region_box.y);
   glUniform2f(renderer->shaders.box_shadow.clip_size, clipped_region_box.width, clipped_region_box.height);
 
-  render(&box, &clip_region, renderer->shaders.box_shadow.pos_attrib);
+  fx_render_box(&box, &clip_region, renderer->shaders.box_shadow.pos_attrib);
   pixman_region32_fini(&clip_region);
 
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -2255,10 +2252,10 @@ static void render_blur_segments(
     glUniform2f(shader->halfpixel, 0.5f / (options->texture->width * 2.0f), 0.5f / (options->texture->height * 2.0f));
   }
 
-  set_proj_matrix(shader->proj, pass->projection_matrix, &dst_box);
-  set_tex_matrix(shader->tex_proj, options->transform, &src_fbox);
+  fx_set_proj_matrix(shader->proj, pass->projection_matrix, &dst_box);
+  fx_set_tex_matrix(shader->tex_proj, options->transform, &src_fbox);
 
-  render(&dst_box, options->clip, shader->pos_attrib);
+  fx_render_box(&dst_box, options->clip, shader->pos_attrib);
 
   glBindTexture(texture->target, 0);
   pop_fx_debug(renderer);
@@ -2320,10 +2317,10 @@ static void render_blur_effects(struct fx_gles_render_pass* pass, struct fx_rend
   glUniform1f(shader.saturation, blur_data->saturation);
   glUniform1i(shader.linear, pass->has_color_transform);
 
-  set_proj_matrix(shader.proj, pass->projection_matrix, &dst_box);
-  set_tex_matrix(shader.tex_proj, options->transform, &src_fbox);
+  fx_set_proj_matrix(shader.proj, pass->projection_matrix, &dst_box);
+  fx_set_tex_matrix(shader.tex_proj, options->transform, &src_fbox);
 
-  render(&dst_box, options->clip, shader.pos_attrib);
+  fx_render_box(&dst_box, options->clip, shader.pos_attrib);
 
   glBindTexture(texture->target, 0);
 

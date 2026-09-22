@@ -7,6 +7,12 @@
 #include <wlr/util/box.h>
 #include <wlr/render/interface.h>
 
+void fx_render_box(const struct wlr_box *box, const pixman_region32_t *clip, GLint attrib);
+void fx_set_proj_matrix(GLint loc, const float proj[9], const struct wlr_box *box);
+void fx_make_tex_matrix(float matrix[9], enum wl_output_transform transform, const struct wlr_fbox *box);
+void fx_set_tex_matrix(GLint loc, enum wl_output_transform transform, const struct wlr_fbox *box);
+bool fx_render_target_init(GLuint *texture, GLuint *framebuffer, int width, int height, GLenum type);
+
 struct fx_render_texture_options fx_render_texture_options_default(
 		const struct wlr_render_texture_options *base);
 

@@ -15,6 +15,8 @@ struct wlr_scene;
 struct wlr_scene_rect;
 struct wlr_scene_output;
 
+#define FX_POSTPROCESS_MAX_PASSES 16
+
 enum fx_postprocess_redraw {
   FX_POSTPROCESS_AUTO,
   FX_POSTPROCESS_ON_DAMAGE,
@@ -22,14 +24,12 @@ enum fx_postprocess_redraw {
 };
 struct fx_scene_postprocess {
   struct fx_postprocess_chain* chain;
-  // Output-local logical region; an empty box selects the entire output.
+  // Output-local logical box; empty means the whole output.
   struct wlr_box region;
   float cursor_radius;
 };
 
-// Native persistent pixel effects, separate from lifecycle animation slots.
-// Each source defines vec4 postprocess(vec3 coords), and may define
-// vec4 postprocess_buffer(vec3 coords) for a dedicated feedback accumulator.
+// Source defines vec4 postprocess(vec3), optionally vec4 postprocess_buffer(vec3) for feedback.
 struct fx_postprocess_source {
   const char* code;
   const char* label;
@@ -43,10 +43,9 @@ void fx_postprocess_chain_unref(struct fx_postprocess_chain* chain);
 bool fx_postprocess_chain_animated(const struct fx_postprocess_chain* chain);
 bool fx_postprocess_chain_reads_pointer(const struct fx_postprocess_chain* chain);
 
-// A marker after window content and before decorations. It consumes the already
-// composited rectangle. The marker never accepts input or occludes lower nodes.
+// Filters the already composited rectangle under the marker; never accepts input.
 void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postprocess_chain* chain);
-// Ordered regions, output preset, then global preset. A NULL global is allowed.
+// Regions in order, then the global preset, whose chain may be NULL.
 void wlr_scene_output_set_postprocess(
     struct wlr_scene_output* output, const struct fx_scene_postprocess* effects, size_t count,
     struct fx_scene_postprocess global, bool in_capture, bool reads_cursor, enum fx_postprocess_redraw redraw
