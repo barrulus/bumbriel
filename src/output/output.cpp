@@ -1037,15 +1037,11 @@ namespace umbriel {
     // A direct-scanned fullscreen client may stop submitting as soon as it loses focus. On VRR outputs that can leave
     // the first workspace-switch frame waiting on the old client, so the compositor never gets a vblank to advance the
     // slide. Keep animated outputs on the render path until their final composed frame has settled.
-    const bool decorationActive = !m_server->sessionLocked()
-        && wlr_scene_output_tick_decoration_shaders(
-            m_sceneOutput, static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / 1e9
-        );
+    const double seconds = static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / 1e9;
+    const bool decorationActive =
+        !m_server->sessionLocked() && wlr_scene_output_tick_decoration_shaders(m_sceneOutput, seconds);
     const bool nativeAnimationsActive = m_server->animationsActiveFor(this);
-    const bool postprocessActive = wlr_scene_output_tick_postprocess(
-        m_sceneOutput, static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / 1e9,
-        m_server->sessionLocked()
-    );
+    const bool postprocessActive = wlr_scene_output_tick_postprocess(m_sceneOutput, seconds, m_server->sessionLocked());
     const bool shadersActive = decorationActive || postprocessActive;
     const bool animationsActive = nativeAnimationsActive || shadersActive;
     if (animationsActive != m_animationRenderLocked) {

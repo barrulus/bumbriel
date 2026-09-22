@@ -13,6 +13,7 @@ extern "C" {
 // clang-format on
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cstddef>
@@ -491,30 +492,20 @@ namespace umbriel {
         break;
       case ActionArgKind::Shader:
         if (takeActionArg(value, spec, arg)) {
-          const size_t separator = arg.find(' ');
-          if (separator == std::string_view::npos)
-            return false;
+          const auto nextWord = [&arg] {
+            const std::string_view word = arg.substr(0, arg.find(' '));
+            arg.remove_prefix(word.size());
+            arg.remove_prefix(std::min(arg.find_first_not_of(' '), arg.size()));
+            return word;
+          };
+          constexpr std::array<std::string_view, 6> kScopes{"window",    "output", "global",
+                                                            "animation", "cursor", "screen"};
           ShaderArg shader;
-          shader.scope = arg.substr(0, separator);
-          arg.remove_prefix(separator + 1);
-          while (arg.starts_with(' '))
-            arg.remove_prefix(1);
-          const size_t target = arg.find(' ');
-          shader.operation = arg.substr(0, target);
-          if (shader.operation.empty()
-              || (shader.scope != "window"
-                  && shader.scope != "output"
-                  && shader.scope != "global"
-                  && shader.scope != "animation"
-                  && shader.scope != "cursor"
-                  && shader.scope != "screen"))
+          shader.scope = nextWord();
+          shader.operation = nextWord();
+          shader.target = arg;
+          if (shader.operation.empty() || !std::ranges::contains(kScopes, std::string_view(shader.scope)))
             return false;
-          if (target != std::string_view::npos) {
-            arg.remove_prefix(target + 1);
-            while (arg.starts_with(' '))
-              arg.remove_prefix(1);
-            shader.target = arg;
-          }
           if (shader.scope != "window" && shader.scope != "output" && !shader.target.empty())
             return false;
           output.action = spec.action;

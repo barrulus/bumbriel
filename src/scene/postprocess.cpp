@@ -25,7 +25,7 @@ namespace umbriel {
     auto previous = std::move(cache);
     cache.clear();
     auto presets = config().shaders.presets;
-    for (const auto* name : {"grayscale", "invert", "saturation", "temperature"}) {
+    for (const auto name : kBuiltinShaders) {
       if (std::ranges::any_of(presets, [&](const auto& preset) { return preset.name == name; }))
         continue;
       Config::Shaders::Preset preset;
@@ -44,7 +44,7 @@ namespace umbriel {
             found = true;
             break;
           }
-      if (!found && !preset.passes.empty() && preset.passes.size() <= 16) {
+      if (!found && !preset.passes.empty() && preset.passes.size() <= FX_POSTPROCESS_MAX_PASSES) {
         std::vector<fx_postprocess_source> sources;
         std::vector<std::string> labels;
         labels.reserve(preset.passes.size());

@@ -442,8 +442,7 @@ namespace umbriel {
     m_dragShadowTree = wlr_scene_tree_create(&m_scene->tree);
     m_dragTree = wlr_scene_tree_create(&m_scene->tree);
     m_dragIconTree = wlr_scene_tree_create(&m_scene->tree);
-    // Local illumination stays below panels. Pinned/fullscreen content retains
-    // its existing privileged position above panels and therefore above spill.
+    // Ring illumination stays below panels and pinned content.
     wlr_scene_set_decoration_light_layer(m_scene, wlr_scene_tree_create(&m_scene->tree));
     m_shellLayerTrees[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(&m_scene->tree);
     m_fullscreenTree = wlr_scene_tree_create(&m_scene->tree);

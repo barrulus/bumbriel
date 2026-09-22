@@ -42,18 +42,8 @@ namespace umbriel {
     if (m_border == nullptr)
       return;
     auto* shader = m_shaderFocused ? decorationShader(m_shaderConfig) : nullptr;
-    const fx_decoration_parameters parameters{
-        .speed = static_cast<float>(m_shaderConfig.speed),
-        .padding = static_cast<float>(m_shaderConfig.padding),
-        .coordinate_scale = 1.0F,
-        .animated = m_shaderConfig.animated,
-        .light = {
-            .enabled = m_shaderConfig.light.enabled && !m_lightSuppressed,
-            .spread = static_cast<float>(m_shaderConfig.light.spread),
-            .intensity = static_cast<float>(m_shaderConfig.light.intensity),
-            .threshold = static_cast<float>(m_shaderConfig.light.threshold)
-        },
-    };
+    const auto parameters =
+        decorationParameters(m_shaderConfig, static_cast<float>(m_shaderConfig.padding), 1.0F, m_lightSuppressed);
     wlr_scene_border_set_shader(m_border, shader, &parameters);
     const int padding = shader != nullptr ? m_shaderConfig.padding : 0;
     if (padding != m_shaderPadding) {
@@ -83,15 +73,12 @@ namespace umbriel {
     }
 
     const auto& appearance = config().appearance;
-    auto ring = makeBorderRing(
-        contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
+    const BorderRing ring = padBorderRing(
+        makeBorderRing(
+            contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
+        ),
+        m_shaderPadding
     );
-    ring.box.x -= m_shaderPadding;
-    ring.box.y -= m_shaderPadding;
-    ring.box.width += 2 * m_shaderPadding;
-    ring.box.height += 2 * m_shaderPadding;
-    ring.hole.x += m_shaderPadding;
-    ring.hole.y += m_shaderPadding;
     applyBorderGeometry(m_border, ring, appearance.borderWidth, appearance.outerBorderWidth);
   }
 
@@ -121,11 +108,13 @@ namespace umbriel {
       return false;
     }
     const auto& appearance = config().appearance;
-    const BorderRing ring = makeBorderRing(
-        contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
+    const BorderRing ring = padBorderRing(
+        makeBorderRing(
+            contentWidth, contentHeight, appearance.cornerRadius, appearance.borderWidth, appearance.outerBorderWidth
+        ),
+        m_shaderPadding
     );
-    return m_border->width != ring.box.width + 2 * m_shaderPadding
-        || m_border->height != ring.box.height + 2 * m_shaderPadding;
+    return m_border->width != ring.box.width || m_border->height != ring.box.height;
   }
 
   void ViewDecoration::snapshotBorders(

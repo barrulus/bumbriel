@@ -139,10 +139,7 @@ namespace umbriel {
             .real("intensity", 0.0, 4.0, target.light.intensity)
             .real("threshold", 0.0, 1.0, target.light.threshold);
       });
-      auto result = readAnimationShader(section, configStore().mutableDiagnostics());
-      target.shader = std::move(result.source);
-      for (auto& path : result.watchPaths)
-        configStore().addWatchPath(std::move(path));
+      target.shader = readShaderSource(section);
     }
 
     void emitDiag(ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg) {
@@ -1113,13 +1110,7 @@ namespace umbriel {
         }
       }
 
-      const auto readShader = [&](Section& section, auto& event) {
-        auto result = readAnimationShader(section, configStore().mutableDiagnostics());
-        event.shader = std::move(result.source);
-        for (auto& path : result.watchPaths) {
-          configStore().addWatchPath(std::move(path));
-        }
-      };
+      const auto readShader = [](Section& section, auto& event) { event.shader = readShaderSource(section); };
       const auto readCurveKey = [&](Section& section, std::string_view key, std::string_view context,
                                     AnimationCurve& target) {
         if (const toml::node* node = section.take(key)) {

@@ -4,9 +4,6 @@
 
 #include <memory>
 #include <vector>
-extern "C" {
-#include <umbrielfx/render/decoration.h>
-}
 
 namespace umbriel {
   namespace {
@@ -58,5 +55,21 @@ namespace umbriel {
       if (entry.source == *settings.shader)
         return entry.program.get();
     return nullptr;
+  }
+  fx_decoration_parameters decorationParameters(
+      const DecorationShaderConfig& settings, float padding, float coordinateScale, bool suppressLight
+  ) {
+    return {
+        .speed = static_cast<float>(settings.speed),
+        .padding = padding,
+        .coordinate_scale = coordinateScale,
+        .animated = settings.animated,
+        .light = {
+            .enabled = settings.light.enabled && !suppressLight,
+            .spread = static_cast<float>(settings.light.spread),
+            .intensity = static_cast<float>(settings.light.intensity),
+            .threshold = static_cast<float>(settings.light.threshold)
+        },
+    };
   }
 } // namespace umbriel

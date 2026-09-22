@@ -7,6 +7,8 @@
 #include <string>
 
 namespace umbriel {
+  inline constexpr std::array<float, 4> kTransparent{};
+
   struct OkLab {
     float lightness = 0.0F;
     float a = 0.0F;

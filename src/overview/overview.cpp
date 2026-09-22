@@ -255,27 +255,12 @@ namespace umbriel {
       const auto& settings = overrideSettings ? *overrideSettings : appearance.borderShader;
       auto* shader = view == liveTarget ? decorationShader(settings) : nullptr;
       const int padding = shader != nullptr ? static_cast<int>(std::ceil(settings.padding * z)) : 0;
-      const fx_decoration_parameters parameters{
-          .speed = static_cast<float>(settings.speed),
-          .padding = static_cast<float>(padding),
-          .coordinate_scale = static_cast<float>(z),
-          .animated = settings.animated,
-          .light = {
-              .enabled = settings.light.enabled,
-              .spread = static_cast<float>(settings.light.spread),
-              .intensity = static_cast<float>(settings.light.intensity),
-              .threshold = static_cast<float>(settings.light.threshold)
-          },
-      };
+      const auto parameters = decorationParameters(settings, static_cast<float>(padding), static_cast<float>(z), false);
       wlr_scene_border_set_shader(card.border, shader, &parameters);
-      auto ring = makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth);
-      ring.box.x -= padding;
-      ring.box.y -= padding;
-      ring.box.width += 2 * padding;
-      ring.box.height += 2 * padding;
-      ring.hole.x += padding;
-      ring.hole.y += padding;
-      applyBorderGeometry(card.border, ring, innerWidth, outerWidth);
+      applyBorderGeometry(
+          card.border, padBorderRing(makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth), padding),
+          innerWidth, outerWidth
+      );
       const std::array<float, 4> innerColor = tint(cardBorderColor(card, liveTarget), presentedOpacity);
       const std::array<float, 4> outerColor = tint(config().colors.border.outer, presentedOpacity);
       wlr_scene_border_set_colors(card.border, innerColor.data(), outerColor.data());
@@ -927,7 +912,7 @@ namespace umbriel {
     const std::array<float, 4> innerColor = tint(config().colors.border.unfocused, 1.0);
     const std::array<float, 4> outerColor = tint(config().colors.border.outer, 1.0);
     card->border = wlr_scene_border_create(card->tree, innerColor.data(), outerColor.data());
-    card->shader = wlr_scene_rect_create(card->tree, 0, 0, std::array<float, 4>{0, 0, 0, 0}.data());
+    card->shader = wlr_scene_rect_create(card->tree, 0, 0, kTransparent.data());
     if (card->border == nullptr) {
       wlr_scene_node_destroy(&card->tree->node);
       return nullptr;

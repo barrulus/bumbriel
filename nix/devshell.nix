@@ -5,9 +5,7 @@
 pkgs.mkShell {
   inputsFrom = [ umbriel ];
 
-  # The debug and ASan recipes use -O0. Fortify requires optimization and
-  # otherwise emits a warning in every translation unit. Packaged builds keep
-  # their normal hardening; this setting only affects the development shell.
+  # Fortify needs optimisation, which the -O0 debug and ASan builds lack.
   hardeningDisable = [ "fortify" ];
 
   nativeBuildInputs = with pkgs; [

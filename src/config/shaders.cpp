@@ -9,6 +9,13 @@
 #include <format>
 
 namespace umbriel {
+  std::optional<AnimationShaderSource> readShaderSource(Section& section) {
+    auto result = readAnimationShader(section, configStore().mutableDiagnostics());
+    for (auto& path : result.watchPaths)
+      configStore().addWatchPath(std::move(path));
+    return std::move(result.source);
+  }
+
   std::optional<AnimationShaderSource> builtinShader(std::string_view name, double amount, int kelvin) {
     const std::string start = "vec4 postprocess(vec3 p) { vec4 c = tex2D_screen(p.xy); ";
     std::string body;
@@ -23,8 +30,7 @@ namespace umbriel {
           std::clamp(amount, 0.0, 10.0)
       );
     else if (name == "temperature") {
-      // Biri's reference-normalized black-body approximation. At 6500 K every
-      // multiplier is exactly one; do not substitute the bundled warm tint.
+      // Black-body multipliers, normalised so 6500 K is identity.
       const auto raw = [](double k) {
         const double t = std::clamp(k, 1000.0, 40000.0) / 100.0;
         return std::array{
@@ -101,10 +107,8 @@ namespace umbriel {
               double amount = 1.5;
               int kelvin = 4000;
               passKeys.text("preset", builtin).real("amount", 0.0, 10.0, amount).integer("kelvin", 1000, 40000, kelvin);
-              auto result = readAnimationShader(passKeys, diagnostics);
-              for (auto& path : result.watchPaths)
-                configStore().addWatchPath(std::move(path));
-              pass.source = builtin.empty() ? std::move(result.source) : builtinShader(builtin, amount, kelvin);
+              auto source = readShaderSource(passKeys);
+              pass.source = builtin.empty() ? std::move(source) : builtinShader(builtin, amount, kelvin);
               if (!pass.source)
                 warn(passNode, "shader pass requires a readable shader or a known builtin preset");
               if (!builtin.empty() && passKeys.node("shader") != nullptr) {

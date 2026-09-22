@@ -30,4 +30,15 @@ namespace umbriel {
   [[nodiscard]] BorderRing
   makeBorderRing(int contentWidth, int contentHeight, int outerRadius, int innerWidth, int outerWidth);
 
+  // Grows the raster box by `padding` on every side; the hole keeps its place.
+  [[nodiscard]] constexpr BorderRing padBorderRing(BorderRing ring, int padding) {
+    ring.box.x -= padding;
+    ring.box.y -= padding;
+    ring.box.width += 2 * padding;
+    ring.box.height += 2 * padding;
+    ring.hole.x += padding;
+    ring.hole.y += padding;
+    return ring;
+  }
+
 } // namespace umbriel

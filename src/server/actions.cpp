@@ -574,14 +574,8 @@ namespace umbriel {
         if (view != nullptr)
           selection = &view->shaderSelection();
       } else if (arg->scope == "output") {
-        if (arg->target.empty())
-          output = server.outputFromWlr(server.preferredOutput());
-        else
-          for (const auto& candidate : server.outputs())
-            if (outputNameMatch(candidate->identity(), arg->target) != OutputNameMatch::None) {
-              output = candidate.get();
-              break;
-            }
+        output =
+            arg->target.empty() ? server.outputFromWlr(server.preferredOutput()) : server.outputFromName(arg->target);
         if (output != nullptr)
           selection = &output->shaderSelection();
       } else

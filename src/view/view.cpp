@@ -11,6 +11,7 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/animation_shader.h"
+#include "scene/color.h"
 #include "server/server.h"
 
 #include <umbrielfx/render/postprocess.h>
@@ -2000,11 +2001,9 @@ namespace umbriel {
       return;
     auto* chain = windowShader();
     if (m_shaderRect == nullptr && chain != nullptr)
-      m_shaderRect = wlr_scene_rect_create(m_sceneTree, 0, 0, std::array<float, 4>{0, 0, 0, 0}.data());
-    // Isolated captures only contain this client's surfaces. Apply the same
-    // window preset over that scene when inclusion is explicitly enabled.
+      m_shaderRect = wlr_scene_rect_create(m_sceneTree, 0, 0, kTransparent.data());
     if (m_captureScene != nullptr && m_captureShaderRect == nullptr && chain != nullptr)
-      m_captureShaderRect = wlr_scene_rect_create(&m_captureScene->tree, 0, 0, std::array<float, 4>{0, 0, 0, 0}.data());
+      m_captureShaderRect = wlr_scene_rect_create(&m_captureScene->tree, 0, 0, kTransparent.data());
     if (m_captureShaderRect != nullptr) {
       const auto captureGeometry = committedContentBox();
       wlr_scene_rect_set_postprocess(m_captureShaderRect, config().shaders.inCapture ? chain : nullptr);
