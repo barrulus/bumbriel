@@ -1,4 +1,4 @@
-// Pixel tests for the editable Biri collection, through the production renderer.
+// Pixel tests for the Biri collection through the production renderer.
 #include "render/fx_renderer/decoration.h"
 #include "render_fixture.h"
 
@@ -30,51 +30,6 @@
 
 #define SIZE 128
 
-static char* read_source(const char* directory, const char* name) {
-  char path[4096];
-  snprintf(path, sizeof(path), "%s/%s", directory, name);
-  FILE* file = fopen(path, "rb");
-  if (file == NULL) {
-    perror(path);
-    return NULL;
-  }
-  char* text = calloc(256 * 1024 + 1, 1);
-  if (text != NULL) {
-    size_t length = fread(text, 1, 256 * 1024, file);
-    if (ferror(file) || length == 256 * 1024) {
-      free(text);
-      text = NULL;
-    }
-  }
-  fclose(file);
-  return text;
-}
-
-static bool write_frame(const char* name, int frame, const uint32_t* pixels) {
-  const char* directory = getenv("BIRI_SHADER_FRAMES");
-  if (directory == NULL)
-    return true;
-  char path[4096];
-  snprintf(path, sizeof(path), "%s/%s-%d.ppm", directory, name, frame);
-  FILE* file = fopen(path, "wb");
-  if (file == NULL)
-    return false;
-  fprintf(file, "P6\n%d %d\n255\n", SIZE, SIZE);
-  for (int y = 0; y < SIZE; y++) {
-    for (int x = 0; x < SIZE; x++) {
-      uint32_t pixel = pixels[y * SIZE + x];
-      unsigned alpha = pixel >> 24;
-      unsigned background = ((x / 8 + y / 8) % 2) ? 32 : 64;
-      for (unsigned shift = 0; shift < 24; shift += 8) {
-        unsigned value = ((pixel >> shift) & 255) + background * (255 - alpha) / 255;
-        fputc(value > 255 ? 255 : value, file);
-      }
-    }
-  }
-  bool ok = !ferror(file);
-  return fclose(file) == 0 && ok;
-}
-
 static bool render_shader(
     struct fixture* fixture, struct fx_animation_shader* shader, float progress, float alpha,
     uint32_t pixels[SIZE * SIZE]
@@ -100,7 +55,7 @@ static bool render_shader(
   );
   bool ok = fx_render_pass_init_offscreen_buffers(base, fixture->output) && fx_render_pass_begin_animation(pass);
   if (ok) {
-    // Asymmetric coloured tiles expose displacement, rotation and lost source sampling.
+    // Asymmetric tiles expose displacement and rotation.
     for (int y = 0; y < 8; y++) {
       for (int x = 0; x < 8; x++) {
         wlr_render_pass_add_rect(
@@ -169,20 +124,6 @@ static bool render_decoration(
   bool ok = wlr_render_pass_submit(base) && read_buffer(fixture, buffer, DRM_FORMAT_ABGR8888, SIZE * 4, pixels);
   wlr_buffer_drop(buffer);
   return ok;
-}
-
-static size_t different_pixels(const uint32_t* a, const uint32_t* b) {
-  size_t different = 0;
-  for (size_t i = 0; i < SIZE * SIZE; i++) {
-    for (unsigned shift = 0; shift < 32; shift += 8) {
-      int delta = (int)((a[i] >> shift) & 255) - (int)((b[i] >> shift) & 255);
-      if (abs(delta) > 3) {
-        different++;
-        break;
-      }
-    }
-  }
-  return different;
 }
 
 static bool test_decoration_visibility(struct fixture* fixture) {
@@ -305,9 +246,9 @@ static bool test_illumination(struct fixture* fixture) {
   struct fx_decoration_light* cache = NULL;
   bool ok = render_light(fixture, shader, &cache, 0, 1, first)
       && render_light(fixture, shader, &cache, 0, 1, cached)
-      && check(different_pixels(first, cached) == 0, "static illumination must remain stable")
+      && check(count_differences(first, cached, SIZE * SIZE, 3) == 0, "static illumination must remain stable")
       && render_light(fixture, shader, &cache, 1.5, 1, second)
-      && check(different_pixels(first, second) > 20, "illumination must follow moving bright details")
+      && check(count_differences(first, second, SIZE * SIZE, 3) > 20, "illumination must follow moving bright details")
       && render_light(fixture, shader, &cache, 0, 0.4, dim);
   size_t inward = 0, outward = 0;
   for (int y = 0; ok && y < SIZE; ++y)
@@ -325,7 +266,7 @@ static bool test_illumination(struct fixture* fixture) {
     }
   ok = check(inward > 10 && outward > 10, "actual ring light must spill both inward and outward") && ok;
   if (ok)
-    ok = write_frame("illumination", 0, first) && write_frame("illumination", 1, second);
+    ok = write_frame("illumination", 0, first, SIZE, SIZE) && write_frame("illumination", 1, second, SIZE, SIZE);
   fx_decoration_light_destroy(cache);
   fx_decoration_shader_unref(shader);
   return ok;
@@ -356,14 +297,14 @@ int main(int argc, char** argv) {
     for (int close = 0; ok && close < 2; close++) {
       char name[128];
       snprintf(name, sizeof(name), "%s-%s.glsl", names[i], close ? "close" : "open");
-      char* source = read_source(argv[1], name);
+      char* source = read_text_file(argv[1], name);
       struct fx_animation_shader* shader =
           source != NULL ? fx_animation_shader_create(fixture.renderer, source, name) : NULL;
       free(source);
       ok = check(shader != NULL, name);
       struct fx_animation_shader* reference = NULL;
       if (argc == 3) {
-        char* reference_source = read_source(argv[2], name);
+        char* reference_source = read_text_file(argv[2], name);
         reference =
             reference_source != NULL ? fx_animation_shader_create(fixture.renderer, reference_source, name) : NULL;
         free(reference_source);
@@ -376,25 +317,28 @@ int main(int argc, char** argv) {
           break;
         }
         if (frame == 2) {
-          ok = check(different_pixels(pixels, baseline) > SIZE, "intermediate frame must visibly modify the source");
+          ok = check(
+              count_differences(pixels, baseline, SIZE * SIZE, 3) > SIZE,
+              "intermediate frame must visibly modify the source"
+          );
         } else if ((frame == 0 && close) || (frame == 4 && !close)) {
-          ok = check(different_pixels(pixels, baseline) == 0, "visible endpoint must equal source");
+          ok = check(count_differences(pixels, baseline, SIZE * SIZE, 3) == 0, "visible endpoint must equal source");
         } else if (frame == 0 || frame == 4) {
           for (size_t pixel = 0; ok && pixel < SIZE * SIZE; pixel++) {
             ok = check(pixels[pixel] == 0, "hidden endpoint must be transparent black");
           }
         }
-        ok = write_frame(name, frame, pixels) && ok;
-        printf("%s progress=%.2f modified=%zu\n", name, progress, different_pixels(pixels, baseline));
+        ok = write_frame(name, frame, pixels, SIZE, SIZE) && ok;
+        printf("%s progress=%.2f modified=%zu\n", name, progress, count_differences(pixels, baseline, SIZE * SIZE, 3));
         if (ok && reference != NULL) {
           uint32_t original[SIZE * SIZE];
           char reference_name[160];
           snprintf(reference_name, sizeof(reference_name), "source-%s", name);
-          ok =
-              render_shader(&fixture, reference, progress, 1, original) && write_frame(reference_name, frame, original);
+          ok = render_shader(&fixture, reference, progress, 1, original)
+              && write_frame(reference_name, frame, original, SIZE, SIZE);
           if (ok && frame > 0 && frame < 4 && ((!close && i < 2) || (close && i == 2))) {
             ok = check(
-                different_pixels(original, pixels) == 0,
+                count_differences(original, pixels, SIZE * SIZE, 3) == 0,
                 "unmodified lifecycle interior must match original GLSL pixel-for-pixel"
             );
           }
@@ -402,7 +346,10 @@ int main(int argc, char** argv) {
       }
       if (ok) {
         ok = render_shader(&fixture, shader, close ? 0 : 1, 0.5f, pixels)
-            && check(different_pixels(pixels, translucent) == 0, "translucent endpoint must not multiply alpha twice");
+            && check(
+                 count_differences(pixels, translucent, SIZE * SIZE, 3) == 0,
+                 "translucent endpoint must not multiply alpha twice"
+            );
       }
       if (ok) {
         ok = render_shader(&fixture, shader, 0.5f, 0.5f, pixels);
@@ -421,14 +368,16 @@ int main(int argc, char** argv) {
   for (size_t i = 0; ok && i < sizeof(rings) / sizeof(rings[0]); i++) {
     char name[128];
     snprintf(name, sizeof(name), "rings/%s.glsl", rings[i]);
-    char* source = read_source(argv[1], name);
+    char* source = read_text_file(argv[1], name);
     struct fx_decoration_shader* shader =
         source != NULL ? fx_decoration_shader_create(fixture.renderer, source, name) : NULL;
     ok = check(shader != NULL, name);
     if (ok)
       ok = render_decoration(&fixture, shader, 0.1f, baseline) && render_decoration(&fixture, shader, 1.3f, pixels);
     if (ok) {
-      ok = check(different_pixels(baseline, pixels) > 20, "ring must animate away from its initial frame");
+      ok = check(
+          count_differences(baseline, pixels, SIZE * SIZE, 3) > 20, "ring must animate away from its initial frame"
+      );
       size_t colored = 0;
       for (int y = 0; ok && y < SIZE; y++) {
         for (int x = 0; ok && x < SIZE; x++) {
@@ -441,10 +390,10 @@ int main(int argc, char** argv) {
         }
       }
       ok = check(colored > 50, "ring must render visible pixels") && ok;
-      printf("%s colored=%zu animated=%zu\n", name, colored, different_pixels(baseline, pixels));
+      printf("%s colored=%zu animated=%zu\n", name, colored, count_differences(baseline, pixels, SIZE * SIZE, 3));
     }
     if (ok)
-      ok = write_frame(rings[i], 0, baseline) && write_frame(rings[i], 1, pixels);
+      ok = write_frame(rings[i], 0, baseline, SIZE, SIZE) && write_frame(rings[i], 1, pixels, SIZE, SIZE);
     if (ok && i >= 2) {
       const char* constant = i == 2 ? "const int LIGHTNING_COUNT = 1;" : "const int EMBER_COUNT = 1;";
       const char* found = strstr(source, constant);
@@ -466,9 +415,13 @@ int main(int argc, char** argv) {
         ok =
             check(program != NULL, "compile editable head count") && render_decoration(&fixture, program, 1.3f, pixels);
         if (ok && (counts[c] == 0 || counts[c] == 9)) {
-          ok = check(different_pixels(pixels, baseline) == 0, "out-of-range count must clamp to nearest limit");
+          ok = check(
+              count_differences(pixels, baseline, SIZE * SIZE, 3) == 0, "out-of-range count must clamp to nearest limit"
+          );
         } else if (ok && counts[c] > 1) {
-          ok = check(different_pixels(pixels, baseline) > 20, "adding a head must change the ring pixels");
+          ok = check(
+              count_differences(pixels, baseline, SIZE * SIZE, 3) > 20, "adding a head must change the ring pixels"
+          );
         }
         memcpy(baseline, pixels, sizeof(baseline));
         fx_decoration_shader_unref(program);
@@ -488,7 +441,7 @@ int main(int argc, char** argv) {
   if (retained != NULL)
     ok = render_light(&fixture, retained, &retained_light, 0, 1, pixels) && ok;
   fixture_finish(&fixture);
-  // Nodes and compilation caches may release a program after its renderer.
+  // Programs may outlive their renderer.
   fx_decoration_shader_unref(retained);
   fx_decoration_light_destroy(retained_light);
   return ok ? 0 : 1;

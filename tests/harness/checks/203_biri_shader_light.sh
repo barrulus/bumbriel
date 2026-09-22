@@ -49,7 +49,6 @@ read -r dim_red dim_blue < <(sample "$((right + 12))")
 (( outer_red > 10 && outer_blue < 5 )) || { echo "bright ring did not illuminate backdrop: $outer_red $outer_blue"; exit 1; }
 (( inner_red > 10 )) || { echo "bright ring did not illuminate client: $inner_red"; exit 1; }
 (( dim_red < 5 && dim_blue < 5 )) || { echo "dim cord emitted light: $dim_red $dim_blue"; exit 1; }
-# Invalid shader edits must remove both the procedural ring and its cached spill.
 printf '%s\n' 'invalid shader' > "$UMBRIEL_RUNTIME_DIR/emitter.glsl"
 for _ in $(seq 60); do
   grim "$IMAGE"

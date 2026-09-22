@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Extract frozen GLSL for optional GPU comparisons, without rewriting its math.
+"""Extract the frozen Biri GLSL that umbrielfx-postprocess-test compares against.
 
-Usage: python3 tests/tools/biri_postprocess_reference.py /tmp/biri-reference
-Then pass that directory as the second argument to umbrielfx-postprocess-test.
-This is a test fixture extractor, not a compositor configuration reader.
+Usage: biri_postprocess_reference.py <destination>; pass <destination> as the test's second argument.
 """
 
 import argparse
@@ -35,7 +33,6 @@ for scope in ("window", "screen", "cursor"):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("// Biri reference; GPL v3, see original/LICENSE.\n" + macros + source)
             count += 1
-# The live window snapshot supersedes the older window-only reference bodies.
 for path in sorted((original.parents[2] / "window-source").glob("*.frag")):
     target = args.destination / "window" / f"{path.stem}.glsl"
     if not (original / "window" / path.name).exists():

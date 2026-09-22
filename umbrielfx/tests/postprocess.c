@@ -8,38 +8,6 @@
 #include <wlr/render/color.h>
 
 #define SIZE 128
-static bool write_frame(const char* name, int frame, const uint32_t* pixels) {
-  const char* directory = getenv("BIRI_SHADER_FRAMES");
-  if (directory == NULL)
-    return true;
-  char path[4096], flat[256];
-  snprintf(flat, sizeof(flat), "%s", name);
-  for (char* p = flat; *p; ++p)
-    if (*p == '/')
-      *p = '-';
-  snprintf(path, sizeof(path), "%s/%s-%d.ppm", directory, flat, frame);
-  FILE* file = fopen(path, "wb");
-  if (file == NULL)
-    return false;
-  fprintf(file, "P6\n%d %d\n255\n", SIZE, SIZE);
-  for (int i = 0; i < SIZE * SIZE; ++i) {
-    unsigned char rgb[3] = {pixels[i] & 255, (pixels[i] >> 8) & 255, (pixels[i] >> 16) & 255};
-    fwrite(rgb, 1, 3, file);
-  }
-  return fclose(file) == 0;
-}
-static char* source_file(const char* directory, const char* name) {
-  char path[4096];
-  snprintf(path, sizeof(path), "%s/%s.glsl", directory, name);
-  FILE* file = fopen(path, "rb");
-  if (file == NULL)
-    return NULL;
-  char* code = calloc(262144, 1);
-  if (code != NULL)
-    fread(code, 1, 262143, file);
-  fclose(file);
-  return code;
-}
 static bool render_effect(
     struct fixture* fixture, struct fx_postprocess_chain* chain, struct fx_postprocess_state** state, float time,
     float cursor, float background, bool advance, bool fail, uint32_t pixels[SIZE * SIZE]
@@ -52,7 +20,7 @@ static bool render_effect(
     wlr_buffer_drop(buffer);
     return false;
   }
-  // Asymmetric, nonuniform content catches coordinate, source and displacement errors.
+  // Asymmetric tiles expose coordinate and displacement errors.
   for (int y = 0; y < SIZE; y += 8)
     for (int x = 0; x < SIZE; x += 8) {
       wlr_render_pass_add_rect(
@@ -78,7 +46,6 @@ static bool render_effect(
                 },
                 NULL, advance
       );
-  // The production submit failure path uses this same deferred commit operation.
   if (fail)
     fx_postprocess_commit(&pass->postprocess_updates, false);
   ok = wlr_render_pass_submit(base) && ok;
@@ -87,21 +54,14 @@ static bool render_effect(
   wlr_buffer_drop(buffer);
   return ok;
 }
-static size_t differences(const uint32_t* a, const uint32_t* b) {
-  size_t count = 0;
-  for (size_t i = 0; i < SIZE * SIZE; ++i)
-    if (a[i] != b[i])
-      count++;
-  return count;
-}
 static struct fx_postprocess_chain* load_chain(struct fixture* fixture, const char* directory, const char* name) {
   char path[256];
   const bool multi = strcmp(name, "cursor/comet") == 0 || strcmp(name, "cursor/comet-glow") == 0;
   char* code[2] = {0};
   struct fx_postprocess_source sources[2] = {0};
   for (int i = 0; i < (multi ? 2 : 1); ++i) {
-    snprintf(path, sizeof(path), multi ? "%s-%d" : "%s", name, i);
-    code[i] = source_file(directory, path);
+    snprintf(path, sizeof(path), multi ? "%s-%d.glsl" : "%s.glsl", name, i);
+    code[i] = read_text_file(directory, path);
     sources[i] =
         (struct fx_postprocess_source){.code = code[i], .label = name, .buffer = strcmp(name, "cursor/trail") == 0};
   }
@@ -119,22 +79,29 @@ static bool test_feedback(struct fixture* fixture, const char* directory, const 
   uint32_t baseline[SIZE * SIZE], pixels[SIZE * SIZE], expected[SIZE * SIZE];
   bool ok = render_effect(fixture, NULL, &reference, 0, -1000, 1, true, false, baseline)
       && render_effect(fixture, chain, &state, 0, -1000, 1, true, false, pixels)
-      && check(differences(pixels, baseline) == 0, "empty initial history must not contain the desktop")
+      && check(count_differences(pixels, baseline, SIZE * SIZE, 0) == 0,
+               "empty initial history must not contain the desktop")
       && render_effect(fixture, chain, &state, 0, 64, 0, true, false, pixels)
       && render_effect(fixture, chain, &reference, 0, 64, 0, true, false, expected)
-      && check(differences(pixels, expected) == 0, "independent histories must start identically");
+      && check(count_differences(pixels, expected, SIZE * SIZE, 0) == 0,
+               "independent histories must start identically");
   for (int i = 0; ok && i < 4; ++i)
     ok = render_effect(fixture, chain, &state, 0, -1000, 1, false, false, pixels);
   ok = render_effect(fixture, chain, &state, 0, -1000, 1, true, true, pixels) && ok;
   ok = render_effect(fixture, chain, &state, 0, -1000, 0, true, false, pixels)
       && render_effect(fixture, chain, &reference, 0, -1000, 0, true, false, expected)
-      && check(differences(pixels, expected) == 0, "capture and failed submit must not advance or overwrite feedback")
+      && check(
+           count_differences(pixels, expected, SIZE * SIZE, 0) == 0,
+           "capture and failed submit must not advance or overwrite feedback"
+      )
       && ok;
-  // Varying source frames must never enter the accumulator, and decay must reach zero.
   for (int frame = 0; ok && frame < 140; ++frame)
     ok = render_effect(fixture, chain, &state, frame * 0.01f, -1000, frame % 2, true, false, pixels);
   ok = render_effect(fixture, chain, &state, 2, -1000, 1, true, false, pixels)
-      && check(differences(pixels, baseline) == 0, "feedback must decay to black without scroll/video smear")
+      && check(
+           count_differences(pixels, baseline, SIZE * SIZE, 0) == 0,
+           "feedback must decay to black without scroll/video smear"
+      )
       && ok;
   fx_postprocess_state_destroy(state);
   fx_postprocess_state_destroy(reference);
@@ -142,8 +109,7 @@ static bool test_feedback(struct fixture* fixture, const char* directory, const 
   return ok;
 }
 
-// RGBX imports and capture copies exercise the actual output formats, rather
-// than only RGBA offscreen targets. Two retained consumers must survive reuse.
+// Uses RGBX targets; two retained consumers must survive buffer reuse.
 static bool test_capture(struct fixture* fixture, bool linear) {
   struct wlr_buffer* target = create_output_buffer(fixture, DRM_FORMAT_XBGR8888, SIZE, SIZE);
   if (target == NULL)
@@ -343,15 +309,18 @@ int main(int argc, char** argv) {
                &fixture, chain, &state, 1.3, strcmp(names[i], "cursor/trail") == 0 ? 90 : cursor, 1, true, false, second
           )
           && check(
-               differences(first, baseline) + differences(second, baseline) > 20,
+               count_differences(first, baseline, SIZE * SIZE, 0) + count_differences(second, baseline, SIZE * SIZE, 0)
+                   > 20,
                "preset must visibly change the composed scene"
           );
     if (ok && animated[i])
-      ok = check(differences(first, second) > 10, "animated preset must change after its first frame");
+      ok = check(
+          count_differences(first, second, SIZE * SIZE, 0) > 10, "animated preset must change after its first frame"
+      );
     if (ok && !animated[i])
-      ok = check(differences(first, second) == 0, "static preset must remain unchanged");
+      ok = check(count_differences(first, second, SIZE * SIZE, 0) == 0, "static preset must remain unchanged");
     if (ok)
-      ok = write_frame(names[i], 0, first) && write_frame(names[i], 1, second);
+      ok = write_frame(names[i], 0, first, SIZE, SIZE) && write_frame(names[i], 1, second, SIZE, SIZE);
     if (ok && argc == 3) {
       struct fx_postprocess_chain* reference = load_chain(&fixture, argv[2], names[i]);
       struct fx_postprocess_state* history = NULL;
@@ -360,11 +329,10 @@ int main(int argc, char** argv) {
       if (ok) {
         char name[256];
         snprintf(name, sizeof(name), "reference-%s", names[i]);
-        ok = write_frame(name, 0, expected);
-        size_t changed = differences(expected, first);
+        ok = write_frame(name, 0, expected, SIZE, SIZE);
+        size_t changed = count_differences(expected, first, SIZE * SIZE, 0);
         printf("source comparison %s: %zu differing pixels\n", names[i], changed);
-        // Descending smoothstep is undefined in the original. Allow at most
-        // one channel quantization step when algebraically reversing its edges.
+        // Reversed smoothstep edges may differ by one quantisation step.
         for (int pixel = 0; ok && pixel < SIZE * SIZE; ++pixel)
           for (int c = 0; c < 4; ++c)
             if (abs((int)((expected[pixel] >> (c * 8)) & 255) - (int)((first[pixel] >> (c * 8)) & 255)) > 1)

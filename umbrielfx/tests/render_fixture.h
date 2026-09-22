@@ -158,3 +158,70 @@ read_buffer(struct fixture* fixture, struct wlr_buffer* buffer, uint32_t format,
   wlr_texture_destroy(texture);
   return ok;
 }
+
+#define FIXTURE_TEXT_LIMIT (256 * 1024)
+
+static inline char* read_text_file(const char* directory, const char* name) {
+  char path[4096];
+  snprintf(path, sizeof(path), "%s/%s", directory, name);
+  FILE* file = fopen(path, "rb");
+  if (file == NULL) {
+    perror(path);
+    return NULL;
+  }
+  char* text = calloc(FIXTURE_TEXT_LIMIT + 1, 1);
+  if (text != NULL) {
+    size_t length = fread(text, 1, FIXTURE_TEXT_LIMIT, file);
+    if (ferror(file) || length == FIXTURE_TEXT_LIMIT) {
+      free(text);
+      text = NULL;
+    }
+  }
+  fclose(file);
+  return text;
+}
+
+// With BIRI_SHADER_FRAMES set, dumps a frame as a PPM composited over a checkerboard.
+static inline bool write_frame(const char* name, int frame, const uint32_t* pixels, int width, int height) {
+  const char* directory = getenv("BIRI_SHADER_FRAMES");
+  if (directory == NULL)
+    return true;
+  char flat[256];
+  snprintf(flat, sizeof(flat), "%s", name);
+  for (char* p = flat; *p; ++p)
+    if (*p == '/')
+      *p = '-';
+  char path[4096];
+  snprintf(path, sizeof(path), "%s/%s-%d.ppm", directory, flat, frame);
+  FILE* file = fopen(path, "wb");
+  if (file == NULL)
+    return false;
+  fprintf(file, "P6\n%d %d\n255\n", width, height);
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      uint32_t pixel = pixels[y * width + x];
+      unsigned alpha = pixel >> 24;
+      unsigned background = ((x / 8 + y / 8) % 2) ? 32 : 64;
+      for (unsigned shift = 0; shift < 24; shift += 8) {
+        unsigned value = ((pixel >> shift) & 255) + background * (255 - alpha) / 255;
+        fputc(value > 255 ? 255 : value, file);
+      }
+    }
+  }
+  bool ok = !ferror(file);
+  return fclose(file) == 0 && ok;
+}
+
+static inline size_t count_differences(const uint32_t* a, const uint32_t* b, size_t count, int tolerance) {
+  size_t different = 0;
+  for (size_t i = 0; i < count; i++) {
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+      int delta = (int)((a[i] >> shift) & 255) - (int)((b[i] >> shift) & 255);
+      if (abs(delta) > tolerance) {
+        different++;
+        break;
+      }
+    }
+  }
+  return different;
+}

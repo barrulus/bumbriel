@@ -78,7 +78,7 @@ red=$(magick "$IMAGE" -crop 2x2+20+20 -format '%[fx:round(mean.r*255)]' info:)
 expect 112 96 64
 "$UMBRIEL" msg 'shader:global cycle' >/dev/null
 expect 64 96 112
-# A broken pass must drop the complete chain and recover through the watcher.
+# A broken pass drops the chain until the watcher reloads it.
 printf '%s\n' 'broken shader' > "$UMBRIEL_RUNTIME_DIR/half.glsl"
 sleep 0.3
 expect 127 191 223

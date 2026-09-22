@@ -51,11 +51,10 @@ for _ in $(seq 12); do
   sleep 0.09
 done
 (( maximum - minimum > 20 )) || { echo "ring did not animate after transition completion"; exit 1; }
-# Ordinary content must remain visible through the hole.
+# Content shows through the hole.
 blue=$(magick "$IMAGE" -crop "1x1+$x+$inside" -format '%[fx:round(mean.b*255)]' info:)
 (( blue > 100 ))
-# A failed edit must fall back to the original six-pixel border, and recover
-# automatically on the next valid source edit.
+# An invalid edit falls back to the plain border; the next valid edit recovers.
 printf '%s\n' 'deliberately invalid GLSL' > "$UMBRIEL_RUNTIME_DIR/ring.glsl"
 for _ in $(seq 60); do
   read -r red green blue < <(read_ring)
