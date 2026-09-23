@@ -7,10 +7,12 @@
 #include "view/deferred_unfullscreen.h"
 #include "view/floating.h"
 #include "view/presentation.h"
+#include "view/resize_crossfade.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -54,6 +56,9 @@ namespace umbriel {
     [[nodiscard]] wlr_xdg_toplevel* toplevel() const { return m_toplevel; }
     [[nodiscard]] const std::optional<std::string>& xdgTag() const { return m_xdgTag; }
     [[nodiscard]] ContentType contentType() const { return m_contentType; }
+    // The view's frame: it carries the position, parent, stacking order, and visibility of the whole window. Its
+    // content tree (surfaces, borders, backdrop, blur, and animation shaders) sits at (0, 0) inside it, above the
+    // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
     void syncAnimationShaders(wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr);
     [[nodiscard]] wlr_scene_tree* captureTree() const;
@@ -105,6 +110,12 @@ namespace umbriel {
     // position and size transitions cannot diverge between the two render paths.
     [[nodiscard]] const wlr_box& presentedBox() const { return m_presentedBox; }
     [[nodiscard]] float presentedOpacity() const { return effectiveOpacity(); }
+    // The drop shadow the scene draws for this view, and whether it sits in the workspace's tile shadow layer rather
+    // than under the view's own frame. Overview cards mirror it so they match the window they swap with.
+    [[nodiscard]] const wlr_scene_shadow* shadowNode() const { return m_decoration.shadowNode(); }
+    [[nodiscard]] bool shadowPooled() const { return m_decoration.shadowPooled(); }
+    // Opacity multiplier the overview applies to windows it leaves on screen (pinned ones) while it opens and closes.
+    void setOverviewOpacity(float opacity);
     [[nodiscard]] wlr_scene_tree* homeTree() const;
     // The toplevel view owning `surface` after walking xdg popup parents, or
     // nullptr when the surface is not under a view (layer surfaces, cursors).
@@ -122,6 +133,9 @@ namespace umbriel {
     // Focus ring only. Public alongside setForeignActivated because both are
     // activation chrome the focus manager drives from outside.
     void setBorderFocused(bool focused);
+    // Jump the focus border color and unfocused dim to their targets. For views revealed after focus changed while
+    // they were hidden, so the reveal does not replay the transition.
+    void settleFocusChrome();
     void setWorkspace(Workspace* workspace, bool attachToLayout = true);
     // A move the user asked for: the view belongs where it lands, and any displaced home is dropped.
     void moveToWorkspace(Workspace* workspace, bool attachToLayout = true);
@@ -167,10 +181,22 @@ namespace umbriel {
     // Record the authoritative layout slot origin without moving the node. An established view's workspace motion or an
     // opening lifecycle presentation carries the scene node there.
     void setLayoutTarget(int x, int y);
-    // Per-frame presentation of a layout-assigned box, no bookkeeping. Width and height are clamped to at least 1.
+    // Per-frame presentation of a layout-assigned tiled slot. Remembers the unscaled logical box underneath an
+    // opening popin or zoom.
     void presentTiledBox(const wlr_box& box);
+    // Present `box` carrying whatever opening inset is running: position the node, adopt the presented size, refresh
+    // the derived chrome. Width and height are clamped to at least 1.
+    void presentBox(const wlr_box& box);
+    // Keep a fresh tiled opener invisible from map until the admitting arrange places it. Resuming starts a fresh
+    // windows_in at that slot.
+    void deferTiledOpening();
+    void resumeTiledOpening();
+    [[nodiscard]] bool tiledOpeningDeferred() const { return m_tiledOpeningDeferred; }
     // windows_move owns this established view's box until endLayoutMotion. `direction` feeds its custom shader.
     void beginLayoutMotion(float direction);
+    // Finish at the workspace target without falling back to an older committed client buffer. If the configure that
+    // supplies the target buffer is still outstanding, compositor presentation remains authoritative until it lands.
+    void completeLayoutMotion(const wlr_box& target);
     void endLayoutMotion();
     // The authoritative layout position: where the window's slot is, not where its scene node happens to be
     // mid-animation. Workspace slides and arrange reflows move nodes without touching the animation targets, so window
@@ -269,11 +295,12 @@ namespace umbriel {
     void restorePinnedSceneParent();
     // Apply the pinned state: reparent to the global pinned layer, resync presentation, and notify the overview.
     void applyPinnedState();
-    // Enable/disable the view's scene tree and its shadow container together.
+    // Enable/disable the view's frame, and its shadow when a tile has lent it to the workspace.
     void setNodeEnabled(bool enabled);
     void raiseToTop();
-    // Create or destroy the shadow container in the given workspace shadow layer.
-    void reparentShadow(wlr_scene_tree* shadowLayer);
+    // The only way to move the frame to another tree: a tile's shadow joins the workspace's tile shadow layer, and
+    // any other window's shadow stays in the frame.
+    void setSceneParent(wlr_scene_tree* parent);
     // Advances this view's animations; returns true while any is still running.
     [[nodiscard]] AnimationPhase animationPhase() const override { return AnimationPhase::Views; }
     bool tickAnimations(uint64_t nowMsec) override;
@@ -289,6 +316,11 @@ namespace umbriel {
     friend class Popup;
     friend class Overview;
     friend class Workspace;
+
+    // Move the frame, and a lent shadow with it.
+    void setScenePosition(int x, int y);
+    // Lend the shadow to the workspace's tile shadow layer while the frame is in the tiled layer, or take it back.
+    void syncShadowPool();
 
     enum class FullscreenExitLayout {
       Immediate,
@@ -308,7 +340,9 @@ namespace umbriel {
 
     static void onMap(wl_listener* listener, void* data);
     static void onUnmap(wl_listener* listener, void* data);
+    static void onRootSurfaceDestroy(wl_listener* listener, void* data);
     static void onCommit(wl_listener* listener, void* data);
+    static void onClientCommit(wl_listener* listener, void* data);
     static void onDestroy(wl_listener* listener, void* data);
     static void onRequestMove(wl_listener* listener, void* data);
     static void onRequestResize(wl_listener* listener, void* data);
@@ -331,6 +365,8 @@ namespace umbriel {
     void handleMap();
     void handleUnmap();
     void handleCommit(bool reconfigureOpeningState = false);
+    // Capture the outgoing frame when the client commits the size a layout motion requested.
+    void handleClientCommit();
     void setXdgTag(std::string_view tag);
     void syncContentType(wlr_surface* committedSurface = nullptr);
     void handleDestroy();
@@ -367,9 +403,13 @@ namespace umbriel {
     // Record the dimensions currently rendered by the scene. Client geometry can lag a layout configure, so
     // presentation consumers must not infer their size independently from the committed geometry.
     void trackPresentedSize(int width, int height);
-    // Re-apply compositor-owned opacity to surface buffers. Fullscreen bypasses window-rule opacity, while fades,
-    // drag opacity, focus dimming, and client-provided alpha remain active.
+    // Re-apply compositor-owned opacity to surface buffers. With opaque_fullscreen, fullscreen bypasses window-rule
+    // opacity, while fades, drag opacity, focus dimming, and client-provided alpha remain active.
     [[nodiscard]] float effectiveOpacity() const;
+    // A fullscreen window in this state hides everything behind it: it draws over the backdrop and skips blur.
+    [[nodiscard]] bool fullscreenOpaque() const;
+    // The lifecycle fade runs through a whole-window shader, so buffers and borders stay opaque under it.
+    [[nodiscard]] bool fadeComposited() const;
     void applyEffectiveOpacity();
     void flushPendingEffectiveOpacity();
     void watchViewSurfaceTree(wlr_surface* root, wlr_subsurface* attachment = nullptr);
@@ -395,18 +435,34 @@ namespace umbriel {
     // size on the committed geometry and refresh the derived chrome.
     void finishSizeAnimation();
     [[nodiscard]] bool sizeAnimating() const {
-      return m_presentation.animating() || m_layoutMotion || tiledOpeningActive();
+      return m_presentation.animating() || m_layoutMotion || tiledOpeningActive() || fullscreenOpeningActive();
     }
-    // While windows_in owns a tiled view, presentation follows its final layout slot rather than the client's possibly
-    // stale committed geometry. This keeps a custom lifecycle shader's canvas stable while established peers reflow.
+    [[nodiscard]] bool layoutPresentationOwned() const { return sizeAnimating() || m_layoutPresentationHeld; }
+    void requestTiledSize(int width, int height);
+    [[nodiscard]] bool settleTiledSizeRequest();
+    // While windows_in owns a freshly admitted tiled view, presentation follows its final layout slot rather than the
+    // client's possibly stale committed geometry. A later arrange can move its cached logical box independently.
     [[nodiscard]] bool tiledOpeningActive() const;
-    // A tiled popin/zoom open scales the presented box inside its slot while the fade-in runs. A fullscreen tile is
-    // presented against the output, not its slot, so it keeps the floating-style open tweens.
-    [[nodiscard]] bool openingScaleActive() const { return m_openingScale < 1.0 && tiledOpeningActive(); }
-    // Eased progress of the active tiled windows_in transition. The workspace uses its presence to keep that lifecycle
-    // view out of windows_move when an arrange repeats before the opening effect finishes.
-    [[nodiscard]] std::optional<double> openingProgress() const;
-    // Drop the opening inset and put the node back on its slot origin; the caller settles the presented size.
+    // The same for a window that opens fullscreen: the layout owns the output box it rests in, windows_in owns the
+    // scaled box it is presented at until the fade ends.
+    [[nodiscard]] bool fullscreenOpeningActive() const;
+    // A built-in popin, zoom, or slide open offsets the presented box inside the box the layout assigned it, until
+    // the fade that drives it reaches rest.
+    [[nodiscard]] bool openingInsetPending() const { return m_openingScale < 1.0 || m_openingSlide != 0; }
+    [[nodiscard]] bool openingInsetActive() const {
+      return openingInsetPending() && (tiledOpeningActive() || fullscreenOpeningActive());
+    }
+    // `box` with that inset applied, else `box` itself. Both extents are at least 1.
+    [[nodiscard]] wlr_box openingInsetBox(const wlr_box& box) const;
+    // The output box a fullscreen view rests in, carrying the scrolling column offset its workspace applies.
+    [[nodiscard]] wlr_box fullscreenLayoutBox() const;
+    // Position the node at `box` with any opening inset applied and adopt that presented size, without refreshing the
+    // chrome derived from it.
+    void placePresentedBox(const wlr_box& box);
+    // Unscaled logical box underneath an active tiled windows_in presentation. Once another layout change arrives, the
+    // view can retain its lifecycle effect while this box participates independently in windows_move.
+    [[nodiscard]] std::optional<wlr_box> openingLayoutBox() const;
+    // Drop the opening inset and put the node back on its resting origin; the caller settles the presented size.
     void dropOpeningInset();
     // True while the border ring exists and is showing. Fullscreen keeps the
     // tree but disables it, so the pointer alone does not answer this.
@@ -545,6 +601,7 @@ namespace umbriel {
     std::optional<std::string> m_xdgTag;
     ContentType m_contentType = ContentType::None;
     wlr_scene_tree* m_sceneTree = nullptr;
+    wlr_scene_tree* m_contentTree = nullptr;
     // A separate scene containing only client-owned surfaces. Window capture
     // must never sample the composited desktop behind translucent content.
     wlr_scene* m_captureScene = nullptr;
@@ -553,7 +610,11 @@ namespace umbriel {
     wlr_scene_rect* m_shaderRect = nullptr;
     wlr_scene_rect* m_captureShaderRect = nullptr;
     ViewPresentation m_presentation;
+    ResizeCrossfade m_resizeCrossfade;
     wlr_box m_presentedBox{};
+    // Last unscaled box supplied by the workspace. A tiled popin or zoom presents an inset inside this logical box,
+    // so a later layout change must animate from the logical box rather than scaling the inset a second time.
+    wlr_box m_presentedTiledBox{};
     wlr_foreign_toplevel_handle_v1* m_foreign = nullptr;
     wlr_ext_foreign_toplevel_handle_v1* m_extForeign = nullptr;
     wlr_output* m_foreignOutput = nullptr;
@@ -578,9 +639,20 @@ namespace umbriel {
     bool m_positioned = false;
     // The workspace's layout motion currently drives the presented box.
     bool m_layoutMotion = false;
+    // A completed layout motion keeps its final logical size until the client commit for that configure arrives.
+    bool m_layoutPresentationHeld = false;
+    struct TiledSizeRequest {
+      uint32_t serial = 0;
+      int width = 0;
+      int height = 0;
+    };
+    std::optional<TiledSizeRequest> m_tiledSizeRequest;
     float m_layoutMotionDirection = 1.0F;
-    // Inset scale a tiled popin/zoom open starts at; 1.0 = none.
+    bool m_tiledOpeningDeferred = false;
+    // Inset a built-in windows_in style starts an opener at, interpolated to rest by the fade: a popin or zoom scale
+    // (1.0 = none) and a slide offset in logical pixels (0 = none).
     double m_openingScale = 1.0;
+    int m_openingSlide = 0;
     bool m_tiled = false;
     bool m_floatingMaximized = false;
     bool m_maximizedToEdges = false;
@@ -619,6 +691,7 @@ namespace umbriel {
     bool m_initialRulesSettled = false;
     float m_ruleOpacity = 1.0F;
     float m_dragOpacity = 1.0F;
+    float m_overviewOpacity = 1.0F;
     // wlroots restores a committed scene buffer to the client-provided alpha. Root and subsurface watches set this so
     // compositor-managed opacity is restored on the frame after every scene helper commit listener has run.
     bool m_effectiveOpacityCommitPending = false;
@@ -638,7 +711,9 @@ namespace umbriel {
 
     wl_listener m_map{};
     wl_listener m_unmap{};
+    wl_listener m_rootSurfaceDestroy{};
     wl_listener m_commit{};
+    wl_listener m_clientCommit{};
     wl_listener m_destroy{};
     wl_listener m_requestMove{};
     wl_listener m_requestResize{};

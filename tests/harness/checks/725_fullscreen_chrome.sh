@@ -17,6 +17,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [appearance]
 border_width = 12

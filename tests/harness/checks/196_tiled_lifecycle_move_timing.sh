@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tiled neighbours use windows_move timing while an opener or closing snapshot independently uses a longer lifecycle
-# effect. By 350 ms the 150 ms reflow must already match its settled geometry in both directions.
+# effect. By 350 ms the 150 ms reflow must already match its settled geometry in both directions. A window that
+# rejoins the layout from floating reflows its neighbour without replaying its own windows_in.
 set -euo pipefail
 
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/tiled-lifecycle-move-timing.png"
@@ -63,6 +64,11 @@ red_width() {
     -fx '(r > 0.8 && g < 0.1 && b < 0.1) ? 1 : 0' -format '%[fx:round(w*mean)]\n' info:
 }
 
+blue_pixels() {
+  grim "$IMAGE"
+  magick "$IMAGE" -alpha off -fx '(b > 0.5 && r < 0.2) ? 1 : 0' -format '%[fx:round(mean*w*h)]\n' info:
+}
+
 spawn lifecycle-move-survivor 0xFFFF0000
 sleep 1.7
 
@@ -94,4 +100,24 @@ if ((close_early < close_final - 20 || close_early > close_final + 20)); then
   exit 1
 fi
 
-echo "tiled open and close reflows used windows_move timing independently of lifecycle effects"
+# Re-tiling is not an admission: the returning window keeps what it shows while its neighbour reflows.
+spawn lifecycle-move-peer 0xFF0000FF
+sleep 1.9
+tiled_blue=$(blue_pixels)
+if ((tiled_blue < 20000)); then
+  echo "peer never settled as a visible tile: $tiled_blue"
+  exit 1
+fi
+"$UMBRIEL" msg window-toggle-floating > /dev/null
+sleep 0.5
+"$UMBRIEL" msg window-toggle-floating > /dev/null
+sleep 0.15
+retiled_early=$(blue_pixels)
+sleep 0.25
+retiled_late=$(blue_pixels)
+if ((retiled_early < 20000 || retiled_late < 20000)); then
+  echo "re-tiling replayed windows_in on a window that was already visible: early=$retiled_early late=$retiled_late"
+  exit 1
+fi
+
+echo "tiled open, close, and re-tiling reflows used windows_move timing independently of lifecycle effects"

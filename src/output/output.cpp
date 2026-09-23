@@ -93,7 +93,6 @@ namespace umbriel {
     m_viewRoot = wlr_scene_tree_create(m_server->xdgTree());
     m_fullscreenRoot = wlr_scene_tree_create(m_server->fullscreenTree());
     m_pinnedRoot = wlr_scene_tree_create(m_server->pinnedTree());
-    m_pinnedShadowRoot = wlr_scene_tree_create(m_server->pinnedShadowTree());
     arrangeLayers();
     m_workspaceGroup = std::make_unique<WorkspaceGroup>(*m_server, *this);
   }
@@ -745,7 +744,7 @@ namespace umbriel {
       wlr_scene_node_destroy(&m_optimizedBlur->node);
       m_optimizedBlur = nullptr;
     }
-    for (wlr_scene_tree* root : {m_viewRoot, m_fullscreenRoot, m_pinnedRoot, m_pinnedShadowRoot}) {
+    for (wlr_scene_tree* root : {m_viewRoot, m_fullscreenRoot, m_pinnedRoot}) {
       if (root != nullptr) {
         wlr_scene_node_destroy(&root->node);
       }
@@ -753,7 +752,6 @@ namespace umbriel {
     m_viewRoot = nullptr;
     m_fullscreenRoot = nullptr;
     m_pinnedRoot = nullptr;
-    m_pinnedShadowRoot = nullptr;
   }
 
   wlr_scene_tree* Output::layerTree(uint32_t layer) const {
@@ -834,7 +832,7 @@ namespace umbriel {
         .width = outputArea.width,
         .height = outputArea.height,
     };
-    for (wlr_scene_tree* root : {m_viewRoot, m_fullscreenRoot, m_pinnedRoot, m_pinnedShadowRoot}) {
+    for (wlr_scene_tree* root : {m_viewRoot, m_fullscreenRoot, m_pinnedRoot}) {
       wlr_scene_tree_set_clip(root, &outputBox);
     }
 

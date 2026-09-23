@@ -29,6 +29,9 @@ struct fx_animation_shader*
 fx_animation_shader_create(struct wlr_renderer* renderer, const char* source, const char* label);
 struct fx_animation_shader* fx_animation_shader_ref(struct fx_animation_shader* shader);
 void fx_animation_shader_unref(struct fx_animation_shader* shader);
+// A shape-preserving shader only scales its input's alpha uniformly. Shadows
+// keep their analytic fast path under it instead of capturing a silhouette.
+void fx_animation_shader_set_shape_preserving(struct fx_animation_shader* shader, bool shape_preserving);
 
 // Slots compose in ascending order, then through effect-bearing ancestors.
 // A NULL shader removes a slot. Nodes hold their own reference to the program.

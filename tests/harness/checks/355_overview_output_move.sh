@@ -59,6 +59,7 @@ workspace_background = "#000000FF"
 
 [animation]
 duration_ms = 100
+curve = "linear"
 
 [appearance]
 border_width = 0

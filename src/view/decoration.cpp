@@ -172,39 +172,41 @@ namespace umbriel {
   void ViewDecoration::hideBlur() { m_blur.hide(); }
 
   // Shadow
-  void ViewDecoration::reparentShadow(wlr_scene_tree* layer, int x, int y, bool enabled) {
-    if (layer == nullptr) {
-      m_shadow.reset();
-      if (m_shadowContainer != nullptr) {
-        wlr_scene_node_destroy(&m_shadowContainer->node);
-        m_shadowContainer = nullptr;
-      }
+  void ViewDecoration::createShadow(wlr_scene_tree* frame) {
+    m_shadowContainer = wlr_scene_tree_create(frame);
+    wlr_scene_node_lower_to_bottom(&m_shadowContainer->node);
+  }
+
+  void ViewDecoration::poolShadow(wlr_scene_tree* frame, wlr_scene_tree* pool, int x, int y, bool enabled) {
+    if (m_shadowContainer == nullptr) {
       return;
     }
-    if (m_shadowContainer == nullptr) {
-      m_shadowContainer = wlr_scene_tree_create(layer);
-    } else {
-      wlr_scene_node_reparent(&m_shadowContainer->node, layer);
+    if (pool == nullptr) {
+      if (!m_shadowPooled) {
+        return;
+      }
+      wlr_scene_node_reparent(&m_shadowContainer->node, frame);
+      wlr_scene_node_lower_to_bottom(&m_shadowContainer->node);
+      wlr_scene_node_set_position(&m_shadowContainer->node, 0, 0);
+      wlr_scene_node_set_enabled(&m_shadowContainer->node, true);
+      m_shadowPooled = false;
+      return;
     }
+    wlr_scene_node_reparent(&m_shadowContainer->node, pool);
     wlr_scene_node_set_position(&m_shadowContainer->node, x, y);
     wlr_scene_node_set_enabled(&m_shadowContainer->node, enabled);
+    m_shadowPooled = true;
   }
 
   void ViewDecoration::setShadowPosition(int x, int y) {
-    if (m_shadowContainer != nullptr) {
+    if (m_shadowPooled) {
       wlr_scene_node_set_position(&m_shadowContainer->node, x, y);
     }
   }
 
   void ViewDecoration::setShadowEnabled(bool enabled) {
-    if (m_shadowContainer != nullptr) {
+    if (m_shadowPooled) {
       wlr_scene_node_set_enabled(&m_shadowContainer->node, enabled);
-    }
-  }
-
-  void ViewDecoration::raiseShadowToTop() {
-    if (m_shadowContainer != nullptr) {
-      wlr_scene_node_raise_to_top(&m_shadowContainer->node);
     }
   }
 

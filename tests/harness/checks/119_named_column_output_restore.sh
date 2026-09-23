@@ -49,6 +49,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [output.HEADLESS-1]
 position = [0, 0]

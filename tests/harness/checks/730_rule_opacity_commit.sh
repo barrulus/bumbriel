@@ -9,6 +9,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [colors]
 backdrop = "#00FF00FF"

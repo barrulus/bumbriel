@@ -19,6 +19,8 @@
 // from stdin, after the child has mapped.
 // FULLSCREEN_ON_STDIN makes `f` request fullscreen and `u` request windowed state.
 // FILL_COLOR=<ARGB> paints the buffer that colour (default 0xFF5577AA), so screenshots can tell windows apart.
+// RESIZE_FILL_COLOR=<ARGB> maps at the first configured size, then redraws at every later configured size in that
+// colour, the way a real client follows its tile.
 
 #include "color-management-v1-client-protocol.h"
 #include "content-type-v1-client-protocol.h"
@@ -34,6 +36,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <poll.h>
 #include <print>
 #include <sys/mman.h>
@@ -130,6 +133,9 @@ namespace {
     bool metadataUpdated = false;
     int tearingHint = -1;
     uint32_t fillColor = 0xFF5577AA;
+    std::optional<uint32_t> resizeFillColor;
+    int configuredWidth = 0;
+    int configuredHeight = 0;
     const char* title = "unmap-client";
     const char* appId = nullptr;
     const char* remapAppId = nullptr;
@@ -356,7 +362,23 @@ namespace {
   void xdgSurfaceConfigure(void* data, xdg_surface* xdgSurface, uint32_t serial) {
     auto& state = *static_cast<State*>(data);
     xdg_surface_ack_configure(xdgSurface, serial);
+    const bool followSize = state.resizeFillColor
+        && state.configuredWidth > 0
+        && state.configuredHeight > 0
+        && (state.configuredWidth != state.width || state.configuredHeight != state.height);
+    if (followSize) {
+      if (state.mapped) {
+        state.fillColor = *state.resizeFillColor;
+      }
+      state.width = state.configuredWidth;
+      state.height = state.configuredHeight;
+      state.buffer = createBuffer(state, state.width, state.height);
+    }
     if (state.mapped) {
+      if (followSize) {
+        wl_surface_attach(state.surface, state.buffer.resource, 0, 0);
+        wl_surface_damage_buffer(state.surface, 0, 0, state.width, state.height);
+      }
       // Apply later toplevel state transitions, such as leaving fullscreen. Acknowledging the configure without a
       // surface commit leaves the requested state pending forever.
       wl_surface_commit(state.surface);
@@ -402,6 +424,8 @@ namespace {
 
   void toplevelConfigure(void* data, xdg_toplevel*, int32_t width, int32_t height, wl_array* states) {
     auto& state = *static_cast<State*>(data);
+    state.configuredWidth = width;
+    state.configuredHeight = height;
     bool fullscreen = false;
     if (state.logConfigures) {
       std::println("configured-size={}x{}", width, height);
@@ -739,6 +763,16 @@ int main(int argc, char** argv) {
       return EXIT_FAILURE;
     }
     state.fillColor = static_cast<uint32_t>(value);
+  }
+  if (const char* fill = std::getenv("RESIZE_FILL_COLOR")) {
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long value = std::strtoul(fill, &end, 0);
+    if (*fill == '\0' || end == nullptr || *end != '\0' || errno != 0 || value > 0xFFFFFFFFUL) {
+      std::println(stderr, "unmap-client: RESIZE_FILL_COLOR must be a 32-bit ARGB value");
+      return EXIT_FAILURE;
+    }
+    state.resizeFillColor = static_cast<uint32_t>(value);
   }
   if (argc > 2) {
     state.width = std::max(1, std::atoi(argv[2]));

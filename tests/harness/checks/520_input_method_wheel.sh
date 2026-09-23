@@ -35,6 +35,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [keybinds]
 "Mod+WheelDown" = "workspace-next"

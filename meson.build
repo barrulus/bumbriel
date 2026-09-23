@@ -543,6 +543,7 @@ umbriel_pure_dep = declare_dependency(
 # and the executable is just an entry point.
 core_sources = files(
   'src/core/animation.cpp',
+  'src/core/application_scope.cpp',
   'src/scene/animation_shader.cpp',
   'src/scene/decoration_shader.cpp',
   'src/scene/postprocess.cpp',
@@ -571,6 +572,7 @@ core_sources = files(
   'src/view/view.cpp',
   'src/view/decoration.cpp',
   'src/view/presentation.cpp',
+  'src/view/resize_crossfade.cpp',
   'src/view/registry.cpp',
   'src/server/focus.cpp',
   'src/xwayland/supervisor.cpp',

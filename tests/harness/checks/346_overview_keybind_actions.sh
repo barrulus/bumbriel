@@ -30,8 +30,10 @@ active_workspace() {
   "$UMBRIEL" workspaces --json | jq -r '.[] | select(.active) | .name'
 }
 
-overview_closed_count() {
-  jq -s '[.[] | select(.event == "overview" and .data.open == false)] | length' "$OVERVIEW_EVENTS"
+# The closed event goes out as the zoom starts. The zoom hands the keyboard back as it lands, so a new keyboard enter
+# on the landing window marks its end.
+keyboard_enters() {
+  grep -c '^keyboard-enter$' "$UMBRIEL_RUNTIME_DIR/$1.log" || true
 }
 
 overview_open_count() {
@@ -72,6 +74,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation.overview]
 duration_ms = 500
+curve = "linear"
 
 [layout.scrolling]
 default_extent_fraction = 0.5
@@ -97,6 +100,11 @@ for _ in $(seq 40); do
   [[ -s $OVERVIEW_EVENTS ]] && break
   sleep 0.05
 done
+
+# Clients bind their keyboard while the seat has one, and the headless seat only has a virtual one. Keep it alive for
+# the whole check so every window can receive the keyboard enter that marks a finished close.
+pointer mod none pause 60000 > /dev/null 2>&1 &
+sleep 0.2
 
 "$CLIENT" overview-vim-first 1200 700 > "$UMBRIEL_RUNTIME_DIR/overview-vim-first.log" 2>&1 &
 wait_for_count 1
@@ -218,7 +226,7 @@ wait_for_workspace 1
 
 # Enter closes toward the selected card. Configured binds remain effective
 # during that close, and row retargeting must not restart the zoom timeline.
-closed_before=$(overview_closed_count)
+entered_before=$(keyboard_enters overview-vim-row)
 pointer tap 28 # Enter
 sleep 0.15
 chord 49 # N, focus the lower card
@@ -227,7 +235,7 @@ sleep 0.15
 chord 49 # N, switch to workspace 2
 wait_for_workspace 2
 sleep 0.3
-if (( $(overview_closed_count) <= closed_before )); then
+if (( $(keyboard_enters overview-vim-row) <= entered_before )); then
   echo "workspace binds extended the overview closing timeline"
   exit 1
 fi
@@ -331,14 +339,14 @@ wait_for_focus "$right_title"
 wait_for_workspace 1
 
 # Retargeting the close with a configured bind must land the focus without revealing the overview a second time.
-closed_before=$(overview_closed_count)
+entered_before=$(keyboard_enters "$left_title")
 opened_before=$(overview_open_count)
 pointer tap 28 # Enter
 sleep 0.15
 chord 35 # H, focus the card to the left during the closing zoom
 wait_for_focus "$left_title"
 sleep 0.6
-if (( $(overview_closed_count) <= closed_before )); then
+if (( $(keyboard_enters "$left_title") <= entered_before )); then
   echo "the closing zoom never finished on horizontally arranged workspaces"
   exit 1
 fi

@@ -4,6 +4,7 @@
 #include "config/config_diag.h"
 #include "config/config_watcher.h"
 #include "config/resolve.h"
+#include "core/application_scope.h"
 #include "core/fdlimit.h"
 #include "core/log.h"
 #include "core/process.h"
@@ -41,9 +42,12 @@ extern "C" {
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -434,19 +438,15 @@ namespace umbriel {
     m_shellLayerTrees[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = wlr_scene_tree_create(&m_scene->tree);
     m_xdgTree = wlr_scene_tree_create(&m_scene->tree);
     m_scratchpadTree = wlr_scene_tree_create(&m_scene->tree);
-    m_scratchpadShadowTree = wlr_scene_tree_create(m_scratchpadTree);
-    m_scratchpadContentTree = wlr_scene_tree_create(m_scratchpadTree);
-    m_scratchpadManager = std::make_unique<ScratchpadManager>(*this, m_scratchpadContentTree, m_scratchpadShadowTree);
+    m_scratchpadManager = std::make_unique<ScratchpadManager>(*this, m_scratchpadTree);
     m_overviewTree = wlr_scene_tree_create(&m_scene->tree);
     wlr_scene_node_set_enabled(&m_overviewTree->node, false);
-    m_dragShadowTree = wlr_scene_tree_create(&m_scene->tree);
     m_dragTree = wlr_scene_tree_create(&m_scene->tree);
     m_dragIconTree = wlr_scene_tree_create(&m_scene->tree);
     // Ring illumination stays below panels and pinned content.
     wlr_scene_set_decoration_light_layer(m_scene, wlr_scene_tree_create(&m_scene->tree));
     m_shellLayerTrees[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(&m_scene->tree);
     m_fullscreenTree = wlr_scene_tree_create(&m_scene->tree);
-    m_pinnedShadowTree = wlr_scene_tree_create(&m_scene->tree);
     m_pinnedTree = wlr_scene_tree_create(&m_scene->tree);
     m_shellLayerTrees[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(&m_scene->tree);
     m_imPopupTree = wlr_scene_tree_create(&m_scene->tree);
@@ -607,7 +607,6 @@ namespace umbriel {
     wl_list_remove(&m_padKeyboardFocusChange.link);
     m_configWatcher.reset();
     m_ipc.reset();
-
     m_insertHint.reset();
     // Each snapshot destroys its own scene tree.
     m_closeSnapshots.clear();
@@ -730,6 +729,22 @@ namespace umbriel {
     wl_event_loop* loop = wl_display_get_event_loop(m_display);
     m_signalSources[0] = wl_event_loop_add_signal(loop, SIGINT, onTerminateSignal, this);
     m_signalSources[1] = wl_event_loop_add_signal(loop, SIGTERM, onTerminateSignal, this);
+    m_applicationScopesRequired = !m_nested && isDirectSystemdService(getpid(), std::getenv("SYSTEMD_EXEC_PID"));
+    if (m_applicationScopesRequired) {
+      m_systemdRunExecutable = resolveExecutable("systemd-run");
+      const std::string ownerUnit = currentSystemdUnit();
+      if (m_systemdRunExecutable.empty()) {
+        kLog.warn("application scope isolation unavailable: systemd-run was not found on PATH");
+      } else if (ownerUnit.empty()) {
+        kLog.warn("application scope isolation unavailable: cannot identify the compositor unit");
+      } else {
+        m_applicationScopePartOfProperty = "--property=PartOf=umbriel-session.target";
+        m_applicationScopeBindsToProperty = "--property=BindsTo=" + ownerUnit;
+        m_systemdControlEnvironment = captureSystemdControlEnvironment();
+        m_applicationScopeEnvironmentArguments = applicationScopeEnvironmentArguments(config().environment.variables);
+        kLog.info("application processes will use transient scopes under app.slice");
+      }
+    }
 
     // Point new clients at us. Drop WAYLAND_SOCKET so children do not keep the
     // parent compositor connection (libwayland prefers it over WAYLAND_DISPLAY).
@@ -775,7 +790,7 @@ namespace umbriel {
     // receives the explicit configured assignments before it starts.
     if (!m_nested) {
       const std::string command = sessionEnvironmentCommand();
-      spawn(command.c_str(), "session environment synchronization");
+      spawnCommand(command.c_str(), "session environment synchronization", false, SpawnClass::SessionHelper);
     }
     applyConfiguredEnvironment();
 
@@ -913,10 +928,27 @@ namespace umbriel {
   }
 
   void Server::spawn(const char* command, const char* description, bool withActivationToken) {
+    spawnCommand(command, description, withActivationToken, SpawnClass::Application);
+  }
+
+  void
+  Server::spawnCommand(const char* command, const char* description, bool withActivationToken, SpawnClass spawnClass) {
     if (m_socketName.empty()) {
       wlr_log(WLR_ERROR, "cannot spawn before the Wayland socket exists");
       return;
     }
+
+    const bool scopeRequired = spawnClass == SpawnClass::Application && m_applicationScopesRequired;
+    if (scopeRequired
+        && (m_systemdRunExecutable.empty()
+            || m_applicationScopePartOfProperty.empty()
+            || m_applicationScopeBindsToProperty.empty())) {
+      kLog.error("cannot launch application because systemd scope isolation is unavailable");
+      return;
+    }
+    const std::string scopeUnitArgument = scopeRequired
+        ? "--unit=app-umbriel-" + std::to_string(getpid()) + "-" + std::to_string(m_nextApplicationScopeId++) + ".scope"
+        : "";
 
     wlr_xdg_activation_token_v1* launchToken = nullptr;
     std::string launchTokenName;
@@ -942,6 +974,11 @@ namespace umbriel {
     if (pid == 0) {
       resetChildSignalState();
       restoreFileDescriptorLimit();
+      if (scopeRequired) {
+        if (!closeChildFileDescriptors() || !restoreSystemdControlEnvironment(m_systemdControlEnvironment)) {
+          _exit(1);
+        }
+      }
       setenv("WAYLAND_DISPLAY", m_socketName.c_str(), 1);
       unsetenv("WAYLAND_SOCKET");
       if (m_xwayland != nullptr && !m_xwayland->display().empty()) {
@@ -957,14 +994,27 @@ namespace umbriel {
         unsetenv("XDG_ACTIVATION_TOKEN");
         unsetenv("DESKTOP_STARTUP_ID");
       }
+      if (scopeRequired) {
+        execApplicationInScope(
+            m_systemdRunExecutable.c_str(), scopeUnitArgument.c_str(), m_applicationScopePartOfProperty.c_str(),
+            m_applicationScopeBindsToProperty.c_str(), m_applicationScopeEnvironmentArguments, command
+        );
+      }
       execl("/bin/sh", "/bin/sh", "-c", command, nullptr);
       _exit(1);
     }
 
-    wlr_log(
-        WLR_INFO, "spawned '%s' on WAYLAND_DISPLAY=%s", description == nullptr ? command : description,
-        m_socketName.c_str()
-    );
+    if (scopeRequired) {
+      wlr_log(
+          WLR_INFO, "launch requested for '%s' on WAYLAND_DISPLAY=%s", description == nullptr ? command : description,
+          m_socketName.c_str()
+      );
+    } else {
+      wlr_log(
+          WLR_INFO, "spawned '%s' on WAYLAND_DISPLAY=%s", description == nullptr ? command : description,
+          m_socketName.c_str()
+      );
+    }
   }
 
   void Server::updateSeatCapabilities() { m_seat->updateCapabilities(!m_keyboards.empty(), !m_touchDevices.empty()); }
@@ -980,42 +1030,43 @@ namespace umbriel {
   Server::CloseSnapshot::CloseSnapshot(
       Server& server, CloseSnapshotId id, Output* output, wlr_scene_tree* tree, wlr_scene_tree* content,
       std::vector<BorderSnapshot> borders, const wlr_box& box, int durationMs, const AnimationCurve& curve,
-      std::string_view style, AnimationEvent event, ShadowSnapshot shadow
+      std::string_view style, double scale, AnimationEvent event, ShadowSnapshot shadow
   )
-      : m_server(&server), m_id(id), m_tree(tree), m_output(output), m_from(box), m_box(box), m_canvasX(box.x),
-        m_canvasY(box.y), m_borders(std::move(borders)), m_shadow(shadow) {
+      : m_server(&server), m_id(id), m_tree(tree), m_content(content != nullptr ? content : tree), m_output(output),
+        m_captured(box), m_canvasX(tree->node.x), m_canvasY(tree->node.y), m_borders(std::move(borders)),
+        m_shadow(shadow) {
     m_event = event;
-    for (const BorderSnapshot& border : m_borders) {
-      if (border.node == nullptr) {
-        continue;
-      }
-      m_borderMaskInsets.left = std::max(m_borderMaskInsets.left, -border.node->node.x);
-      m_borderMaskInsets.top = std::max(m_borderMaskInsets.top, -border.node->node.y);
-      m_borderMaskInsets.right =
-          std::max(m_borderMaskInsets.right, border.node->node.x + border.node->width - box.width);
-      m_borderMaskInsets.bottom =
-          std::max(m_borderMaskInsets.bottom, border.node->node.y + border.node->height - box.height);
-    }
     if (m_shadow.node != nullptr) {
-      m_shadowMaskInsets.left = std::max(0, -m_shadow.node->node.x);
-      m_shadowMaskInsets.top = std::max(0, -m_shadow.node->node.y);
-      m_shadowMaskInsets.right = std::max(0, m_shadow.node->node.x + m_shadow.node->width - box.width);
-      m_shadowMaskInsets.bottom = std::max(0, m_shadow.node->node.y + m_shadow.node->height - box.height);
+      m_shadowWidth = m_shadow.node->width;
+      m_shadowHeight = m_shadow.node->height;
+      m_shadowHole = m_shadow.node->clipped_region.area;
     }
-    if (content != nullptr && box.width > 0 && box.height > 0) {
+    if (m_content != nullptr && box.width > 0 && box.height > 0) {
       const wlr_box clip{.x = 0, .y = 0, .width = box.width, .height = box.height};
-      wlr_scene_tree_set_clip(content, &clip);
+      wlr_scene_tree_set_clip(m_content, &clip);
     }
     struct CaptureCtx {
       std::vector<Buffer>* buffers;
-    } ctx{&m_buffers};
+      int originX;
+      int originY;
+    } ctx{&m_buffers, m_content != nullptr ? m_content->node.x : 0, m_content != nullptr ? m_content->node.y : 0};
     wlr_scene_node_for_each_buffer(
-        &content->node,
-        [](wlr_scene_buffer* buffer, int /*sx*/, int /*sy*/, void* data) {
+        &m_content->node,
+        [](wlr_scene_buffer* buffer, int sx, int sy, void* data) {
           auto& ctx = *static_cast<CaptureCtx*>(data);
+          int width = buffer->dst_width;
+          int height = buffer->dst_height;
+          if (width <= 0 || height <= 0) {
+            width = buffer->buffer != nullptr ? buffer->buffer->width : 0;
+            height = buffer->buffer != nullptr ? buffer->buffer->height : 0;
+          }
           ctx.buffers->push_back({
               .node = buffer,
               .baseOpacity = buffer->opacity,
+              .x = sx - ctx.originX,
+              .y = sy - ctx.originY,
+              .width = width,
+              .height = height,
           });
         },
         &ctx
@@ -1023,9 +1074,15 @@ namespace umbriel {
     m_alpha.snap(1.0);
     m_alpha.retarget(0.0, durationMs, curve);
 
-    if (style == "slide" && animationShader(server.renderer(), event) == nullptr) {
-      m_slide.snap(0.0);
-      m_slide.retarget(80.0, durationMs, curve);
+    if (animationShader(server.renderer(), event) == nullptr) {
+      if (style == "slide") {
+        m_slide.snap(0.0);
+        m_slide.retarget(80.0, durationMs, curve);
+      } else if (style == "zoom") {
+        m_shrinkTo = 0.5;
+      } else if (style == "popin") {
+        m_shrinkTo = std::clamp(scale, 0.1, 1.0);
+      }
     }
   }
 
@@ -1041,118 +1098,123 @@ namespace umbriel {
     }
   }
 
-  void Server::CloseSnapshot::applySlide() {
-    const int slide = static_cast<int>(std::lround(m_slide.current()));
-    wlr_scene_node_set_position(&m_tree->node, m_canvasX, m_canvasY + slide);
-    if (m_shadow.tree != nullptr) {
-      wlr_scene_node_set_position(&m_shadow.tree->node, m_tree->node.x, m_tree->node.y);
+  void Server::CloseSnapshot::applyShrink(int width, int height) {
+    const auto& appearance = config().appearance;
+    // Once the box is thinner than its own ring, shrink the ring with it so the decorated geometry collapses
+    // continuously instead of disappearing in one frame.
+    const int fullExtent = appearance.borderWidth + appearance.outerBorderWidth;
+    const double ringScale =
+        fullExtent > 0 ? std::clamp(static_cast<double>(std::min(width, height)) / (2 * fullExtent), 0.0, 1.0) : 1.0;
+    const int innerWidth = static_cast<int>(std::lround(appearance.borderWidth * ringScale));
+    const int outerWidth = static_cast<int>(std::lround(appearance.outerBorderWidth * ringScale));
+    const int radius = static_cast<int>(std::lround(appearance.cornerRadius * ringScale));
+    const BorderRing ring = makeBorderRing(width, height, radius, innerWidth, outerWidth);
+    const bool ringVisible = innerWidth + outerWidth > 0;
+    const wlr_box treeClip = m_borders.empty() || !ringVisible ? wlr_box{0, 0, width, height} : ring.box;
+    wlr_scene_tree_set_clip(m_tree, &treeClip);
+
+    if (m_content != nullptr && m_captured.width > 0 && m_captured.height > 0) {
+      // Scale the frozen buffers into the shrinking box just like a live view's presented resize. The windows_out
+      // AnimatedValue remains the sole lifecycle clock.
+      const double scaleX = static_cast<double>(width) / m_captured.width;
+      const double scaleY = static_cast<double>(height) / m_captured.height;
+      for (const Buffer& buffer : m_buffers) {
+        wlr_scene_node_set_position(
+            &buffer.node->node, static_cast<int>(std::lround(buffer.x * scaleX)),
+            static_cast<int>(std::lround(buffer.y * scaleY))
+        );
+        wlr_scene_buffer_set_dest_size(
+            buffer.node, std::max(1, static_cast<int>(std::lround(buffer.width * scaleX))),
+            std::max(1, static_cast<int>(std::lround(buffer.height * scaleY)))
+        );
+      }
+      if (m_content != m_tree) {
+        const wlr_box contentClip{0, 0, width, height};
+        wlr_scene_tree_set_clip(m_content, &contentClip);
+      }
     }
-    applyMask();
+
+    for (auto& border : m_borders) {
+      wlr_scene_node_set_enabled(&border.node->node, ringVisible);
+      applyBorderGeometry(border.node, ring, innerWidth, outerWidth);
+    }
+    if (m_shadow.node != nullptr) {
+      const int dw = width - m_captured.width;
+      const int dh = height - m_captured.height;
+      wlr_scene_tree_set_clip(m_shadow.tree, nullptr);
+      wlr_scene_shadow_set_size(m_shadow.node, std::max(0, m_shadowWidth + dw), std::max(0, m_shadowHeight + dh));
+      clipped_region shadowClip = m_shadow.node->clipped_region;
+      shadowClip.area = {
+          m_shadowHole.x,
+          m_shadowHole.y,
+          std::max(0, m_shadowHole.width + dw),
+          std::max(0, m_shadowHole.height + dh),
+      };
+      wlr_scene_shadow_set_clipped_region(m_shadow.node, shadowClip);
+    }
   }
 
-  void Server::CloseSnapshot::applyMask() {
-    if (!m_maskConstrained) {
-      wlr_scene_node_set_enabled(&m_tree->node, true);
-      (void)wlr_scene_node_set_animation_output_clip(&m_tree->node, nullptr);
-      wlr_scene_tree_set_clip(m_tree, nullptr);
+  void Server::CloseSnapshot::applyPresentation() {
+    if (!m_visible) {
+      // An empty output clip keeps a custom shader's feedback history alive without compositing; a plain snapshot is
+      // disabled.
+      constexpr wlr_box kEmpty{0, 0, 0, 0};
+      const bool animated = wlr_scene_node_set_animation_output_clip(&m_tree->node, &kEmpty);
+      wlr_scene_node_set_enabled(&m_tree->node, animated);
       if (m_shadow.tree != nullptr) {
-        wlr_scene_node_set_enabled(&m_shadow.tree->node, true);
-        wlr_scene_tree_set_clip(m_shadow.tree, nullptr);
+        wlr_scene_node_set_enabled(&m_shadow.tree->node, false);
       }
       return;
     }
-    const bool visible = m_box.width > 0 && m_box.height > 0;
-    const auto expand = [](const wlr_box& box, const MaskInsets& insets) {
-      return wlr_box{
-          .x = box.x - insets.left,
-          .y = box.y - insets.top,
-          .width = box.width + insets.left + insets.right,
-          .height = box.height + insets.top + insets.bottom,
-      };
-    };
-    const auto expandCapturedEdges = [&](const wlr_box& box, const MaskInsets& insets) {
-      const int localLeft = box.x - m_canvasX;
-      const int localTop = box.y - m_canvasY;
-      const int localRight = localLeft + box.width;
-      const int localBottom = localTop + box.height;
-      const int left = localLeft <= 0 ? insets.left : 0;
-      const int top = localTop <= 0 ? insets.top : 0;
-      const int right = localRight >= m_from.width ? insets.right : 0;
-      const int bottom = localBottom >= m_from.height ? insets.bottom : 0;
-      return wlr_box{
-          .x = box.x - left,
-          .y = box.y - top,
-          .width = box.width + left + right,
-          .height = box.height + top + bottom,
-      };
-    };
-    const wlr_box mask = visible ? expandCapturedEdges(m_box, m_borderMaskInsets) : m_box;
-    const wlr_box fullMask = expand({m_tree->node.x, m_tree->node.y, m_from.width, m_from.height}, m_borderMaskInsets);
-    const bool fullAtRoot = visible
-        && mask.x == fullMask.x
-        && mask.y == fullMask.y
-        && mask.width == fullMask.width
-        && mask.height == fullMask.height;
-    const wlr_box treeClip{
-        .x = mask.x - m_tree->node.x,
-        .y = mask.y - m_tree->node.y,
-        .width = mask.width,
-        .height = mask.height,
-    };
-    const bool animated = wlr_scene_node_set_animation_output_clip(&m_tree->node, fullAtRoot ? nullptr : &treeClip);
-    wlr_scene_node_set_enabled(&m_tree->node, visible || animated);
-    if (animated) {
-      wlr_scene_tree_set_clip(m_tree, nullptr);
-    } else {
-      if (fullAtRoot) {
-        wlr_scene_tree_set_clip(m_tree, nullptr);
-      } else {
-        wlr_scene_tree_set_clip(m_tree, &treeClip);
-      }
-    }
+    const bool shrinks = m_shrinkTo < 1.0 && m_captured.width > 0 && m_captured.height > 0;
+    const double closeProgress = 1.0 - std::clamp(m_alpha.current(), 0.0, 1.0);
+    const double scale = shrinks ? std::lerp(1.0, m_shrinkTo, closeProgress) : 1.0;
+    const int width = std::max(1, static_cast<int>(std::lround(m_captured.width * scale)));
+    const int height = std::max(1, static_cast<int>(std::lround(m_captured.height * scale)));
+    const int x = m_canvasX + (shrinks ? (m_captured.width - width) / 2 : 0);
+    const int y =
+        m_canvasY + (shrinks ? (m_captured.height - height) / 2 : 0) + static_cast<int>(std::lround(m_slide.current()));
+    wlr_scene_node_set_position(&m_tree->node, x, y);
     if (m_shadow.tree != nullptr) {
-      wlr_scene_node_set_enabled(&m_shadow.tree->node, visible);
-      if (!visible) {
-        return;
-      }
-      if (fullAtRoot) {
-        wlr_scene_tree_set_clip(m_shadow.tree, nullptr);
-      } else {
-        const wlr_box shadowMask = expandCapturedEdges(m_box, m_shadowMaskInsets);
-        const wlr_box shadowClip{
-            .x = shadowMask.x - m_shadow.tree->node.x,
-            .y = shadowMask.y - m_shadow.tree->node.y,
-            .width = shadowMask.width,
-            .height = shadowMask.height,
-        };
-        wlr_scene_tree_set_clip(m_shadow.tree, &shadowClip);
-      }
+      wlr_scene_node_set_position(&m_shadow.tree->node, x, y);
+    }
+    (void)wlr_scene_node_set_animation_output_clip(&m_tree->node, nullptr);
+    wlr_scene_node_set_enabled(&m_tree->node, true);
+    if (m_shadow.tree != nullptr) {
+      wlr_scene_node_set_enabled(&m_shadow.tree->node, true);
+    }
+    if (shrinks) {
+      applyShrink(width, height);
+      return;
+    }
+    wlr_scene_tree_set_clip(m_tree, nullptr);
+    if (m_shadow.tree != nullptr) {
+      wlr_scene_tree_set_clip(m_shadow.tree, nullptr);
     }
   }
 
-  void Server::CloseSnapshot::presentMask(const wlr_box& box, int canvasX, int canvasY, bool constrained) {
-    m_maskConstrained = constrained;
-    m_box = box;
+  void Server::CloseSnapshot::present(int canvasX, int canvasY, bool visible) {
     m_canvasX = canvasX;
     m_canvasY = canvasY;
-    applySlide();
+    m_visible = visible;
+    applyPresentation();
   }
 
   bool Server::CloseSnapshot::tickAnimations(uint64_t nowMsec) {
     const bool movedAlpha = m_alpha.tick(nowMsec);
     const bool movedSlide = m_slide.tick(nowMsec);
     updateAnimationShader(&m_tree->node, m_server->renderer(), m_event, m_alpha, -1.0F);
-    applyMask();
 
     if (!movedAlpha && !movedSlide) {
       return false;
     }
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
     const float rawAlpha = std::clamp(static_cast<float>(m_alpha.current()), 0.0F, 1.0F);
-    const bool customShader = animationShader(m_server->renderer(), m_event) != nullptr;
-    const bool builtInSlide = !customShader && m_slide.target() != m_slide.from();
+    // A lifecycle shader fades the whole snapshot at once, so its buffers and borders stay opaque under it.
+    const bool composited = lifecycleShader(m_server->renderer(), m_event) != nullptr;
+    const bool builtInSlide = !composited && m_slide.target() != m_slide.from();
     // Keep the moving snapshot visible long enough for slide to read as motion. Fade keeps the configured timeline.
-    const float alpha = customShader ? 1.0F : (builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);
+    const float alpha = composited ? 1.0F : (builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);
     for (const Buffer& buffer : m_buffers) {
       wlr_scene_buffer_set_opacity(buffer.node, std::clamp(buffer.baseOpacity * alpha, 0.0F, 1.0F));
     }
@@ -1170,9 +1232,7 @@ namespace umbriel {
       wlr_scene_shadow_set_color(m_shadow.node, color.data());
     }
 
-    if (movedSlide) {
-      applySlide();
-    }
+    applyPresentation();
     return m_alpha.animating() || m_slide.animating();
   }
 
@@ -1246,10 +1306,12 @@ namespace umbriel {
     int durationMs = 0;
     AnimationCurve curve{.easing = Easing::Snappy};
     std::string style = "fade";
+    double scale = 0.8;
     if (overrides) {
       durationMs = overrides->durationMs;
       curve = overrides->curve;
       style = overrides->style;
+      scale = overrides->scale;
     } else {
       const auto& animation = config().animation;
       const auto close = selectedWindowsOut();
@@ -1263,6 +1325,7 @@ namespace umbriel {
       durationMs = close.durationMs;
       curve = close.curve;
       style = close.style;
+      scale = close.scale;
     }
     if (durationMs <= 0) {
       if (shadow.tree != nullptr) {
@@ -1274,7 +1337,7 @@ namespace umbriel {
 
     const CloseSnapshotId id = m_nextCloseSnapshotId++;
     auto snapshot = std::make_unique<CloseSnapshot>(
-        *this, id, output, tree, content, std::move(borders), box, durationMs, curve, style,
+        *this, id, output, tree, content, std::move(borders), box, durationMs, curve, style, scale,
         overrides ? overrides->event : AnimationEvent::WindowsOut, shadow
     );
     registerAnimatable(snapshot.get());
@@ -1282,23 +1345,19 @@ namespace umbriel {
     return id;
   }
 
-  void
-  Server::presentCloseSnapshotMask(CloseSnapshotId id, const wlr_box& box, int canvasX, int canvasY, bool constrained) {
+  void Server::presentCloseSnapshot(CloseSnapshotId id, int canvasX, int canvasY, bool visible) {
     for (const auto& snapshot : m_closeSnapshots) {
       if (snapshot->id() == id) {
-        snapshot->presentMask(box, canvasX, canvasY, constrained);
+        snapshot->present(canvasX, canvasY, visible);
         return;
       }
     }
   }
 
-  std::optional<wlr_box> Server::closeSnapshotBox(CloseSnapshotId id) const {
-    for (const auto& snapshot : m_closeSnapshots) {
-      if (snapshot->id() == id) {
-        return snapshot->box();
-      }
-    }
-    return std::nullopt;
+  bool Server::closeSnapshotAlive(CloseSnapshotId id) const {
+    return std::ranges::any_of(m_closeSnapshots, [id](const std::unique_ptr<CloseSnapshot>& snapshot) {
+      return snapshot->id() == id;
+    });
   }
 
   uint64_t Server::uptimeMs() const {

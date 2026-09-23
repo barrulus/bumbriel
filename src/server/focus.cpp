@@ -244,6 +244,14 @@ namespace umbriel {
     if (retainCurrentKeyboardFocus()) {
       return;
     }
+    // Focus that last sat on a scratchpad still visible on the pointer output
+    // returns there, e.g. when an exclusive layer releases the seat.
+    if (ScratchpadManager* pad = m_server.scratchpadManager()) {
+      if (View* view = pad->focusedOn(m_server.outputFromWlr(m_server.preferredOutput()))) {
+        focusView(view);
+        return;
+      }
+    }
     refocusFallback(nullptr);
   }
 
