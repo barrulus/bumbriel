@@ -1,5 +1,6 @@
 #include "overview/overview.h"
 
+#include "overview/preview_geometry.h"
 #include "scene/animation_shader.h"
 #include "scene/decoration_shader.h"
 
@@ -47,8 +48,6 @@ namespace umbriel {
     constexpr Logger kLog("overview");
     constexpr double kMiddleScrollStepPx = 105.0;
 
-    // Gap between workspace thumbnails, as a fraction of the scaled row height.
-    constexpr double kRowGapFraction = 0.1;
     // Overview progress over which the desktop's shadows and pinned windows fade, starting from the desktop.
     constexpr double kDesktopChromeFade = 0.1;
     // Pointer travel that promotes a press on a card into a relocate drag.
@@ -165,7 +164,7 @@ namespace umbriel {
     // A point `d` along an output extent `E` sits at `base + d * z`, with `base` centering the preview, so it moves
     // at most E / 2 per unit of zoom. Neighbouring rows add a whole step, E * (1 + gap), but they only show near the
     // open end; a close ends with them off the output.
-    const double rowFactor = m_targetProgress < m_progressFrom ? 0.5 : 1.5 + kRowGapFraction;
+    const double rowFactor = m_targetProgress < m_progressFrom ? 0.5 : 1.5 + kPreviewRowGapFraction;
     double extent = 0.0;
     for (const auto& state : m_outputs) {
       wlr_box box{};
@@ -193,22 +192,30 @@ namespace umbriel {
     }
     out.zoom = zoom;
     out.axis = group != nullptr ? group->workspaceAxis() : WorkspaceAxis::Vertical;
-    out.previewW = std::max(1, static_cast<int>(std::lround(outputBox.width * zoom)));
-    out.previewH = std::max(1, static_cast<int>(std::lround(outputBox.height * zoom)));
-    out.baseX = static_cast<int>(std::lround(outputBox.x + (outputBox.width - out.previewW) / 2.0));
-    out.baseY = static_cast<int>(std::lround(outputBox.y + (outputBox.height - out.previewH) / 2.0));
-    const int axisExtent = out.axis == WorkspaceAxis::Horizontal ? outputBox.width : outputBox.height;
-    out.gap = static_cast<int>(std::lround(kRowGapFraction * axisExtent * zoom));
+    const PreviewGrid grid = previewGrid(
+        outputBox.x, outputBox.y, outputBox.width, outputBox.height, zoom, out.axis == WorkspaceAxis::Horizontal
+    );
+    out.previewW = grid.width;
+    out.previewH = grid.height;
+    out.baseX = grid.baseX;
+    out.baseY = grid.baseY;
+    out.gap = grid.gap;
     return true;
   }
 
   wlr_box Overview::previewBox(const PreviewMetrics& metrics, double workspaceScroll, size_t workspaceIndex) {
     const bool horizontal = metrics.axis == WorkspaceAxis::Horizontal;
-    const double step = (horizontal ? metrics.previewW : metrics.previewH) + metrics.gap;
-    const double offset = (static_cast<double>(workspaceIndex) - workspaceScroll) * step;
+    const PreviewGrid grid{
+        .width = metrics.previewW,
+        .height = metrics.previewH,
+        .baseX = metrics.baseX,
+        .baseY = metrics.baseY,
+        .gap = metrics.gap,
+    };
+    const int origin = previewAxisOrigin(grid, horizontal, workspaceIndex, workspaceScroll);
     return {
-        .x = static_cast<int>(std::lround(metrics.baseX + (horizontal ? offset : 0.0))),
-        .y = static_cast<int>(std::lround(metrics.baseY + (horizontal ? 0.0 : offset))),
+        .x = horizontal ? origin : metrics.baseX,
+        .y = horizontal ? metrics.baseY : origin,
         .width = metrics.previewW,
         .height = metrics.previewH,
     };

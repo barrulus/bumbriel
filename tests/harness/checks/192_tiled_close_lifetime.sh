@@ -56,6 +56,8 @@ sample_x=$(jq -r '.x + (.w / 2 | floor)' <<< "$window")
 sample_y=$(jq -r '.y + (.h / 2 | floor)' <<< "$window")
 window_id=$(jq -r .id <<< "$window")
 
+# Animation time only moves by clock-advance; advancing 2000 ms finishes the 1600 ms windows_out timeline.
+"$UMBRIEL" clock-freeze
 "$UMBRIEL" msg "window-close:$window_id" > /dev/null
 for _ in $(seq 80); do
   grep -q '^unmapped$' "$CLIENT_LOG" && break
@@ -83,7 +85,7 @@ sample() {
 }
 
 # The configured windows_move timeline ended 200 ms ago, while windows_out is still near the start of its timeline.
-sleep 0.35
+"$UMBRIEL" clock-advance 350
 read -r red green blue < <(sample)
 if ! ((green > 220 && red < 30 && blue < 30)); then
   echo "tiled close effect ended with windows_move: sampled $red $green $blue while windows_out was active"
@@ -91,7 +93,8 @@ if ! ((green > 220 && red < 30 && blue < 30)); then
 fi
 
 # The snapshot remains owned by windows_out and must disappear when that timeline actually finishes.
-sleep 1.45
+"$UMBRIEL" clock-advance 2000
+"$UMBRIEL" settle
 read -r red green blue < <(sample)
 if ! ((green < 30 && red < 30 && blue < 30)); then
   echo "tiled close snapshot remained after windows_out: sampled $red $green $blue"
@@ -129,7 +132,7 @@ if "$UMBRIEL" windows --json | jq -e 'any(.[]; .title == "tiled-close-overshoot"
   exit 1
 fi
 
-sleep 0.8
+"$UMBRIEL" clock-advance 800
 grim "$IMAGE"
 read -r red green blue < <(magick "$IMAGE" \
   -format '%[fx:round(255*maxima.r)] %[fx:round(255*maxima.g)] %[fx:round(255*maxima.b)]\n' info:)
@@ -138,7 +141,8 @@ if ! ((green > 220 && red < 30 && blue < 30)); then
   exit 1
 fi
 
-sleep 1
+"$UMBRIEL" clock-advance 2000
+"$UMBRIEL" settle
 grim "$IMAGE"
 read -r red green blue < <(magick "$IMAGE" \
   -format '%[fx:round(255*maxima.r)] %[fx:round(255*maxima.g)] %[fx:round(255*maxima.b)]\n' info:)

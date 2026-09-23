@@ -76,6 +76,14 @@ shader = "move-marker.glsl"
 enabled = false
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
+# Animation time only moves by clock-advance. Samples land every 100 ms after the close request.
+"$UMBRIEL" clock-freeze
+
+# Runs every started animation to its end.
+finish() {
+  "$UMBRIEL" clock-advance 3000
+  "$UMBRIEL" settle
+}
 
 spawn() {
   local title=$1 color=$2
@@ -102,14 +110,23 @@ wait_unmapped() {
   return 1
 }
 
+# Prints one count per predicate on one line.
 color_pixels() {
-  local image=$1 expression=$2
-  magick "$image" -alpha off -fx "$expression ? 1 : 0" -format '%[fx:round(mean*w*h)]\n' info:
+  local image=$1
+  shift
+  "$UMBRIEL_PIXEL_PROBE" "$image" count "$@"
 }
 
 red_bounds() {
-  magick "$1" -alpha off -fx '(r > 0.08) ? 1 : 0' -bordercolor black -border 1 -trim \
-    -format '%X %Y %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox 'r > 0.08'
+}
+
+# Writes "early middle late move x y w h" for <base>.png to <base>.txt.
+measure_frame() {
+  local base=$1 counts
+  counts=$(color_pixels "$base.png" 'b > 0.3 && g < 0.08' 'g > 0.08 && b < 0.3' 'g > 0.08 && b > 0.3' \
+    'r > 0.08 && g < 0.08 && b > 0.08')
+  echo "$counts $(red_bounds "$base.png")" > "$base.txt"
 }
 
 bounds_match() {
@@ -141,19 +158,19 @@ verify_close() {
   "$UMBRIEL" msg "window-close:$id" > /dev/null
   wait_unmapped "$closing_title"
 
+  # Each frame is measured in the background while the next one is captured.
+  local -a probes=()
   for i in $(seq 0 29); do
+    ((i > 0)) && "$UMBRIEL" clock-advance 100
     grim "$SHOTS/$phase-$i.png"
-    sleep 0.1
+    measure_frame "$SHOTS/$phase-$i" &
+    probes+=($!)
   done
+  wait "${probes[@]}"
 
   local -a early=() middle=() late=() move=() red_boxes=()
   for i in $(seq 0 29); do
-    image="$SHOTS/$phase-$i.png"
-    early[$i]=$(color_pixels "$image" 'b > 0.3 && g < 0.08')
-    middle[$i]=$(color_pixels "$image" 'g > 0.08 && b < 0.3')
-    late[$i]=$(color_pixels "$image" 'g > 0.08 && b > 0.3')
-    move[$i]=$(color_pixels "$image" 'r > 0.08 && g < 0.08 && b > 0.08')
-    red_boxes[$i]=$(red_bounds "$image")
+    read -r early[$i] middle[$i] late[$i] move[$i] red_boxes[$i] < "$SHOTS/$phase-$i.txt"
   done
 
   local first_middle=-1 first_late=-1 last_close=-1
@@ -270,44 +287,44 @@ readonly SURVIVOR_COLOR=0x80800000
 readonly CLOSER_COLOR=0x80000080
 
 spawn shader-visible-master-survivor "$SURVIVOR_COLOR"
-sleep 1.4
+finish
 spawn shader-visible-master-close "$CLOSER_COLOR"
-sleep 1.4
+finish
 verify_close ordinary shader-visible-master-close animated 0 0 1280 720
 
 "$UMBRIEL" msg workspace-switch:2 > /dev/null
 sed -i 's/^mode = "master"$/mode = "scrolling"/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-sleep 0.2
+finish
 spawn shader-visible-consume-survivor "$SURVIVOR_COLOR"
-sleep 1.4
+finish
 spawn shader-visible-consume-close "$CLOSER_COLOR"
-sleep 1.4
+finish
 "$UMBRIEL" msg window-consume-left > /dev/null
-sleep 0.28
+"$UMBRIEL" clock-advance 280
 verify_close consume shader-visible-consume-close animated 0 0 640 720
 
 "$UMBRIEL" msg workspace-switch:3 > /dev/null
-sleep 0.2
+finish
 spawn shader-visible-expel-survivor "$SURVIVOR_COLOR"
-sleep 1.4
+finish
 spawn shader-visible-expel-close "$CLOSER_COLOR"
-sleep 1.4
+finish
 "$UMBRIEL" msg window-consume-left > /dev/null
-sleep 1.4
+finish
 "$UMBRIEL" msg window-consume-or-expel-right > /dev/null
-sleep 0.08
+"$UMBRIEL" clock-advance 80
 verify_close expel shader-visible-expel-close animated 0 0 640 720
 
 "$UMBRIEL" msg workspace-switch:4 > /dev/null
 sed -i 's/^mode = "scrolling"$/mode = "master"/' "$UMBRIEL_CONFIG"
 sed -i '/\[animation.windows_move\]/,/^$/s/^enabled = true$/enabled = false/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-sleep 0.2
+finish
 spawn shader-visible-disabled-survivor "$SURVIVOR_COLOR"
-sleep 0.2
+finish
 spawn shader-visible-disabled-close "$CLOSER_COLOR"
-sleep 0.2
+finish
 verify_close disabled shader-visible-disabled-close disabled 0 0 1280 720
 
 echo "tiled closes preserved natural windows_out phases while animated reflow overlapped and disabled movement snapped"

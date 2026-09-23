@@ -36,9 +36,9 @@ position through `AnimatedValue::settleSpring`, carrying the release velocity
 scaled by the rubber-band derivative at the release point; any other curve runs
 over `duration_ms` from rest. A gesture in flight snaps the value each frame,
 which also stops a settle still running on that output. Settled preview origins
-and gaps use an integral logical-pixel grid. The analytic spring remains in
-control while its position and velocity energy could still cross a pixel
-boundary. Once that complete envelope is strictly below half a logical pixel,
+and gaps use an integral logical-pixel grid (`overview/preview_geometry.h`). The
+analytic spring remains in control while its position and velocity energy could
+still cross a pixel boundary. Once that complete envelope is strictly below half a logical pixel,
 the solver stops at its target. The projected preview already rounds to that
 same target pixel, so stopping is invisible and cannot introduce a faster
 terminal step. Larger release motion and configured bounce remain intact.

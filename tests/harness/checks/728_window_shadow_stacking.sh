@@ -82,6 +82,8 @@ match.title = "^scratch-high$"
 default_position = { x = 760, y = 380, anchor = "top_left" }
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
+# Animation time only moves by clock-advance, so every sample sees an exact instant.
+"$UMBRIEL" clock-freeze
 
 window_of() { "$UMBRIEL" windows --json | jq -c --arg title "$1" '.[] | select(.title == $title)'; }
 
@@ -104,8 +106,9 @@ box_of() {
 
 id_of() { window_of "$1" | jq -r .id; }
 
-settle() {
-  sleep 0.3
+# Samples after every animation started so far has finished.
+capture() {
+  "$UMBRIEL" clock-advance 4000
   grim "$IMAGE"
 }
 
@@ -148,42 +151,42 @@ read -r rx ry rw rh < <(box_of tile-right)
 seam_y=$((ry + rh / 2))
 for focus in tile-left tile-right; do
   "$UMBRIEL" msg "window-focus:$(id_of "$focus")" > /dev/null
-  settle
+  capture
   clean "tile-right beside $focus on top" "$((rx + 4))" "$seam_y" "$((rx + rw / 2))" "$seam_y"
   clean "tile-left beside $focus on top" "$((rx - 8))" "$seam_y" "$((lx + lw / 2))" "$seam_y"
 done
 
 # A floating window shadows the tile below it.
 spawn floater 300 200
-settle
+capture
 read -r fx fy fw fh < <(box_of floater)
 shadowed "floating over a tile" "$((fx + 20))" "$((fy + fh + 4))" "$((fx + 20))" "$((ry + rh - 40))"
 
 # A floating window shadows the floating window it covers.
 spawn upper 300 200
-settle
+capture
 read -r ux uy uw uh < <(box_of upper)
 shadowed "floating over floating" "$((ux - 8))" "$((uy + 20))" "$((fx + 20))" "$((fy + 20))"
 
 # Raising the covered window reverses the pair.
 "$UMBRIEL" msg "window-focus:$(id_of floater)" > /dev/null
-settle
+capture
 shadowed "raised floating window" "$((fx + fw + 4))" "$((uy + 40))" "$((ux + uw - 20))" "$((uy + uh - 20))"
 clean "lowered floating window" "$((ux - 8))" "$((uy + 20))" "$((fx + 20))" "$((fy + 20))"
 
 # A closing window keeps its shadow on the window below while it fades.
 "$UMBRIEL" msg "window-focus:$(id_of upper)" > /dev/null
-settle
+capture
 "$UMBRIEL" msg "window-close:$(id_of upper)" > /dev/null
-sleep 0.2
+"$UMBRIEL" clock-advance 200
 grim "$IMAGE"
 shadowed "closing floating window" "$((ux - 8))" "$((uy + 20))" "$((fx + 20))" "$((fy + 20))"
-sleep 4.2
+"$UMBRIEL" clock-advance 4000
 
 # Pinned windows shadow each other.
 spawn pin-low 300 200
 spawn pin-high 300 200
-settle
+capture
 read -r ax ay _ _ < <(box_of pin-low)
 read -r bx by _ _ < <(box_of pin-high)
 shadowed "pinned over pinned" "$((bx - 8))" "$((by + 20))" "$((ax + 20))" "$((ay + 20))"
@@ -193,7 +196,7 @@ spawn scratch-low 300 200
 spawn scratch-high 300 200
 "$UMBRIEL" msg scratchpad-toggle:shade > /dev/null
 "$UMBRIEL" msg "window-focus:$(id_of scratch-high)" > /dev/null
-settle
+capture
 read -r sx sy _ _ < <(box_of scratch-low)
 read -r tx ty _ _ < <(box_of scratch-high)
 shadowed "scratchpad over scratchpad" "$((tx - 8))" "$((ty + 20))" "$((sx + 20))" "$((sy + 20))"

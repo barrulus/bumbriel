@@ -62,7 +62,7 @@ spawn() {
 }
 
 red_pixels() {
-  magick "$IMAGE" -alpha off -fx '(r > 0.8 && g < 0.1 && b < 0.1) ? 1 : 0' -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r > 0.8 && g < 0.1 && b < 0.1'
 }
 
 sample_center() {
@@ -89,21 +89,24 @@ sample_center() {
 }
 
 spawn tiled-shader-first
-sleep 1.1
+"$UMBRIEL" settle
 
+# Animation time only moves by clock-advance: samples land 150 ms and 600 ms into both 1000 ms timelines.
+"$UMBRIEL" clock-freeze
 spawn tiled-shader-second
 second=$window
-sleep 0.15
+"$UMBRIEL" clock-advance 150
 sample_center "second tiled opener" "$second"
-sleep 0.45
+"$UMBRIEL" clock-advance 450
 sample_center "second tiled opener" "$second"
-sleep 1.0
+"$UMBRIEL" clock-advance 1000
+"$UMBRIEL" settle
 
 spawn tiled-shader-third
 third=$window
-sleep 0.15
+"$UMBRIEL" clock-advance 150
 sample_center "third tiled opener" "$third"
-sleep 0.45
+"$UMBRIEL" clock-advance 450
 sample_center "third tiled opener" "$third"
 
 echo "each tiled opener showed its windows_in shader in its final slot while its neighbours reflowed"

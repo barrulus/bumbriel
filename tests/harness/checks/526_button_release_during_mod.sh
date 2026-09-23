@@ -39,7 +39,7 @@ if [[ -z $window ]]; then
 fi
 # Geometry right after map is still the pre-arrangement one, so read it again
 # once the layout has placed the window.
-sleep 0.4
+"$UMBRIEL" settle
 window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "button-release")')
 x=$(jq -r '(.x + .w / 2 | round)' <<< "$window")
 y=$(jq -r '(.y + .h / 2 | round)' <<< "$window")

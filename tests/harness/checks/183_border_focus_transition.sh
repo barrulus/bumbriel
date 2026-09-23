@@ -89,13 +89,15 @@ window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "focus-border
 b_id=$(jq -r .id <<< "$window")
 
 "$UMBRIEL" msg "window-focus:$a_id" > /dev/null
-sleep 1.1
+"$UMBRIEL" settle
 grim "$IMAGE"
 assert_color focus-border-a red
 assert_color focus-border-b blue
 
+# Animation time only moves by clock-advance; advancing 1000 ms finishes every border and overview timeline.
+"$UMBRIEL" clock-freeze
 "$UMBRIEL" msg "window-focus:$b_id" > /dev/null
-sleep 0.35
+"$UMBRIEL" clock-advance 350
 grim "$IMAGE"
 assert_color focus-border-a mixed
 assert_color focus-border-b mixed
@@ -103,11 +105,12 @@ assert_color focus-border-b mixed
 # Opening the overview clears focus on the hidden windows and closing restores it; the reveal must show the settled
 # result instead of the transition.
 overview_round_trip() {
-  sleep 1.1
+  "$UMBRIEL" clock-advance 1000
+  "$UMBRIEL" settle
   "$UMBRIEL" msg overview-open > /dev/null
-  sleep 0.6
+  "$UMBRIEL" clock-advance 600
   "$UMBRIEL" msg overview-close > /dev/null
-  sleep 0.6
+  "$UMBRIEL" clock-advance 600
   grim "$IMAGE"
   assert_color focus-border-a blue
   assert_color focus-border-b red
@@ -127,5 +130,21 @@ overview_round_trip
   fi
 done &
 overview_round_trip
+
+"$UMBRIEL" clock-advance 1000
+"$UMBRIEL" clock-resume
+
+# A zero-width border has nothing to fade, so a focus change leaves no animation running and settle succeeds on a
+# frozen clock.
+sed -i 's/^border_width = 20$/border_width = 0/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle
+"$UMBRIEL" clock-freeze
+"$UMBRIEL" msg "window-focus:$a_id" > /dev/null
+if ! timeout 5 "$UMBRIEL" settle; then
+  echo "a focus change animated a zero-width border"
+  exit 1
+fi
+"$UMBRIEL" clock-resume
 
 echo "focus border colors interpolate during focus changes and settle across the overview"

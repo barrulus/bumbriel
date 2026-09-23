@@ -1974,8 +1974,8 @@ namespace umbriel {
         };
         if (view->floating() && outputBox.width > 0 && outputBox.height > 0) {
           home.floatingOutputPosition = {{
-              static_cast<double>(view->sceneTree()->node.x - outputBox.x) / outputBox.width,
-              static_cast<double>(view->sceneTree()->node.y - outputBox.y) / outputBox.height,
+              static_cast<double>(view->layoutTargetX() - outputBox.x) / outputBox.width,
+              static_cast<double>(view->layoutTargetY() - outputBox.y) / outputBox.height,
           }};
         }
         if (member != capture.members.end()) {

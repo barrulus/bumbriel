@@ -46,9 +46,9 @@ blue_at() { magick "$IMAGE" -crop "4x4+$1+$2" -format '%[fx:round(mean.b*255)]\n
 # The 1280x720 output previews at half size from 320,180, so the card spans 370,230 to 520,330. Dragging it by
 # 100,50 on screen moves the window by 200,100.
 "$UMBRIEL" msg overview-open > /dev/null
-sleep 0.6
+"$UMBRIEL" settle
 "$POINTER" 1280 720 move 445 280 press "$BTN_LEFT" move 495 305 move 545 330 pause 300 release "$BTN_LEFT"
-sleep 0.5
+"$UMBRIEL" settle
 grim "$IMAGE"
 dropped=$(blue_at 600 370)
 vacated=$(blue_at 380 240)
@@ -58,7 +58,7 @@ if ((dropped < 100 || vacated > 20)); then
 fi
 
 "$UMBRIEL" msg overview-close > /dev/null
-sleep 0.6
+"$UMBRIEL" settle
 if [[ $(position) != "300 200" ]]; then
   echo "the window did not keep its dropped position: $(position)"
   exit 1

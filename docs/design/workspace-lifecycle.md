@@ -75,6 +75,16 @@ restriction.
 
 Mapping a window, activating a workspace, or running a layout command can
 replace the scene under a stationary pointer without crossing a window border.
+
+Clients learn the pointer position only from `wl_pointer.enter` and `motion`,
+and a button event carries no coordinates. Umbriel therefore hit-tests again
+before delivering every press and sends a motion when the surface under the
+cursor has moved. It also re-resolves the pointer after any output frame whose
+scene changed, once animations, gestures, and the overview on that output have
+settled, so hover state follows content that moved under a still cursor. That
+refresh never changes keyboard focus, and it pauses while a button is held so an
+implicit grab keeps the coordinate space of its press.
+
 With `follows_mouse` enabled, Umbriel does not override the established focus
 immediately. The focus transition or successful command instead invalidates the
 previous hover decision once. The next eligible pointer motion can therefore

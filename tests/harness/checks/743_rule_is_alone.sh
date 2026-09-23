@@ -61,7 +61,7 @@ wait_gone() {
 }
 
 width_of() {
-  sleep 0.3
+  "$UMBRIEL" settle
   field_of "$1" w
 }
 

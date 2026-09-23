@@ -3,6 +3,7 @@
 unit_tests = [
   ['shader-pool', ['unit/shader_pool.cpp'], []],
   ['overview-navigation', ['unit/overview_navigation.cpp'], []],
+  ['overview-preview-geometry', ['unit/overview_preview_geometry.cpp'], [umbriel_core_dep]],
   ['presented-crop', ['unit/presented_crop.cpp'], []],
   ['scene-node', ['unit/scene_node.cpp'], []],
   ['scene-clip', ['unit/scene_clip.cpp'], [wayland_server_dep]],
@@ -324,8 +325,18 @@ endforeach
 toplevel_capture_client = executable('toplevel-capture-client',
   ['harness/clients/toplevel_capture_client.cpp', capture_protocols], dependencies: [wayland_client_dep])
 
+# Harness helper that counts, bounds, and samples screenshot pixels for checks.
+pixel_probe = executable(
+  'pixel-probe',
+  ['harness/clients/pixel_probe.cpp'],
+  dependencies: [cairo_dep],
+  # Checks call it for every captured frame; a debug build of the per-pixel loop would cost more than the capture.
+  override_options: ['optimization=2'],
+)
+
 harness_client_targets = [
   toplevel_capture_client,
+  pixel_probe,
   pointer_client,
   keyboard_keymap_client,
   input_method_client,

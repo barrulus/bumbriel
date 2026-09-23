@@ -43,7 +43,7 @@ wait_for "the inhibitor to activate" 'grep -q "shortcuts-inhibitor active" "$CLI
 
 # The ordinary bind is suppressed and both key event halves reach the client.
 "$POINTER" "$OUTPUT_W" "$OUTPUT_H" mod logo tap "$KEY_1" mod none
-sleep 0.2
+sleep 0.2 # real time: the inhibited bind never fires
 if [[ $(focused_layout) != scrolling ]]; then
   echo "an inhibited ordinary binding changed the layout to $(focused_layout)"
   exit 1

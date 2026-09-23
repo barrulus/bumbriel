@@ -80,7 +80,7 @@ wait_for_focus_at 10
 # Motion alone must not move focus: follows_mouse is off by default. This also
 # proves the next assertion is the click's doing and not the hover's.
 pointer move "$RIGHT_X" "$MID_Y"
-sleep 0.5
+"$UMBRIEL" settle
 if [[ $(focused_x) != "10" ]]; then
   echo "hovering moved focus with follows_mouse off: focus is at $(focused_x)"
   exit 1
@@ -146,7 +146,7 @@ wait_for_count 3
 pointer move "$RIGHT_X" "$MID_Y"
 "$UMBRIEL" msg workspace-focus-last > /dev/null
 wait_for_focus_at 10
-sleep 1
+"$UMBRIEL" settle
 pointer click "$BTN_LEFT"
 wait_for_focus_at 10
 
@@ -160,7 +160,7 @@ destination_id=$("$UMBRIEL" windows --json | jq -r \
   --arg left "$left_id" --arg right "$right_id" '.[] | select(.id != $left and .id != $right) | .id')
 "$UMBRIEL" msg "window-move-to-workspace:2" > /dev/null
 wait_for_window_x "$left_id" 646
-sleep 1
+"$UMBRIEL" settle
 wait_for_focus_at 646
 sed -i 's/follows_focus = true/follows_focus = false/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null

@@ -71,8 +71,9 @@ spawn() {
 # IPC target geometry or the opening window's opacity.
 red_width() {
   grim "$IMAGE"
-  magick "$IMAGE" -alpha off -crop '1280x8+0+356' +repage \
-    -fx '(r > 0.8 && g < 0.1 && b < 0.1) ? 1 : 0' -format '%[fx:round(w*mean)]\n' info:
+  local pixels
+  pixels=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r > 0.8 && g < 0.1 && b < 0.1' 1280x8+0+356)
+  echo $(((pixels + 4) / 8))
 }
 
 blue_at() {
@@ -82,8 +83,12 @@ blue_at() {
     -format '%[fx:round(255*mean.b)]\n' info:
 }
 
+# Animation time only moves by clock-advance: samples land at 300 ms (mid-reflow) and 900 ms (reflow done, windows_in
+# at 0.56), and advancing 1600 ms finishes every timeline.
+"$UMBRIEL" clock-freeze
 spawn tiled-open-survivor 0xFFFF0000
-sleep 1.7
+"$UMBRIEL" clock-advance 1600
+"$UMBRIEL" settle
 before=$(red_width)
 
 spawn tiled-opener 0xFF0000FF
@@ -92,15 +97,16 @@ opener=$window
 # the output's right edge, so derive a point well inside its final slot from that edge.
 opener_x=$(jq -r '.x + ((1280 - .x) / 2 | floor)' <<< "$opener")
 opener_y=$(jq -r '.y + (((720 - .y) * 7 / 8) | floor)' <<< "$opener")
-sleep 0.3
+"$UMBRIEL" clock-advance 300
 early=$(red_width)
 early_blue=$(blue_at "$opener_x" "$opener_y")
 
-sleep 0.6
+"$UMBRIEL" clock-advance 600
 mid=$(red_width)
 mid_blue=$(blue_at "$opener_x" "$opener_y")
 
-sleep 1.1
+"$UMBRIEL" clock-advance 1600
+"$UMBRIEL" settle
 final=$(red_width)
 final_blue=$(blue_at "$opener_x" "$opener_y")
 
@@ -127,9 +133,10 @@ fi
 
 settled=$(red_width)
 spawn tiled-maximized-opener 0xFF00FF00
-sleep 0.3
+"$UMBRIEL" clock-advance 300
 maximized_early=$(red_width)
-sleep 1.6
+"$UMBRIEL" clock-advance 1600
+"$UMBRIEL" settle
 maximized_final=$(red_width)
 
 if ((settled - maximized_final < 200)); then

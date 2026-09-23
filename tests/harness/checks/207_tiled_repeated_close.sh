@@ -10,6 +10,7 @@ readonly MOVE_MS=830
 readonly SECOND_CLOSE_MS=450
 readonly COLUMN_WIDTH=576
 readonly MARKER_PIXELS=100
+readonly STEP_MS=40
 mkdir -p "$SHOTS"
 
 # The close snapshot holds its captured column for its whole lifecycle, so it paints only a top band and leaves the
@@ -80,15 +81,6 @@ enabled = false
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 
-now_ms() {
-  local stamp seconds fraction
-  read -r stamp _ < /proc/uptime
-  seconds=${stamp%%.*}
-  fraction=${stamp#*.}000
-  fraction=${fraction:0:3}
-  printf '%d\n' "$((10#$seconds * 1000 + 10#$fraction))"
-}
-
 spawn() {
   local title=$1 color=$2
   FILL_COLOR="$color" "$UMBRIEL_UNMAP_CLIENT" "$title" 1280 720 \
@@ -107,27 +99,40 @@ window_id() {
 }
 
 red_bounds() {
-  magick "$1" -alpha off -fx '(r > 0.7 && b < 0.2) ? 1 : 0' -bordercolor black -border 1 -trim \
-    -format '%[fx:page.x-1] %[fx:page.y-1] %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox 'r > 0.7 && b < 0.2'
 }
 
-# One ImageMagick process emits the move marker and all three phases for both independently coloured close snapshots.
+# One probe emits the move marker and all three phases for both independently coloured close snapshots.
 frame_markers() {
-  magick "$1" -write mpr:source +delete \
-    mpr:source -alpha off -fx 'r > 0.7 && g > 0.2 && b < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)] ' -write info: +delete \
-    mpr:source -alpha off -fx 'b > 0.7 && r > 0.05 && r < 0.25 && g < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)] ' -write info: +delete \
-    mpr:source -alpha off -fx 'b > 0.7 && r > 0.25 && r < 0.7 && g < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)] ' -write info: +delete \
-    mpr:source -alpha off -fx 'b > 0.7 && r > 0.7 && g < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)] ' -write info: +delete \
-    mpr:source -alpha off -fx 'g > 0.7 && r > 0.05 && r < 0.25 && b < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)] ' -write info: +delete \
-    mpr:source -alpha off -fx 'g > 0.7 && r > 0.25 && r < 0.7 && b < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)] ' -write info: +delete \
-    mpr:source -alpha off -fx 'g > 0.7 && b > 0.7 && r < 0.2 ? 1 : 0' \
-      -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count \
+    'r > 0.7 && g > 0.2 && b < 0.2' \
+    'b > 0.7 && r > 0.05 && r < 0.25 && g < 0.2' \
+    'b > 0.7 && r > 0.25 && r < 0.7 && g < 0.2' \
+    'b > 0.7 && r > 0.7 && g < 0.2' \
+    'g > 0.7 && r > 0.05 && r < 0.25 && b < 0.2' \
+    'g > 0.7 && r > 0.25 && r < 0.7 && b < 0.2' \
+    'g > 0.7 && b > 0.7 && r < 0.2'
+}
+
+# Writes the move and phase marker counts and the survivor bounds of one frame. Frames are analyzed in the background
+# while capture continues.
+analyze_frame() {
+  local image=$1
+  {
+    frame_markers "$image"
+    red_bounds "$image"
+  } > "$image.txt"
+}
+
+close_window() {
+  local id=$1
+  "$UMBRIEL" msg "window-close:$id" > /dev/null
+  for _ in $(seq 100); do
+    "$UMBRIEL" windows --json | jq -e --arg id "$id" 'any(.[]; .id == $id)' > /dev/null || return 0
+    sleep 0.02
+  done
+  echo "window $id never left the compositor window list"
+  return 1
 }
 
 assert_phase_timeline() {
@@ -180,12 +185,14 @@ assert_phase_timeline() {
     "$label" "$((sample_times[first_early] - request_ms))" "$middle_elapsed" "$late_elapsed" "$last_elapsed"
 }
 
+# Animation time only moves by clock-advance. Advancing past MOVE_MS finishes each opening reflow.
+"$UMBRIEL" clock-freeze
 spawn repeated-survivor 0xFFFF0000
-sleep 1.0
+"$UMBRIEL" clock-advance "$((MOVE_MS + 100))"
 spawn repeated-second-close 0xFF00FF00
-sleep 1.0
+"$UMBRIEL" clock-advance "$((MOVE_MS + 100))"
 spawn repeated-first-close 0xFF0000FF
-sleep 1.0
+"$UMBRIEL" clock-advance "$((MOVE_MS + 100))"
 
 readonly SECOND_ID=$(window_id repeated-second-close)
 readonly FIRST_ID=$(window_id repeated-first-close)
@@ -201,25 +208,38 @@ if ((initial_x != 0 || initial_y != 0 || initial_width < 100 || initial_width >=
   exit 1
 fi
 
-first_request_ms=$(now_ms)
-"$UMBRIEL" msg "window-close:$FIRST_ID" > /dev/null
+# Sample times are milliseconds after the first close unmapped, and the second close lands exactly SECOND_CLOSE_MS
+# later.
+first_request_ms=0
+close_window "$FIRST_ID"
 second_request_ms=0
 frame_count=0
-deadline_ms=$((first_request_ms + SECOND_CLOSE_MS + OUT_MS + 400))
-declare -a sample_times=()
-while :; do
-  before_ms=$(now_ms)
-  ((before_ms > deadline_ms)) && break
-  if ((second_request_ms == 0 && before_ms - first_request_ms >= SECOND_CLOSE_MS)); then
-    "$UMBRIEL" msg "window-close:$SECOND_ID" > /dev/null
-    second_request_ms=$(now_ms)
+elapsed_ms=1
+deadline_ms=$((SECOND_CLOSE_MS + OUT_MS + 400))
+declare -a sample_times=() analyzers=()
+"$UMBRIEL" clock-advance 1
+while ((elapsed_ms <= deadline_ms)); do
+  if ((second_request_ms == 0 && elapsed_ms >= SECOND_CLOSE_MS)); then
+    close_window "$SECOND_ID"
+    second_request_ms=$elapsed_ms
     deadline_ms=$((second_request_ms + OUT_MS + 400))
+    "$UMBRIEL" clock-advance 1
+    elapsed_ms=$((elapsed_ms + 1))
   fi
   grim "$SHOTS/frame-$frame_count.png"
-  after_ms=$(now_ms)
-  sample_times[$frame_count]=$(((before_ms + after_ms) / 2))
+  analyze_frame "$SHOTS/frame-$frame_count.png" &
+  analyzers+=($!)
+  sample_times[$frame_count]=$elapsed_ms
   frame_count=$((frame_count + 1))
-  sleep 0.035
+  step_ms=$STEP_MS
+  if ((second_request_ms == 0 && elapsed_ms < SECOND_CLOSE_MS && elapsed_ms + step_ms > SECOND_CLOSE_MS)); then
+    step_ms=$((SECOND_CLOSE_MS - elapsed_ms))
+  fi
+  "$UMBRIEL" clock-advance "$step_ms"
+  elapsed_ms=$((elapsed_ms + step_ms))
+done
+for analyzer in "${analyzers[@]}"; do
+  wait "$analyzer"
 done
 
 if ((second_request_ms == 0)); then
@@ -240,21 +260,14 @@ done
 declare -a move_pixels=() blue_early=() blue_middle=() blue_late=()
 declare -a green_early=() green_middle=() green_late=()
 declare -a red_x=() red_y=() red_width=() red_height=()
-max_gap_ms=0
+max_gap_ms=$STEP_MS
 for ((i = 0; i < frame_count; i++)); do
-  if ((i > 0)); then
-    gap_ms=$((sample_times[i] - sample_times[i - 1]))
-    ((gap_ms > max_gap_ms)) && max_gap_ms=$gap_ms
-  fi
-  read -r move_pixels[$i] blue_early[$i] blue_middle[$i] blue_late[$i] \
-    green_early[$i] green_middle[$i] green_late[$i] \
-    <<< "$(frame_markers "$SHOTS/frame-$i.png")"
-  read -r red_x[$i] red_y[$i] red_width[$i] red_height[$i] <<< "$(red_bounds "$SHOTS/frame-$i.png")"
+  {
+    read -r move_pixels[$i] blue_early[$i] blue_middle[$i] blue_late[$i] \
+      green_early[$i] green_middle[$i] green_late[$i]
+    read -r red_x[$i] red_y[$i] red_width[$i] red_height[$i]
+  } < "$SHOTS/frame-$i.png.txt"
 done
-if ((max_gap_ms > 140)); then
-  echo "screenshot cadence was too sparse for repeated-close timing assertions: maximum gap ${max_gap_ms} ms"
-  exit 1
-fi
 
 assert_phase_timeline first-close "$first_request_ms" blue_early blue_middle blue_late
 assert_phase_timeline second-close "$second_request_ms" green_early green_middle green_late

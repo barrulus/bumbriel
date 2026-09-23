@@ -93,23 +93,19 @@ wait_unmapped() {
 }
 
 red_pixels() {
-  magick "$1" -alpha off -fx '(r > 0.7 && g < 0.2 && b < 0.2) ? 1 : 0' \
-    -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count 'r > 0.7 && g < 0.2 && b < 0.2'
 }
 
 green_pixels() {
-  magick "$1" -alpha off -fx '(r < 0.2 && g > 0.7 && b < 0.2) ? 1 : 0' \
-    -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count 'r < 0.2 && g > 0.7 && b < 0.2'
 }
 
 red_bounds() {
-  magick "$1" -alpha off -fx '(r > 0.7 && g < 0.2 && b < 0.2) ? 1 : 0' \
-    -bordercolor black -border 1 -trim -format '%X %Y %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox 'r > 0.7 && g < 0.2 && b < 0.2'
 }
 
 green_bounds() {
-  magick "$1" -alpha off -fx '(r < 0.2 && g > 0.7 && b < 0.2) ? 1 : 0' \
-    -bordercolor black -border 1 -trim -format '%X %Y %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox 'r < 0.2 && g > 0.7 && b < 0.2'
 }
 
 absolute() {
@@ -134,7 +130,7 @@ verify_workspace_slide() {
   id=$(jq -r .id <<< "$closing")
   "$UMBRIEL" msg "window-close:$id" > /dev/null
   wait_unmapped "$closing_title"
-  sleep 0.05
+  "$UMBRIEL" clock-advance 50
 
   image="$SHOTS/$phase-baseline.png"
   grim "$image"
@@ -150,13 +146,11 @@ verify_workspace_slide() {
   local previous_rx=$base_rx previous_gx=$base_gx
 
   "$UMBRIEL" msg "workspace-switch:$destination" > /dev/null
-  sleep 0.25
+  "$UMBRIEL" clock-advance 250
   grim "$SHOTS/$phase-early.png"
-  sleep 0.35
+  "$UMBRIEL" clock-advance 350
   grim "$SHOTS/$phase-middle.png"
 
-  # Capture both time-sensitive frames before doing pixel analysis. ImageMagick processing between captures can
-  # otherwise consume most of the workspace transition and let the outgoing objects leave the output.
   for label in early middle; do
     image="$SHOTS/$phase-$label.png"
     if (( $(red_pixels "$image") < 500 || $(green_pixels "$image") < 500 )); then
@@ -184,7 +178,7 @@ verify_workspace_slide() {
   done
 
   # The slide has ended, but the four-second close timeline has not. Workspace ownership must hide both objects.
-  sleep 0.75
+  "$UMBRIEL" clock-advance 750
   image="$SHOTS/$phase-settled.png"
   grim "$image"
   local final_red final_green
@@ -197,15 +191,19 @@ verify_workspace_slide() {
 }
 
 spawn ownership-tiled-close 0xFF0000FF
-sleep 0.2
+"$UMBRIEL" settle
 spawn ownership-tiled-anchor 0xFFFF0000
-sleep 0.2
+"$UMBRIEL" settle
+# Animation time only moves by clock-advance: slide samples land 250 ms and 600 ms into the 1200 ms workspace slide,
+# and the settled sample at 1350 ms, still inside the 4000 ms close timeline.
+"$UMBRIEL" clock-freeze
 verify_workspace_slide tiled ownership-tiled-close ownership-tiled-anchor 2
+"$UMBRIEL" clock-advance 4000
 
 spawn ownership-floating-close 0xFF0000FF 600 360
-sleep 0.2
+"$UMBRIEL" settle
 spawn ownership-floating-anchor 0xFFFF0000 120 120
-sleep 0.2
+"$UMBRIEL" settle
 verify_workspace_slide floating ownership-floating-close ownership-floating-anchor 3
 
 echo "tiled and floating close snapshots stayed owned by their source workspaces throughout horizontal slides"

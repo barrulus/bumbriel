@@ -169,7 +169,7 @@ wait_for_workspace column-top "$right_two_id"
 wait_for_workspace column-bottom "$right_two_id"
 wait_for_workspace source-anchor "$one_id"
 wait_for_column_geometry "$normal_width"
-sleep 1
+"$UMBRIEL" settle
 
 # The focused bottom member is not under the target output's center. Turn off
 # follow-warp without moving the cursor, then use a focus-only detour to the top

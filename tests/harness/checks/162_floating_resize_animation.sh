@@ -68,7 +68,7 @@ capture_box() {
 
 "$CLIENT" "$TITLE" 1000 300 > "$CLIENT_LOG" 2>&1 &
 wait_for_box 1000x300+-900+200
-sleep 0.2
+"$UMBRIEL" settle
 
 read -r before_x before_y before_w before_h < <(capture_box before)
 if (( before_x != 0 || before_y != 200 || before_w != 100 || before_h != 300 )); then
@@ -76,10 +76,12 @@ if (( before_x != 0 || before_y != 200 || before_w != 100 || before_h != 300 ));
   exit 1
 fi
 
+# Animation time only moves by clock-advance: samples land at 250 ms and 1250 ms of the 2000 ms linear timeline.
+"$UMBRIEL" clock-freeze
 "$UMBRIEL" msg window-set-primary-extent:0.2 > /dev/null
-sleep 0.25
+"$UMBRIEL" clock-advance 250
 read -r first_x first_y first_w first_h < <(capture_box shrink-250ms)
-sleep 1.00
+"$UMBRIEL" clock-advance 1000
 read -r second_x second_y second_w second_h < <(capture_box shrink-1250ms)
 
 # The sliver stays between its start and end widths at every sample. An origin
@@ -94,7 +96,8 @@ if ! (( first_x == 0 && second_x == 0
   exit 1
 fi
 
-sleep 1.00
+"$UMBRIEL" clock-advance 2000
+"$UMBRIEL" settle
 wait_for_box 256x300+-192+200
 read -r after_x after_y after_w after_h < <(capture_box after)
 if (( after_x != 0 || after_y != 200 || after_w != 64 || after_h != 300 )); then

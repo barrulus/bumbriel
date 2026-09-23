@@ -88,7 +88,7 @@ window_center() {
 
 sample_rgb() {
   local image=$1 x=$2 y=$3
-  magick "$image" -crop "20x20+$((x - 10))+$((y - 10))" -colorspace RGB \
+  magick "$image" -crop "20x20+$((x - 10))+$((y - 10))" \
     -format '%[fx:round(255*mean.r)] %[fx:round(255*mean.g)] %[fx:round(255*mean.b)]' info:
 }
 

@@ -58,19 +58,20 @@ enabled = false
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 
-now_ms() {
-  local stamp seconds fraction
-  read -r stamp _ < /proc/uptime
-  seconds=${stamp%%.*}
-  fraction=${stamp#*.}000
-  fraction=${fraction:0:3}
-  printf '%d\n' "$((10#$seconds * 1000 + 10#$fraction))"
-}
+# Animation time only moves by clock-advance. Frames are sampled every STEP_MS from the frozen instant the closer
+# unmapped, so each sample time is exact.
+readonly STEP_MS=50
+"$UMBRIEL" clock-freeze
 
-sleep_ms() {
-  local milliseconds=$1 delay
-  printf -v delay '%d.%03d' "$((milliseconds / 1000))" "$((milliseconds % 1000))"
-  sleep "$delay"
+# Writes the green, blue, and red pixel counts and the green bounding box of one frame. Frames are analyzed in the
+# background while capture continues.
+analyze_frame() {
+  local image=$1
+  {
+    "$UMBRIEL_PIXEL_PROBE" "$image" count \
+      'g > 0.8 && r < 0.2 && b < 0.2' 'b > 0.8 && r < 0.2 && g < 0.2' 'r > 0.8 && g < 0.2 && b < 0.2'
+    "$UMBRIEL_PIXEL_PROBE" "$image" bbox 'g > 0.8 && r < 0.2 && b < 0.2'
+  } > "$image.txt"
 }
 
 spawn() {
@@ -115,7 +116,7 @@ run_case() {
 
   set_durations "$close_ms" "$move_ms"
   "$UMBRIEL" msg "workspace-switch:$workspace" > /dev/null
-  sleep 0.1
+  "$UMBRIEL" clock-advance 100
 
   spawn "$survivor_title" 0xFFFF0000
   spawn "$closer_title" 0xFF000000
@@ -123,21 +124,29 @@ run_case() {
   closer_id=$(jq -r .id <<< "$window")
 
   # Opening the second tile also reflows the survivor. Let that independent movement finish before measuring close.
-  sleep_ms "$((move_ms + 200))"
+  "$UMBRIEL" clock-advance "$((move_ms + 200))"
 
-  local requested deadline before after count=0
-  local -a sample_times=()
-  requested=$(now_ms)
   "$UMBRIEL" msg "window-close:$closer_id" > /dev/null
-  deadline=$((requested + max_duration + 500))
-  while :; do
-    before=$(now_ms)
-    ((before > deadline)) && break
+  for _ in $(seq 100); do
+    "$UMBRIEL" windows --json | jq -e --arg title "$closer_title" 'any(.[]; .title == $title)' > /dev/null || break
+    sleep 0.02
+  done
+
+  local elapsed=1 count=0
+  local -a sample_times=() analyzers=()
+  "$UMBRIEL" clock-advance 1
+  while ((elapsed <= max_duration + 300)); do
     grim "$SHOTS/$phase-$count.png"
-    after=$(now_ms)
-    sample_times[$count]=$(((before + after) / 2))
+    analyze_frame "$SHOTS/$phase-$count.png" &
+    analyzers+=($!)
+    sample_times[$count]=$elapsed
     count=$((count + 1))
-    sleep 0.04
+    "$UMBRIEL" clock-advance "$STEP_MS"
+    elapsed=$((elapsed + STEP_MS))
+  done
+  local analyzer
+  for analyzer in "${analyzers[@]}"; do
+    wait "$analyzer"
   done
 
   if ! grep -q '^unmapped$' "$UMBRIEL_RUNTIME_DIR/$closer_title.log"; then
@@ -150,29 +159,16 @@ run_case() {
     return 1
   fi
 
-  local i gap max_gap=0 green blue red
+  local i green blue red
   local close_first=-1 close_last=-1 move_first=-1 move_last=-1
   local final_green=0 final_blue=0 final_red=0
   local bounds_x=0 bounds_y=0 bounds_w=0 bounds_h=0 bx by bw bh
-  for ((i = 1; i < count; i++)); do
-    gap=$((sample_times[i] - sample_times[i - 1]))
-    ((gap > max_gap)) && max_gap=$gap
-  done
-  if ((max_gap > 120)); then
-    echo "$phase: screenshot cadence was too sparse for timing assertions: maximum gap ${max_gap} ms"
-    return 1
-  fi
-
   for ((i = 0; i < count; i++)); do
-    read -r green blue red < <(magick "$SHOTS/$phase-$i.png" -alpha off \
-      -format '%[fx:round(mean.g*w*h)] %[fx:round(mean.b*w*h)] %[fx:round(mean.r*w*h)]\n' info:)
+    { read -r green blue red; read -r bx by bw bh; } < "$SHOTS/$phase-$i.png.txt"
     final_green=$green
     final_blue=$blue
     final_red=$red
     if ((green >= MARKER_PIXELS)); then
-      read -r bx by bw bh < <(magick "$SHOTS/$phase-$i.png" -alpha off \
-        -fx '(g > 0.8 && r < 0.2 && b < 0.2) ? 1 : 0' -bordercolor black -border 1 -trim \
-        -format '%X %Y %w %h\n' info: 2> /dev/null)
       if ((close_first < 0)); then
         close_first=$i
         bounds_x=$bx
@@ -199,7 +195,7 @@ run_case() {
     return 1
   fi
 
-  local tolerance=$((2 * max_gap + 60))
+  local tolerance=$((2 * STEP_MS + 60))
   ((tolerance < 140)) && tolerance=140
   local close_span=$((sample_times[close_last] - sample_times[close_first]))
   local move_span=$((sample_times[move_last] - sample_times[move_first]))

@@ -7,6 +7,7 @@ readonly SHOTS="$UMBRIEL_RUNTIME_DIR/dwindle-many-close-timing"
 readonly OUT_MS=${DWINDLE_OUT_MS:-1370}
 readonly MOVE_MS=${DWINDLE_MOVE_MS:-1030}
 readonly MOVE_CURVE=${DWINDLE_MOVE_CURVE:-snappy}
+readonly SAMPLE_MS=50
 mkdir -p "$SHOTS"
 
 cat > "$UMBRIEL_RUNTIME_DIR/dwindle-transparent-close.glsl" <<'GLSL'
@@ -57,15 +58,8 @@ shader = "dwindle-move-marker.glsl"
 enabled = false
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
-
-now_ms() {
-  local stamp seconds fraction
-  read -r stamp _ < /proc/uptime
-  seconds=${stamp%%.*}
-  fraction=${stamp#*.}000
-  fraction=${fraction:0:3}
-  printf '%d\n' "$((10#$seconds * 1000 + 10#$fraction))"
-}
+# Animation time only moves by clock-advance. Samples land every SAMPLE_MS after the close.
+"$UMBRIEL" clock-freeze
 
 spawn() {
   local title=$1 color=$2
@@ -93,13 +87,22 @@ colour_bounds() {
     blue) expression='b > 0.75 && r < 0.48 && g < 0.48' ;;
     yellow) expression='r > 0.75 && g > 0.75 && b < 0.48' ;;
   esac
-  magick "$file" -alpha off -fx "($expression) ? 1 : 0" -bordercolor black -border 1 -trim \
-    -format '%[fx:page.x-1] %[fx:page.y-1] %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$file" bbox "$expression"
 }
 
 move_marker_pixels() {
-  magick "$1" -alpha off -fx 'r > 0.9 && g > 0.12 && g < 0.4 && b > 0.12 && b < 0.4 ? 1 : 0' \
-    -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count 'r > 0.9 && g > 0.12 && g < 0.4 && b > 0.12 && b < 0.4'
+}
+
+# Writes each survivor's box, one line per colour, then the move marker count for <base>.png to <base>.txt.
+measure_frame() {
+  local base=$1 colour
+  {
+    for colour in red green blue yellow; do
+      colour_bounds "$colour" "$base.png"
+    done
+    move_marker_pixels "$base.png"
+  } > "$base.txt"
 }
 
 spawn dwindle-close-root 0xFFFFFFFF
@@ -107,7 +110,8 @@ spawn dwindle-survivor-red 0xFFFF0000
 spawn dwindle-survivor-green 0xFF00FF00
 spawn dwindle-survivor-blue 0xFF0000FF
 spawn dwindle-survivor-yellow 0xFFFFFF00
-sleep 1.4
+"$UMBRIEL" clock-advance 3000
+"$UMBRIEL" settle
 
 grim "$SHOTS/before.png"
 readonly CLOSE_ID=$(window_id dwindle-close-root)
@@ -116,49 +120,44 @@ if [[ -z $CLOSE_ID ]]; then
   exit 1
 fi
 
-request_ms=$(now_ms)
 "$UMBRIEL" msg "window-close:$CLOSE_ID" > /dev/null
-frame_count=0
-deadline_ms=$((request_ms + OUT_MS + 350))
-declare -a sample_times=()
-while :; do
-  before_ms=$(now_ms)
-  ((before_ms > deadline_ms)) && break
-  grim "$SHOTS/frame-$frame_count.png"
-  after_ms=$(now_ms)
-  sample_times[$frame_count]=$(((before_ms + after_ms) / 2))
-  frame_count=$((frame_count + 1))
-  sleep 0.035
+for _ in $(seq 100); do
+  grep -q '^unmapped$' "$UMBRIEL_RUNTIME_DIR/dwindle-close-root.log" && break
+  sleep 0.025
 done
-
 if ! grep -q '^unmapped$' "$UMBRIEL_RUNTIME_DIR/dwindle-close-root.log"; then
   echo "root dwindle leaf did not unmap"
   exit 1
 fi
 
+request_ms=0
+frame_count=$(((OUT_MS + 350) / SAMPLE_MS + 1))
+declare -a sample_times=() probes=()
+# Each frame is measured in the background while the next one is captured.
+for ((i = 0; i < frame_count; i++)); do
+  ((i > 0)) && "$UMBRIEL" clock-advance "$SAMPLE_MS"
+  grim "$SHOTS/frame-$i.png"
+  sample_times[$i]=$((i * SAMPLE_MS))
+  measure_frame "$SHOTS/frame-$i" &
+  probes+=($!)
+done
+wait "${probes[@]}"
+
 readonly colours=(red green blue yellow)
 declare -A box_x=() box_y=() box_w=() box_h=()
 declare -a marker_pixels=()
-max_gap_ms=0
 for colour in "${colours[@]}"; do
   read -r box_x["$colour,before"] box_y["$colour,before"] \
     box_w["$colour,before"] box_h["$colour,before"] <<< "$(colour_bounds "$colour" "$SHOTS/before.png")"
 done
 for ((i = 0; i < frame_count; i++)); do
-  if ((i > 0)); then
-    gap_ms=$((sample_times[i] - sample_times[i - 1]))
-    ((gap_ms > max_gap_ms)) && max_gap_ms=$gap_ms
-  fi
-  for colour in "${colours[@]}"; do
-    read -r box_x["$colour,$i"] box_y["$colour,$i"] box_w["$colour,$i"] box_h["$colour,$i"] \
-      <<< "$(colour_bounds "$colour" "$SHOTS/frame-$i.png")"
-  done
-  marker_pixels[$i]=$(move_marker_pixels "$SHOTS/frame-$i.png")
+  {
+    for colour in "${colours[@]}"; do
+      read -r box_x["$colour,$i"] box_y["$colour,$i"] box_w["$colour,$i"] box_h["$colour,$i"]
+    done
+    read -r marker_pixels[$i]
+  } < "$SHOTS/frame-$i.txt"
 done
-if ((max_gap_ms > 150)); then
-  echo "screenshot cadence was too sparse for dwindle timing assertions: maximum gap ${max_gap_ms} ms"
-  exit 1
-fi
 
 marker_first=-1
 marker_last=-1
@@ -173,7 +172,7 @@ if ((marker_first < 0 || marker_last < marker_first)); then
   exit 1
 fi
 
-timing_tolerance=$((2 * max_gap_ms + 120))
+timing_tolerance=$((2 * SAMPLE_MS + 120))
 marker_start_ms=$((sample_times[marker_first] - request_ms))
 marker_end_ms=$((sample_times[marker_last] - request_ms))
 expected_end_ms=$MOVE_MS

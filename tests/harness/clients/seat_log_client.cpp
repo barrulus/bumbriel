@@ -1,5 +1,6 @@
 // Maps a plain xdg toplevel and logs every seat input event it receives, so
-// checks can assert which keys and buttons reach a focused surface. With
+// checks can assert which keys and buttons reach a focused surface, and where
+// the surface believes the pointer is when a button is pressed. With
 // EXPORT_TOPLEVEL set it also exports the toplevel through xdg-foreign and
 // prints the handle, so another client can parent a dialog to it. With
 // HOLD_RESIZE set it leaves any configure that resizes the mapped window
@@ -63,6 +64,9 @@ namespace {
     std::optional<uint32_t> heldSerial;
     PressAction pressAction = PressAction::None;
     bool actionRequested = false;
+    // Surface-local pointer position from the latest enter or motion.
+    double pointerX = 0;
+    double pointerY = 0;
   };
 
   const char* keyStateName(uint32_t value) { return value == WL_KEYBOARD_KEY_STATE_PRESSED ? "pressed" : "released"; }
@@ -114,7 +118,10 @@ namespace {
       .inactive = shortcutsInhibitorInactive,
   };
 
-  void pointerEnter(void*, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t, wl_fixed_t) {
+  void pointerEnter(void* data, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t sx, wl_fixed_t sy) {
+    auto& state = *static_cast<State*>(data);
+    state.pointerX = wl_fixed_to_double(sx);
+    state.pointerY = wl_fixed_to_double(sy);
     std::println("pointer-enter");
   }
 
@@ -122,11 +129,18 @@ namespace {
 
   // Motion is deliberately silent: a single pointer move floods the log the
   // checks parse.
-  void pointerMotion(void*, wl_pointer*, uint32_t, wl_fixed_t, wl_fixed_t) {}
+  void pointerMotion(void* data, wl_pointer*, uint32_t, wl_fixed_t sx, wl_fixed_t sy) {
+    auto& state = *static_cast<State*>(data);
+    state.pointerX = wl_fixed_to_double(sx);
+    state.pointerY = wl_fixed_to_double(sy);
+  }
 
   void pointerButton(void* data, wl_pointer*, uint32_t serial, uint32_t, uint32_t button, uint32_t buttonState) {
     auto& state = *static_cast<State*>(data);
     std::println("pointer-button code={} state={}", button, buttonStateName(buttonState));
+    if (buttonState == WL_POINTER_BUTTON_STATE_PRESSED) {
+      std::println("press-position x={:.0f} y={:.0f}", state.pointerX, state.pointerY);
+    }
     if (state.pressAction != PressAction::None
         && !state.actionRequested
         && button == kLeftButton

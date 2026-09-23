@@ -75,7 +75,7 @@ wait_for_output_origin() {
 
 sample_rgb() {
   local image=$1 x=$2 y=$3
-  magick "$image" -crop "20x20+$((x - 10))+$((y - 10))" -colorspace RGB \
+  magick "$image" -crop "20x20+$((x - 10))+$((y - 10))" \
     -format '%[fx:round(255*mean.r)] %[fx:round(255*mean.g)] %[fx:round(255*mean.b)]' info:
 }
 
@@ -100,7 +100,7 @@ assert_no_content() {
 assert_dimmed() {
   local label=$1 image=$2 red green blue
   read -r red green blue <<< "$(sample_rgb "$image" 20 20)"
-  if ((red < 30 || red > 100 || green < 30 || green > 100 || blue < 30 || blue > 100)); then
+  if ((red < 100 || red > 160 || green < 100 || green > 160 || blue < 100 || blue > 160)); then
     echo "$label backdrop is not dimmed: red=$red green=$green blue=$blue"
     return 1
   fi

@@ -425,10 +425,10 @@ if [[ $min_h -ge 600 ]]; then
 fi
 
 # column-center rejects over IPC outside scrolling without changing geometry.
-sleep 0.5
+"$UMBRIEL" settle
 dwindle_geometry=$("$UMBRIEL" windows --json | jq -c 'sort_by(.id) | map({id, x, y, w, h})')
 rejects_with "column-center" "requires the scrolling layout"
-sleep 0.2
+"$UMBRIEL" settle
 after_center=$("$UMBRIEL" windows --json | jq -c 'sort_by(.id) | map({id, x, y, w, h})')
 if [[ $after_center != "$dwindle_geometry" ]]; then
   echo "column-center changed dwindle geometry: $dwindle_geometry -> $after_center"

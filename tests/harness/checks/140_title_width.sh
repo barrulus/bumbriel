@@ -65,7 +65,7 @@ if [[ $initial_width != 942 ]]; then
 fi
 
 "$UMBRIEL" msg window-set-primary-extent:0.25 > /dev/null
-sleep 0.3
+"$UMBRIEL" settle
 manual_width=$(window_width)
 if (( manual_width >= initial_width )); then
   echo "window-set-primary-extent did not shrink helium: $("$UMBRIEL" windows --json)"

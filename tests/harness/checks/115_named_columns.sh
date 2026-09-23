@@ -82,7 +82,7 @@ for _ in $(seq 60); do
   sleep 0.1
 done
 
-sleep 0.2
+"$UMBRIEL" settle
 first_configure=$(awk -F= '/^configured-size=/{print $2; exit}' "$FIRST_LOG")
 first_arranged=$(awk -F= '/^configured-size=/{size=$2} END {print size}' "$FIRST_LOG")
 if [[ $first_configure != "$first_arranged" ]]; then

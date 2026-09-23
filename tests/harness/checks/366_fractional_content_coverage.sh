@@ -50,7 +50,7 @@ if ! grep -q '^mapped ' "$CLIENT_LOG"; then
   echo "fractional content client never mapped: $(cat "$CLIENT_LOG")"
   exit 1
 fi
-sleep 0.3
+"$UMBRIEL" settle
 
 # The client answers the unsized initial configure with its own size and only
 # learns the layout's size once mapped, so the last report is the one that

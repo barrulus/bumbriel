@@ -76,10 +76,13 @@ is_black() {
 }
 
 spawn tiled-close-survivor 0xFFFF0000
-sleep 0.25
+"$UMBRIEL" settle
 spawn tiled-close-static 0xFF0000FF
 closing=$window
-sleep 0.25
+"$UMBRIEL" settle
+
+# Animation time only moves by clock-advance: samples land 800 ms into each 2000 ms windows_out timeline.
+"$UMBRIEL" clock-freeze
 
 id=$(jq -r .id <<< "$closing")
 x=$(jq -r .x <<< "$closing")
@@ -110,7 +113,7 @@ near_x=$((x + w / 4))
 far_x=$((x + 3 * w / 4))
 mid_y=$((y + h / 2))
 
-sleep 0.8
+"$UMBRIEL" clock-advance 800
 grim "$IMAGE"
 read -r near_red near_green near_blue < <(sample "$near_x" "$mid_y")
 read -r far_red far_green far_blue < <(sample "$far_x" "$mid_y")
@@ -123,7 +126,8 @@ if ! is_blue "$far_red" "$far_green" "$far_blue"; then
   exit 1
 fi
 
-sleep 1.3
+"$UMBRIEL" clock-advance 2000
+"$UMBRIEL" settle
 grim "$IMAGE"
 read -r near_red near_green near_blue < <(sample "$near_x" "$mid_y")
 read -r far_red far_green far_blue < <(sample "$far_x" "$mid_y")
@@ -168,7 +172,7 @@ near_x=$((x + w / 4))
 far_x=$((x + 3 * w / 4))
 mid_y=$((y + h / 2))
 
-sleep 0.8
+"$UMBRIEL" clock-advance 800
 grim "$IMAGE"
 read -r near_red near_green near_blue < <(sample "$near_x" "$mid_y")
 read -r far_red far_green far_blue < <(sample "$far_x" "$mid_y")
@@ -178,7 +182,8 @@ if ! is_red "$near_red" "$near_green" "$near_blue" \
   exit 1
 fi
 
-sleep 1.3
+"$UMBRIEL" clock-advance 2000
+"$UMBRIEL" settle
 grim "$IMAGE"
 read -r near_red near_green near_blue < <(sample "$near_x" "$mid_y")
 read -r far_red far_green far_blue < <(sample "$far_x" "$mid_y")
