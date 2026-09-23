@@ -11,6 +11,7 @@
 namespace umbriel {
   void readDecorationShader(Section& section, DecorationShaderConfig& target) {
     section.text("pool", target.pool)
+        .text("overlay", target.overlay)
         .boolean("enabled", target.enabled)
         .boolean("animated", target.animated)
         .real("speed", 0.0, 10.0, target.speed)
@@ -116,8 +117,11 @@ namespace umbriel {
           preset.name = std::string(name.str());
           Section keys(*table, "shaders.preset." + preset.name, diagnostics);
           keys.text("scope", preset.scope).integer("cursor_radius", 0, 4096, preset.cursorRadius);
-          if (preset.scope != "window" && preset.scope != "output" && preset.scope != "global") {
-            warn(node, "shader preset scope must be window, output or global; using global");
+          if (preset.scope != "window"
+              && preset.scope != "output"
+              && preset.scope != "global"
+              && preset.scope != "border") {
+            warn(node, "shader preset scope must be window, output, global or border; using global");
             preset.scope = "global";
           }
           const auto* passes = keys.take("passes");

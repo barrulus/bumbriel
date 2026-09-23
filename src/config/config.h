@@ -205,6 +205,7 @@ namespace umbriel {
   }
   struct DecorationShaderConfig {
     std::string pool;
+    std::string overlay;
     bool enabled = true;
     bool animated = true;
     double speed = 1.0;

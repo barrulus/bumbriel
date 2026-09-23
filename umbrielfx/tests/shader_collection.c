@@ -366,7 +366,7 @@ int main(int argc, char** argv) {
       fx_animation_shader_unref(shader);
     }
   }
-  const char* rings[] = {"pulse", "rainbow-ripple", "lightning", "fuse"};
+  const char* rings[] = {"pulse", "rainbow-ripple", "lightning", "fuse", "neon-bleed", "portal-lava"};
   for (size_t i = 0; ok && i < sizeof(rings) / sizeof(rings[0]); i++) {
     char name[128];
     snprintf(name, sizeof(name), "rings/%s.glsl", rings[i]);
@@ -396,7 +396,7 @@ int main(int argc, char** argv) {
     }
     if (ok)
       ok = write_frame(rings[i], 0, baseline, SIZE, SIZE) && write_frame(rings[i], 1, pixels, SIZE, SIZE);
-    if (ok && i >= 2) {
+    if (ok && (i == 2 || i == 3)) {
       const char* constant = i == 2 ? "const int LIGHTNING_COUNT = 1;" : "const int EMBER_COUNT = 1;";
       const char* found = strstr(source, constant);
       ok = check(found != NULL, "editable head count constant exists");

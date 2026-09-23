@@ -170,6 +170,7 @@ namespace umbriel {
       wlr_scene_tree* tree = nullptr;
       wlr_scene_border* border = nullptr;
       wlr_scene_rect* shader = nullptr;
+      wlr_scene_rect* borderOverlay = nullptr;
       SurfaceBlur blur;
       // Scaled copy of the view's drop shadow. Its tree lives under `tree` or, for a view whose shadow the workspace
       // pools below every tile, under the output's `tileShadows`.

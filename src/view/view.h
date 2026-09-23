@@ -616,6 +616,8 @@ namespace umbriel {
     std::shared_ptr<ShaderPoolLease> m_borderLease;
     wlr_scene_rect* m_shaderRect = nullptr;
     wlr_scene_rect* m_captureShaderRect = nullptr;
+    wlr_scene_rect* m_borderOverlayRect = nullptr;
+    wlr_scene_rect* m_captureBorderOverlayRect = nullptr;
     ViewPresentation m_presentation;
     ResizeCrossfade m_resizeCrossfade;
     wlr_box m_presentedBox{};

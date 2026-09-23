@@ -707,8 +707,7 @@ namespace umbriel {
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
     m_fadeAlpha = std::clamp(alpha, 0.0F, 1.0F);
     m_decoration.setLightSuppressed(m_fade.animating());
-    if (m_shaderRect != nullptr)
-      wlr_scene_node_set_enabled(&m_shaderRect->node, !m_fade.animating() && windowShader() != nullptr);
+    refreshWindowShader();
     float effective = effectiveOpacity();
     wlr_scene_node_for_each_buffer(&m_contentTree->node, setCompositorOpacity, &effective);
     m_resizeCrossfade.applyOpacity(effective);
@@ -2034,6 +2033,7 @@ namespace umbriel {
     const bool focusChanged = m_borderFocusedState != focused;
     m_borderFocusedState = focused;
     m_decoration.setShaderFocused(focused && !m_urgent);
+    refreshWindowShader();
 
     const auto& animation = config().animation;
     const auto& dim = animation.dimUnfocused;
@@ -2083,6 +2083,7 @@ namespace umbriel {
     }
     m_urgent = urgent;
     m_decoration.setShaderFocused(m_borderFocusedState && !urgent);
+    refreshWindowShader();
     if (m_workspace != nullptr) {
       m_workspace->updateUrgent();
     }
@@ -2206,6 +2207,8 @@ namespace umbriel {
     refreshWindowShader();
     if (m_shaderRect != nullptr)
       wlr_scene_rect_set_size(m_shaderRect, contentWidth, contentHeight);
+    if (m_borderOverlayRect != nullptr)
+      wlr_scene_rect_set_size(m_borderOverlayRect, contentWidth, contentHeight);
   }
 
   namespace {
@@ -2276,29 +2279,37 @@ namespace umbriel {
   void View::refreshWindowShader() {
     if (m_contentTree == nullptr)
       return;
-    auto* chain = windowShader();
-    if (m_shaderRect == nullptr && chain != nullptr)
-      m_shaderRect = wlr_scene_rect_create(m_contentTree, 0, 0, kTransparent.data());
-    if (m_captureScene != nullptr && m_captureShaderRect == nullptr && chain != nullptr)
-      m_captureShaderRect = wlr_scene_rect_create(&m_captureScene->tree, 0, 0, kTransparent.data());
-    if (m_captureShaderRect != nullptr) {
-      const auto captureGeometry = committedContentBox();
-      wlr_scene_rect_set_postprocess(m_captureShaderRect, config().shaders.inCapture ? chain : nullptr);
-      wlr_scene_node_set_enabled(&m_captureShaderRect->node, config().shaders.inCapture && chain != nullptr);
-      wlr_scene_rect_set_size(m_captureShaderRect, captureGeometry.width, captureGeometry.height);
-      wlr_scene_node_raise_to_top(&m_captureShaderRect->node);
-    }
-    if (m_shaderRect == nullptr)
-      return;
-    wlr_scene_rect_set_postprocess(m_shaderRect, chain);
-    wlr_scene_node_set_enabled(&m_shaderRect->node, chain != nullptr && !m_fade.animating());
+    const auto settings = borderShaderSettings();
+    auto* overlay = m_borderFocusedState && !m_urgent && decorated() && settings.enabled
+        ? postprocessShader(settings.overlay)
+        : nullptr;
     const auto geometry = committedContentBox();
-    wlr_scene_rect_set_size(m_shaderRect, geometry.width, geometry.height);
-    wlr_scene_rect_set_corner_radius(
-        m_shaderRect, decorated() ? nestedRadius(config().appearance.cornerRadius, borderInset()) : 0
-    );
-    if (m_decoration.borderTree() != nullptr)
-      wlr_scene_node_place_below(&m_shaderRect->node, &m_decoration.borderTree()->node);
+    const auto update = [&](wlr_scene_tree* parent, wlr_scene_rect*& rect, fx_postprocess_chain* chain, bool capture) {
+      if (parent == nullptr)
+        return;
+      if (capture && !config().shaders.inCapture)
+        chain = nullptr;
+      if (rect == nullptr && chain != nullptr)
+        rect = wlr_scene_rect_create(parent, 0, 0, kTransparent.data());
+      if (rect == nullptr)
+        return;
+      wlr_scene_rect_set_postprocess(rect, chain);
+      wlr_scene_node_set_enabled(&rect->node, chain != nullptr && (capture || !m_fade.animating()));
+      wlr_scene_rect_set_size(rect, geometry.width, geometry.height);
+      wlr_scene_rect_set_corner_radius(rect, surfaceRadius());
+      if (!capture && m_decoration.borderTree() != nullptr)
+        wlr_scene_node_place_below(&rect->node, &m_decoration.borderTree()->node);
+      else
+        wlr_scene_node_raise_to_top(&rect->node);
+    };
+    // Each pass samples the result below it: content filter, inward ring, then
+    // the external border. Keep the same order in isolated window captures.
+    auto* chain = windowShader();
+    update(m_contentTree, m_shaderRect, chain, false);
+    update(m_contentTree, m_borderOverlayRect, overlay, false);
+    auto* captureTree = m_captureScene != nullptr ? &m_captureScene->tree : nullptr;
+    update(captureTree, m_captureShaderRect, chain, true);
+    update(captureTree, m_captureBorderOverlayRect, overlay, true);
   }
 
   void View::refreshConfigChrome() {
