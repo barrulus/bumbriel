@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# A tiled opener owns its final slot and its longer windows_in fade while established neighbours reflow on the shorter
-# windows_move timeline. The peer must already be settled while the opener is still visibly mid-fade.
+# A tiled opener starts its windows_in in its final slot on the same tick established neighbours begin their
+# windows_move reflow. Both clocks run independently: the opener is already visible while the neighbour is mid-reflow,
+# and still mid-fade after that shorter reflow has settled. An opener that takes the whole width through
+# default_maximize reflows them on that same clock.
 set -euo pipefail
 
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/tiled-open-reflow.png"
@@ -44,8 +46,12 @@ enabled = false
 
 [animation.windows_move]
 enabled = true
-duration_ms = 150
+duration_ms = 600
 curve = "linear"
+
+[[window_rule]]
+match.title = "^tiled-maximized-opener$"
+default_maximize = true
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 
@@ -86,11 +92,15 @@ opener=$window
 # the output's right edge, so derive a point well inside its final slot from that edge.
 opener_x=$(jq -r '.x + ((1280 - .x) / 2 | floor)' <<< "$opener")
 opener_y=$(jq -r '.y + (((720 - .y) * 7 / 8) | floor)' <<< "$opener")
-sleep 0.35
+sleep 0.3
 early=$(red_width)
 early_blue=$(blue_at "$opener_x" "$opener_y")
 
-sleep 1.4
+sleep 0.6
+mid=$(red_width)
+mid_blue=$(blue_at "$opener_x" "$opener_y")
+
+sleep 1.1
 final=$(red_width)
 final_blue=$(blue_at "$opener_x" "$opener_y")
 
@@ -98,13 +108,37 @@ if ((before - final < 300)); then
   echo "opening a second tile did not produce a measurable reflow: before=$before final=$final"
   exit 1
 fi
-if ((early < final - 20 || early > final + 20)); then
-  echo "established tile did not finish on windows_move timing: before=$before early=$early final=$final"
+if ((early <= final + 20 || early >= before - 20)); then
+  echo "survivor was not mid-windows_move at 0.3 s: before=$before early=$early final=$final"
   exit 1
 fi
-if ! ((early_blue > 10 && early_blue < 180 && final_blue > 220)); then
-  echo "opener did not retain its independent windows_in fade: early_blue=$early_blue final_blue=$final_blue"
+if ! ((early_blue >= 15 && early_blue <= 110)); then
+  echo "opener did not start windows_in alongside the neighbour reflow: $early_blue"
+  exit 1
+fi
+if ((mid < final - 20 || mid > final + 20)); then
+  echo "survivor had not settled on its own windows_move clock: mid=$mid final=$final"
+  exit 1
+fi
+if ! ((mid_blue > early_blue + 40 && mid_blue <= 220 && final_blue > 220)); then
+  echo "opener windows_in did not keep its own clock past the reflow: early=$early_blue mid=$mid_blue final=$final_blue"
   exit 1
 fi
 
-echo "established tile settled on windows_move while the opener continued its independent windows_in fade"
+settled=$(red_width)
+spawn tiled-maximized-opener 0xFF00FF00
+sleep 0.3
+maximized_early=$(red_width)
+sleep 1.6
+maximized_final=$(red_width)
+
+if ((settled - maximized_final < 200)); then
+  echo "the maximized opener did not take width from the survivor: ${settled} -> ${maximized_final}"
+  exit 1
+fi
+if ((maximized_early <= maximized_final + 20 || maximized_early >= settled - 20)); then
+  echo "the survivor snapped instead of reflowing under the maximized opener: ${settled} -> ${maximized_early} -> ${maximized_final}"
+  exit 1
+fi
+
+echo "tiled opener ran windows_in in its final slot alongside the neighbour reflow, and a maximized opener reflowed that neighbour on windows_move too"

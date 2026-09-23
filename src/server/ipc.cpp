@@ -69,7 +69,7 @@ namespace umbriel {
       const Overview* overview = server.overview();
       return nlohmann::json{
           {"event", "overview"},
-          {"data", {{"open", overview != nullptr && overview->active()}}},
+          {"data", {{"open", overview != nullptr && overview->interactive()}}},
       };
     }
 

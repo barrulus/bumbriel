@@ -144,6 +144,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [output.HEADLESS-1]
 mode = "2560x1440"

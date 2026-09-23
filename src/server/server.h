@@ -1,5 +1,6 @@
 #pragma once
 #include "core/animation.h"
+#include "core/application_scope.h"
 #include "core/dirty.h"
 #include "input/modifier_tap.h"
 #include "input/surface_layouts.h"
@@ -157,7 +158,6 @@ namespace umbriel {
     void updateColorPreferences();
     [[nodiscard]] wlr_scene_tree* xdgTree() const { return m_xdgTree; }
     [[nodiscard]] wlr_scene_tree* scratchpadTree() const { return m_scratchpadTree; }
-    [[nodiscard]] wlr_scene_tree* scratchpadShadowTree() const { return m_scratchpadShadowTree; }
     [[nodiscard]] ScratchpadManager* scratchpadManager() const { return m_scratchpadManager.get(); }
     // Between layer-shell background and bottom: overview wallpaper blur renders
     // before bottom-layer surfaces so they remain sharp.
@@ -169,7 +169,6 @@ namespace umbriel {
     [[nodiscard]] ConfigBanner* configBanner() const { return m_configBanner.get(); }
     [[nodiscard]] Cheatsheet* cheatsheet() const { return m_cheatsheet.get(); }
     [[nodiscard]] QuitConfirm* quitConfirm() const { return m_quitConfirm.get(); }
-    [[nodiscard]] wlr_scene_tree* dragShadowTree() const { return m_dragShadowTree; }
     // Above xdg windows, below layer-shell top/overlay (drag/drop insert hint).
     [[nodiscard]] wlr_scene_tree* dragTree() const { return m_dragTree; }
     // Parent for wl_data_device drag icons; moved to the cursor while a drag is active.
@@ -177,7 +176,6 @@ namespace umbriel {
     // Above top panels, below overlay/lock (fullscreen xdg views).
     [[nodiscard]] wlr_scene_tree* fullscreenTree() const { return m_fullscreenTree; }
     [[nodiscard]] wlr_scene_tree* pinnedTree() const { return m_pinnedTree; }
-    [[nodiscard]] wlr_scene_tree* pinnedShadowTree() const { return m_pinnedShadowTree; }
     [[nodiscard]] wlr_scene_tree* imPopupTree() const { return m_imPopupTree; }
     [[nodiscard]] wlr_scene_tree* lockTree() const { return m_lockTree; }
     [[nodiscard]] wlr_scene_tree* shellLayerTree(uint32_t layer) const;
@@ -361,6 +359,7 @@ namespace umbriel {
       int durationMs = 0;
       AnimationCurve curve{.easing = Easing::EaseOutCubic};
       std::string style = "fade";
+      double scale = 0.8;
       AnimationEvent event = AnimationEvent::WindowsOut;
     };
     // `content` is the subtree holding the copied buffers (pass `tree` when there is no separate content tree). A
@@ -370,13 +369,15 @@ namespace umbriel {
         Output* output, wlr_scene_tree* tree, wlr_scene_tree* content, std::vector<BorderSnapshot> borders,
         const wlr_box& box, std::optional<CloseSnapshotOverrides> overrides = std::nullopt, ShadowSnapshot shadow = {}
     );
-    // Limit a snapshot to the part of its captured canvas still owned by a closing tile. The shader canvas and copied
-    // buffers remain fixed; only the final output is masked.
-    void presentCloseSnapshotMask(CloseSnapshotId id, const wlr_box& box, int canvasX, int canvasY, bool constrained);
-    // Current output-root mask, or nullopt after the snapshot has been reaped.
-    [[nodiscard]] std::optional<wlr_box> closeSnapshotBox(CloseSnapshotId id) const;
+    // Place a snapshot's captured box at a canvas origin in output-root coordinates, or hide it while its workspace
+    // is not showing.
+    void presentCloseSnapshot(CloseSnapshotId id, int canvasX, int canvasY, bool visible);
+    // False once the snapshot has been reaped.
+    [[nodiscard]] bool closeSnapshotAlive(CloseSnapshotId id) const;
 
   private:
+    enum class SpawnClass { Application, SessionHelper };
+
     static void
     onProtocolMessage(void* data, wl_protocol_logger_type direction, const wl_protocol_logger_message* message);
     static void onNewOutput(wl_listener* listener, void* data);
@@ -423,6 +424,8 @@ namespace umbriel {
     static void onIpcWindowsIdle(void* data);
     static void onIpcWorkspacesIdle(void* data);
     static void onDisplacedRestoreIdle(void* data);
+
+    void spawnCommand(const char* command, const char* description, bool withActivationToken, SpawnClass spawnClass);
 
     void trackActivationToken(wlr_xdg_activation_token_v1* token, bool compositorIssued);
 
@@ -563,15 +566,11 @@ namespace umbriel {
     wlr_scene_tree* m_shellLayerTrees[kLayerCount]{};
     wlr_scene_tree* m_xdgTree = nullptr;
     wlr_scene_tree* m_scratchpadTree = nullptr;
-    wlr_scene_tree* m_scratchpadShadowTree = nullptr;
-    wlr_scene_tree* m_scratchpadContentTree = nullptr;
     wlr_scene_tree* m_overviewBlurTree = nullptr;
     wlr_scene_tree* m_overviewTree = nullptr;
-    wlr_scene_tree* m_dragShadowTree = nullptr;
     wlr_scene_tree* m_dragTree = nullptr;
     wlr_scene_tree* m_dragIconTree = nullptr;
     wlr_scene_tree* m_fullscreenTree = nullptr;
-    wlr_scene_tree* m_pinnedShadowTree = nullptr;
     wlr_scene_tree* m_pinnedTree = nullptr;
     wlr_scene_tree* m_imPopupTree = nullptr;
     wlr_scene_tree* m_lockTree = nullptr;
@@ -604,13 +603,14 @@ namespace umbriel {
       CloseSnapshot(
           Server& server, CloseSnapshotId id, Output* output, wlr_scene_tree* tree, wlr_scene_tree* content,
           std::vector<BorderSnapshot> borders, const wlr_box& box, int durationMs, const AnimationCurve& curve,
-          std::string_view style, AnimationEvent event, ShadowSnapshot shadow
+          std::string_view style, double scale, AnimationEvent event, ShadowSnapshot shadow
       );
       ~CloseSnapshot() override;
 
       [[nodiscard]] CloseSnapshotId id() const { return m_id; }
-      [[nodiscard]] const wlr_box& box() const { return m_box; }
-      void presentMask(const wlr_box& box, int canvasX, int canvasY, bool constrained);
+      // Place the captured box at a canvas origin in output-root coordinates, or hide it while its workspace is not
+      // showing.
+      void present(int canvasX, int canvasY, bool visible);
 
       [[nodiscard]] AnimationPhase animationPhase() const override { return AnimationPhase::Overlays; }
       bool tickAnimations(uint64_t nowMsec) override;
@@ -618,38 +618,39 @@ namespace umbriel {
       [[nodiscard]] bool animatesOn(const Output* output) const override { return m_output == output; }
 
     private:
-      void applySlide();
-      void applyMask();
+      void applyPresentation();
+      void applyShrink(int width, int height);
 
       Server* m_server = nullptr;
       CloseSnapshotId m_id = kInvalidCloseSnapshot;
       wlr_scene_tree* m_tree = nullptr;
+      wlr_scene_tree* m_content = nullptr;
       Output* m_output = nullptr;
       AnimatedValue m_alpha;
       AnimationEvent m_event = AnimationEvent::WindowsOut;
       // Slide style: vertical offset of the whole snapshot, 0 to 80.
       AnimatedValue m_slide;
-      wlr_box m_from{};
-      wlr_box m_box{};
+      wlr_box m_captured{};
       int m_canvasX = 0;
       int m_canvasY = 0;
-      bool m_maskConstrained = false;
-      struct MaskInsets {
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
-      };
-      MaskInsets m_borderMaskInsets;
-      MaskInsets m_shadowMaskInsets;
-      // Each copied buffer and its captured opacity.
+      bool m_visible = true;
+      // popin/zoom end scale; 1.0 = no shrink.
+      double m_shrinkTo = 1.0;
+      // Each copied buffer with its captured opacity, position and size relative to the content tree.
       struct Buffer {
         wlr_scene_buffer* node = nullptr;
         float baseOpacity = 1.0F;
+        int x = 0;
+        int y = 0;
+        int width = 0;
+        int height = 0;
       };
       std::vector<Buffer> m_buffers;
       std::vector<BorderSnapshot> m_borders;
       ShadowSnapshot m_shadow;
+      int m_shadowWidth = 0;
+      int m_shadowHeight = 0;
+      wlr_box m_shadowHole{};
     };
     // unique_ptr because the registry holds raw pointers to these: a vector of
     // values would move them out from under it on reallocation.
@@ -677,7 +678,14 @@ namespace umbriel {
 
     bool m_nested = false;
     bool m_stopping = false;
+    bool m_applicationScopesRequired = false;
     std::string m_socketName;
+    std::string m_systemdRunExecutable;
+    std::string m_applicationScopePartOfProperty;
+    std::string m_applicationScopeBindsToProperty;
+    SystemdControlEnvironment m_systemdControlEnvironment;
+    ApplicationScopeEnvironmentArguments m_applicationScopeEnvironmentArguments;
+    uint64_t m_nextApplicationScopeId = 1;
 
     std::unique_ptr<XwaylandSupervisor> m_xwayland;
     wl_event_source* m_backgroundFrameTimer = nullptr;

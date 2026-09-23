@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Focus changes must interpolate each border from its current color instead of
-# snapping it to the new focus color before the animation is retargeted.
+# snapping it to the new focus color before the animation is retargeted. An
+# overview round trip must reveal the borders settled rather than replaying.
 set -euo pipefail
 
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/border-focus-transition.png"
+readonly LAYER_CLIENT="${UMBRIEL_LAYER_CLIENT:-./build-debug/tests/layer-client}"
 
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
@@ -29,6 +31,8 @@ enabled = false
 enabled = false
 [animation.border]
 enabled = true
+[animation.overview]
+duration_ms = 400
 
 [[window_rule]]
 match.title = "^focus-border-a$"
@@ -96,4 +100,32 @@ grim "$IMAGE"
 assert_color focus-border-a mixed
 assert_color focus-border-b mixed
 
-echo "focus border colors interpolate during focus changes"
+# Opening the overview clears focus on the hidden windows and closing restores it; the reveal must show the settled
+# result instead of the transition.
+overview_round_trip() {
+  sleep 1.1
+  "$UMBRIEL" msg overview-open > /dev/null
+  sleep 0.6
+  "$UMBRIEL" msg overview-close > /dev/null
+  sleep 0.6
+  grim "$IMAGE"
+  assert_color focus-border-a blue
+  assert_color focus-border-b red
+}
+overview_round_trip
+
+# A shell's overview-scoped capture layer holds the keyboard exclusively while the overview is open and is dropped
+# on the closed event. That event must go out as the close starts, so focus returns while the windows are still
+# hidden.
+"$UMBRIEL" subscribe overview | while read -r event; do
+  if [[ $(jq -r .data.open <<< "$event") == true ]]; then
+    "$LAYER_CLIENT" HEADLESS-1 0 bottom-layer keyboard=exclusive > /dev/null 2>&1 &
+    capture=$!
+  elif [[ -n ${capture:-} ]]; then
+    kill "$capture"
+    capture=
+  fi
+done &
+overview_round_trip
+
+echo "focus border colors interpolate during focus changes and settle across the overview"

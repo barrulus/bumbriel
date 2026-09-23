@@ -18,6 +18,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [colors.border]
 focused = "#FF0000"

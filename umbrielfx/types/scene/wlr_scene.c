@@ -3606,11 +3606,18 @@ static bool render_animation_shadow(struct render_list_entry* entry, const struc
   struct wlr_scene_node* stop = source->parent != NULL ? &source->parent->node : NULL;
   // Ancestor (workspace/overview) shaders already enclose both window and
   // shadow. Capture only the window's own effects, never those ancestors twice.
+  // Shape-preserving effects leave the analytic shadow correct as it is.
   bool animated = false;
   struct scene_animation* effect;
   wl_list_for_each(effect, &scene_animations, link) {
-    if (node_belongs_to(effect->node, source) && outer_animation(effect->node, stop, pass->buffer->renderer) != NULL) {
-      animated = true;
+    if (!node_belongs_to(effect->node, source)) {
+      continue;
+    }
+    for (unsigned i = 0; i < FX_ANIMATION_SLOTS && !animated; i++) {
+      const struct fx_animation_shader* shader = effect->shaders[i];
+      animated = shader != NULL && shader->renderer == pass->buffer->renderer && !shader->shape_preserving;
+    }
+    if (animated) {
       break;
     }
   }

@@ -33,6 +33,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [layout]
 mode = "scrolling"

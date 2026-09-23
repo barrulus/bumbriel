@@ -70,6 +70,21 @@ or workspace selection replaces the card that initiated the close as the
 landing target. Workspace retargets use a separate animation value, so repeated
 navigation cannot extend the zoom deadline.
 
+A spring `curve` runs the opening and closing zoom through
+`AnimatedValue::settleSpring`, and `Overview::tickAnimations` ends it with
+`finishSpringTail` once its remaining motion is under half a logical pixel.
+`Overview::zoomPixelsPerUnit` supplies that scale: half the largest output
+extent per unit of zoom for a close, plus one row step for an open, whose end
+shows the neighbouring rows.
+
+Window shadows and pinned windows fade with `Overview::desktopChromeAlpha`, from
+1 on the desktop to 0 at the first 10% of overview progress. Each card draws a
+copy of its view's shadow node scaled by the zoom, kept in the output's
+`tileShadows` tree when the workspace pools that shadow below its tiles and
+under the card otherwise. Pinned windows, which have no card, stay live over the
+filmstrip through `View::setOverviewOpacity`. A close therefore restores both
+while the zoom is still settling, and the teardown swap changes no pixel.
+
 Unmap is the one transition that cannot remain live because the client buffer
 may disappear immediately. Before removing an unmapped card, the overview
 freezes its already-scaled buffers and borders into a scene snapshot. That tree

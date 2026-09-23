@@ -41,6 +41,7 @@ default_extent_fraction = 0.6
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [input.focus]
 follows_mouse = true

@@ -53,6 +53,7 @@ default_extent_fraction = 0.5
 
 [animation]
 duration_ms = 1
+curve = "linear"
 
 [input.focus]
 follows_mouse = true
@@ -79,7 +80,8 @@ wait_for_configured_state fullscreen
 wait_for_query \
   '[.[] | select(.title == "client-fullscreen-left" and .active)] | length == 1' \
   "client fullscreen request changed focus"
-
+# Entering fullscreen grows the window over the output; the pointer must not cross the area it grows into first.
+sleep 0.1
 # The fullscreen client still owns this position. Once it leaves fullscreen,
 # the right tile appears beneath the unchanged pointer without a geometric
 # crossing between the next motion's old and new coordinates.

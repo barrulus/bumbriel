@@ -64,6 +64,61 @@ UMBRIEL_TEST(animatedValueReachesItsTargetOnTheConfiguredTimeline) {
   CHECK(!value.animating());
 }
 
+UMBRIEL_TEST(monotonicEasingPreservesSafeCurvesAndProjectsOvershootAcrossTheFullTimeline) {
+  const umbriel::AnimationCurve ordinary{
+      .easing = umbriel::Easing::CustomBezier,
+      .bezier = {.x1 = 0.25, .y1 = 0.46, .x2 = 0.35, .y2 = 1.0},
+  };
+  const umbriel::MonotonicEasing ordinaryMotion{ordinary};
+  for (int step = 0; step <= 20; ++step) {
+    const double linear = static_cast<double>(step) / 20.0;
+    CHECK(std::abs(ordinaryMotion.value(linear) - umbriel::evaluateCurve(ordinary, linear)) < 0.000001);
+  }
+
+  const umbriel::AnimationCurve snappy{.easing = umbriel::Easing::Snappy};
+  const umbriel::MonotonicEasing safeMotion{snappy};
+  double previous = 0.0;
+  for (int step = 0; step <= 100; ++step) {
+    const double linear = static_cast<double>(step) / 100.0;
+    const double progress = safeMotion.value(linear);
+    CHECK(progress >= previous);
+    CHECK(progress >= 0.0);
+    CHECK(progress <= 1.0);
+    if (step < 100) {
+      CHECK(progress < 1.0);
+    }
+    previous = progress;
+  }
+  CHECK(safeMotion.value(0.75) < safeMotion.value(1.0));
+}
+
+UMBRIEL_TEST(monotonicEasingBoundsReversingPresets) {
+  for (const umbriel::Easing easing : {
+           umbriel::Easing::EaseInBack,
+           umbriel::Easing::EaseOutBack,
+           umbriel::Easing::EaseInOutBack,
+           umbriel::Easing::EaseInElastic,
+           umbriel::Easing::EaseOutElastic,
+           umbriel::Easing::EaseInOutElastic,
+           umbriel::Easing::EaseInBounce,
+           umbriel::Easing::EaseOutBounce,
+           umbriel::Easing::EaseInOutBounce,
+           umbriel::Easing::Spring,
+       }) {
+    const umbriel::MonotonicEasing motion{umbriel::AnimationCurve{.easing = easing}};
+    double previous = 0.0;
+    for (int step = 0; step <= 200; ++step) {
+      const double progress = motion.value(static_cast<double>(step) / 200.0);
+      CHECK(progress >= previous);
+      CHECK(progress >= 0.0);
+      CHECK(progress <= 1.0);
+      previous = progress;
+    }
+    CHECK_EQ(motion.value(0.0), 0.0);
+    CHECK_EQ(motion.value(1.0), 1.0);
+  }
+}
+
 UMBRIEL_TEST(animationTransitionIdentityIsStableAndRefreshesOnRetarget) {
   umbriel::AnimatedValue value{10.0};
   CHECK_EQ(value.transitionId(), uint64_t{0});
@@ -143,6 +198,59 @@ UMBRIEL_TEST(springSettleStartsFromTheReleaseVelocityAndStops) {
   value.translate(-1.0);
   CHECK_EQ(value.target(), 1.0);
   CHECK_EQ(value.current(), 0.0);
+}
+
+UMBRIEL_TEST(springCurveTimescaleComesFromItsParameters) {
+  const auto stiff = umbriel::CurveRegistry::parse("spring:1,4000");
+  const auto soft = umbriel::CurveRegistry::parse("spring:1,250");
+  CHECK(stiff.has_value());
+  CHECK(soft.has_value());
+  if (!stiff || !soft) {
+    return;
+  }
+
+  umbriel::AnimatedValue fast;
+  fast.retarget(1.0, 5000, *stiff);
+  umbriel::AnimatedValue slow;
+  slow.retarget(1.0, 5000, *soft);
+
+  // duration_ms never reaches a spring; the sixteenfold stiffness quarters the settle time.
+  CHECK(fast.durationMs() != 5000);
+  CHECK(slow.durationMs() != 5000);
+  const double stiffnessRatio = static_cast<double>(slow.durationMs()) / static_cast<double>(fast.durationMs());
+  CHECK(std::abs(stiffnessRatio - 4.0) < 0.05);
+
+  // Mass is the other half of the timescale: four times the mass takes twice as long.
+  const int light = umbriel::springDurationMs({.damping = 1.0, .stiffness = 1000.0, .mass = 1.0});
+  const int heavy = umbriel::springDurationMs({.damping = 1.0, .stiffness = 1000.0, .mass = 4.0});
+  const double massRatio = static_cast<double>(heavy) / static_cast<double>(light);
+  CHECK(std::abs(massRatio - 2.0) < 0.05);
+
+  // Damping shapes the response instead: it must not leave the timescale untouched either.
+  CHECK(umbriel::springDurationMs({.damping = 2.0, .stiffness = 1000.0, .mass = 1.0}) > light);
+}
+
+UMBRIEL_TEST(springCurveSettlesOnItsTargetBeforeTheTimelineEnds) {
+  struct Case {
+    const char* text;
+    bool overshoots;
+  };
+  // Underdamped, critically damped, and overdamped all have to be within a tenth of a percent of the target on the
+  // last frame, otherwise the timeline's final snap is a visible jump.
+  for (const Case& probe : {Case{"spring:0.4,600", true}, Case{"spring:1,600", false}, Case{"spring:2,600", false}}) {
+    const auto curve = umbriel::CurveRegistry::parse(probe.text);
+    CHECK(curve.has_value());
+    if (!curve) {
+      continue;
+    }
+    CHECK(std::abs(umbriel::applyEasing(*curve, 0.999) - 1.0) < 0.001);
+
+    double peak = 0.0;
+    for (int sample = 0; sample <= 1000; ++sample) {
+      peak = std::max(peak, umbriel::applyEasing(*curve, static_cast<double>(sample) / 1000.0));
+    }
+    CHECK_EQ(peak > 1.001, probe.overshoots);
+  }
 }
 
 UMBRIEL_TEST(overdampedSpringVelocityMatchesItsPositionDerivative) {

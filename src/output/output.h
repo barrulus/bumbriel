@@ -52,7 +52,6 @@ namespace umbriel {
     [[nodiscard]] wlr_scene_tree* viewRoot() const { return m_viewRoot; }
     [[nodiscard]] wlr_scene_tree* fullscreenRoot() const { return m_fullscreenRoot; }
     [[nodiscard]] wlr_scene_tree* pinnedRoot() const { return m_pinnedRoot; }
-    [[nodiscard]] wlr_scene_tree* pinnedShadowRoot() const { return m_pinnedShadowRoot; }
     // Full logical box at the live layout origin, or the last arranged origin while temporarily removed.
     [[nodiscard]] wlr_box layoutBox() const;
     [[nodiscard]] wlr_box usableArea() const;
@@ -154,7 +153,6 @@ namespace umbriel {
     wlr_scene_tree* m_viewRoot = nullptr;
     wlr_scene_tree* m_fullscreenRoot = nullptr;
     wlr_scene_tree* m_pinnedRoot = nullptr;
-    wlr_scene_tree* m_pinnedShadowRoot = nullptr;
     wlr_scene_optimized_blur* m_optimizedBlur = nullptr;
     std::unique_ptr<WorkspaceGroup> m_workspaceGroup;
     wlr_box m_localUsableArea{};
