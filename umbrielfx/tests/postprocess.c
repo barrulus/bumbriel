@@ -288,12 +288,14 @@ int main(int argc, char** argv) {
       "cursor/spotlight",
       "cursor/comet",
       "cursor/comet-glow",
-      "cursor/trail"
+      "cursor/trail",
+      "window/neon-bleed-overlay",
+      "window/portal-lava-overlay"
   };
   const bool animated[] = {false, false, true,  false, true,  true,  true,  true,  true,  true,  true,  true,
                            true,  true,  false, true,  false, false, false, true,  true,  true,  true,  true,
                            true,  true,  true,  true,  true,  true,  true,  false, false, false, false, false,
-                           false, true,  true,  true,  true,  false, true,  true,  true};
+                           false, true,  true,  true,  true,  false, true,  true,  true,  true,  true};
   uint32_t baseline[SIZE * SIZE], first[SIZE * SIZE], second[SIZE * SIZE];
   struct fx_postprocess_state* empty = NULL;
   bool ok = render_effect(&fixture, NULL, &empty, 0, 64, 1, true, false, baseline);

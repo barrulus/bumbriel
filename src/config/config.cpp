@@ -2534,16 +2534,24 @@ namespace umbriel {
           readShaders(root, loaded);
           readKeybinds(root, loaded);
           readWindowRules(root, loaded);
-          const auto validateBorderPool = [&](const DecorationShaderConfig& shader) {
+          const auto validateBorderShader = [&](const DecorationShaderConfig& shader) {
             if (!shader.pool.empty() && !std::ranges::any_of(loaded.shaders.pools, [&](const auto& pool) {
                   return pool.name == shader.pool && pool.scope == "border";
                 }))
               warnAt(root.table().source(), "unknown border shader pool: {}", shader.pool);
+            if (!shader.overlay.empty()
+                && !std::ranges::contains(kBuiltinShaders, std::string_view(shader.overlay))
+                && !std::ranges::any_of(loaded.shaders.presets, [&](const auto& preset) {
+                     return preset.name == shader.overlay;
+                   }))
+              warnAt(root.table().source(), "unknown border shader overlay: {}", shader.overlay);
           };
-          validateBorderPool(loaded.appearance.borderShader);
+          validateBorderShader(loaded.appearance.borderShader);
+          for (const auto& preset : loaded.shaders.borders)
+            validateBorderShader(preset.settings);
           for (const auto& rule : loaded.windowRules)
             if (rule.borderShader)
-              validateBorderPool(*rule.borderShader);
+              validateBorderShader(*rule.borderShader);
           readLayerRules(root, loaded);
           readSecurityContextRules(root, loaded);
           readWorkspaces(root, loaded);

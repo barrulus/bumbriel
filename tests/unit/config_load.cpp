@@ -3285,9 +3285,13 @@ UMBRIEL_TEST(shaderPoolsValidateEntriesAndPreserveOrder) {
   file.write(R"(
 [shaders]
 window_pool = "reading"
+[shaders.preset.inward]
+scope = "border"
+passes = [{ preset = "invert" }]
 [shaders.border.fuse]
 padding = 48
 speed = 2
+overlay = "inward"
 [shaders.border.fuse.light]
 enabled = true
 intensity = 1.4
@@ -3316,6 +3320,8 @@ pool = "rings"
   CHECK_EQ(umbriel::shaderPool("rings", "border")->presets.front(), std::string("pulse"));
   CHECK(!umbriel::shaderPool("rings", "window"));
   CHECK_EQ(umbriel::borderPreset("fuse")->padding, 48);
+  CHECK_EQ(umbriel::borderPreset("fuse")->overlay, std::string("inward"));
+  CHECK_EQ(shaders.presets.front().scope, std::string("border"));
   CHECK_EQ(umbriel::borderPreset("fuse")->light.intensity, 1.4);
   CHECK_EQ(store.config().windowRules.front().borderShader->pool, std::string("rings"));
   CHECK(containsDiagnostic(store, "invalid shader pool"));
@@ -3331,7 +3337,9 @@ UMBRIEL_TEST(examplePoolsLoadWithTheWindowCollection) {
   CHECK(store.load(file.path().c_str()));
   CHECK(store.diagnostics().empty());
   CHECK_EQ(store.config().shaders.pools.size(), size_t{2});
-  CHECK_EQ(store.config().shaders.borders.size(), size_t{4});
+  CHECK_EQ(store.config().shaders.borders.size(), size_t{6});
+  CHECK_EQ(umbriel::borderPreset("neon-bleed")->overlay, std::string("ring.neon-bleed"));
+  CHECK_EQ(umbriel::borderPreset("portal-lava")->overlay, std::string("ring.portal-lava"));
   CHECK(umbriel::borderPreset("fuse")->shader.has_value());
 }
 

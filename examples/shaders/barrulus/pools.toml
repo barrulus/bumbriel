@@ -9,7 +9,7 @@ presets = ["window.crt", "window.parchment-dark", "window.adaptive-text-v4"]
 [shaders.pool.terminals]
 scope = "border"
 allocation = "unused-first" # or "round-robin"
-presets = ["fuse", "lightning", "rainbow", "pulse"]
+presets = ["fuse", "lightning", "rainbow", "pulse", "neon-bleed", "portal-lava"]
 
 [shaders.border.fuse]
 shader = "rings/fuse.glsl"
@@ -36,6 +36,24 @@ padding = 14
 [shaders.border.pulse]
 shader = "rings/pulse.glsl"
 padding = 0
+
+[shaders.border.neon-bleed]
+shader = "rings/neon-bleed.glsl"
+padding = 14
+overlay = "ring.neon-bleed"
+
+[shaders.preset."ring.neon-bleed"]
+scope = "border"
+passes = [{ shader = "window/neon-bleed-overlay.glsl" }]
+
+[shaders.border.portal-lava]
+shader = "rings/portal-lava.glsl"
+padding = 14
+overlay = "ring.portal-lava"
+
+[shaders.preset."ring.portal-lava"]
+scope = "border"
+passes = [{ shader = "window/portal-lava-overlay.glsl" }]
 
 [[window_rule]]
 match.app_id = "^(com[.]mitchellh[.]ghostty|ghostty|kitty|net[.]kovidgoyal[.]kitty)$"

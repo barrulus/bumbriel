@@ -282,9 +282,18 @@ namespace umbriel {
       wlr_scene_rect_set_corner_radius(card.shader, surfaceRadius);
       wlr_scene_node_place_below(&card.shader->node, &card.border->node);
     }
+    const auto settings = view->borderShaderSettings();
+    if (card.borderOverlay != nullptr) {
+      auto* overlay =
+          borderVisible && view == liveTarget && settings.enabled ? postprocessShader(settings.overlay) : nullptr;
+      wlr_scene_rect_set_postprocess(card.borderOverlay, overlay);
+      wlr_scene_node_set_enabled(&card.borderOverlay->node, overlay != nullptr);
+      wlr_scene_rect_set_size(card.borderOverlay, contentW, contentH);
+      wlr_scene_rect_set_corner_radius(card.borderOverlay, surfaceRadius);
+      wlr_scene_node_place_below(&card.borderOverlay->node, &card.border->node);
+    }
     wlr_scene_node_set_enabled(&card.border->node, borderVisible);
     if (borderVisible) {
-      const auto settings = view->borderShaderSettings();
       auto* shader = view == liveTarget ? decorationShader(settings) : nullptr;
       const int padding = shader != nullptr ? static_cast<int>(std::ceil(settings.padding * z)) : 0;
       const auto parameters = decorationParameters(settings, static_cast<float>(padding), static_cast<float>(z), false);
@@ -1027,6 +1036,7 @@ namespace umbriel {
     const std::array<float, 4> outerColor = tint(config().colors.border.outer, 1.0);
     card->border = wlr_scene_border_create(card->tree, innerColor.data(), outerColor.data());
     card->shader = wlr_scene_rect_create(card->tree, 0, 0, kTransparent.data());
+    card->borderOverlay = wlr_scene_rect_create(card->tree, 0, 0, kTransparent.data());
     if (card->border == nullptr) {
       wlr_scene_node_destroy(&card->tree->node);
       return nullptr;

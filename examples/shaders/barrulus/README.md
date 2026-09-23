@@ -6,7 +6,7 @@ borders, screens and cursors.
 | Directory | Effects |
 | --- | --- |
 | `animations/` | Opening, closing, movement and resize effects |
-| `rings/` | Persistent borders with optional illumination |
+| `rings/` | Persistent borders with optional illumination and inward overlays |
 | `window/` | Window-content effects |
 | `screen/` | Screen effects |
 | `cursor/` | Cursor effects |
@@ -14,7 +14,9 @@ borders, screens and cursors.
 `collection.toml` registers the postprocess presets and animation pairs without
 enabling an effect. `windows.toml` registers window presets, and `animations.toml`
 registers animation pairs. `pools.toml` supplies ordered window favourites and
-rotating terminal rings; include it after `windows.toml`.
+rotating terminal rings, including paired `neon-bleed` and `portal-lava` effects;
+include it after `windows.toml`. Inward ring overlays render over the selected
+window-content effect and cycle with their external border.
 
 See [configuration and authoring](../../../docs/user/barrulus-shaders.md) for shader
 settings, runtime controls and pools.

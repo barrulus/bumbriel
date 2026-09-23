@@ -1,0 +1,14 @@
+# Paired focus ring; the overlay is independent of the window-content shader.
+[appearance]
+border_width = 6
+outer_border_width = 0
+corner_radius = 10
+
+[appearance.border_shader]
+shader = "neon-bleed.glsl"
+padding = 14
+overlay = "ring.neon-bleed"
+
+[shaders.preset."ring.neon-bleed"]
+scope = "border"
+passes = [{ shader = "../window/neon-bleed-overlay.glsl" }]

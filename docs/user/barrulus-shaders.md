@@ -155,9 +155,36 @@ pool = "terminals"
 ```
 
 Border presets contain complete shader settings, including animation, speed,
-padding and illumination. A pool can also be selected globally with
+padding, illumination and an optional inward overlay. A pool can also be selected globally with
 `[appearance.border_shader] pool = "terminals"`. Pool entries replace the
 selector's shader settings; `enabled = false` on the selector still disables it.
+
+A paired ring sets `overlay` to a postprocess preset. The inward layer renders
+**after the window-content shader**, so it can sit over CRT, parchment or another
+window effect without replacing it. Both halves follow border selection, focus,
+and `shader:border toggle`. Choosing an external-only ring removes the previous
+inward layer. The overlay is clipped to the window's rounded content box and
+follows `shaders.in_capture`. Like window-content effects, it is suppressed during
+lifecycle fades. The border's `speed`, `animated` and `light` settings affect its
+external shader; an overlay uses its own GLSL animation timing.
+
+```toml
+[shaders.border.neon-bleed]
+shader = "shaders/barrulus/rings/neon-bleed.glsl"
+padding = 14
+overlay = "ring.neon-bleed"
+
+[shaders.preset."ring.neon-bleed"]
+scope = "border"
+passes = [{ shader = "shaders/barrulus/window/neon-bleed-overlay.glsl" }]
+```
+
+Use `scope = "border"` for overlay presets to keep them out of window-effect
+cycles. `pools.toml` includes paired `neon-bleed` and `portal-lava` entries; their
+standalone files under `rings/` also use this overlay setting. These two effects
+are authored for a 6px border and 10px outer corner radius. Replace legacy
+focus-matched `window_rule.shader` assignments with `border_shader.overlay` when
+migrating an existing paired ring.
 
 A mapped window retains its ring assignment when focus or rules are refreshed.
 `unused-first` chooses an unused entry, then a least-used entry if all are occupied,
@@ -257,7 +284,7 @@ NUL-free checks and automatic dependency watching.
 
 ```toml
 [shaders.preset.reading]
-scope = "output" # window, output, global: chooses its cycle list
+scope = "output" # window, output, global: cycle lists; border: inward overlays
 [[shaders.preset.reading.passes]]
 preset = "temperature"
 kelvin = 6500
