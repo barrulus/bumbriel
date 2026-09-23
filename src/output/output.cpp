@@ -16,6 +16,7 @@
 #include "scene/config_banner.h"
 #include "scene/node.h"
 #include "scene/quit_confirm.h"
+#include "server/ipc.h"
 #include "server/server.h"
 #include "server/wine_color_manager.h"
 #include "view/view.h"
@@ -1025,8 +1026,7 @@ namespace umbriel {
     }
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
-    const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
-    m_server->tickAnimations(nowMsec);
+    m_server->tickAnimations(m_server->animationClockMsec());
 
     // Surface commits reset scene-buffer opacity to the protocol alpha. Repair
     // pending rule opacity after every commit listener and before composition.
@@ -1109,7 +1109,14 @@ namespace umbriel {
     // "nothing to render" path, they never commit again -> damage stays clean -> wlr_scene_output_needs_frame returns
     // false forever -> compositor parks in epoll_wait. (Reproducible with any mailbox/FIFO Vulkan game.)
     bool commitFailed = false;
-    if (wlr_scene_output_needs_frame(m_sceneOutput) || m_gammaDirty) {
+    const bool sceneChanged = wlr_scene_output_needs_frame(m_sceneOutput);
+    if (sceneChanged) {
+      // Scene motion under a stationary cursor must reach the client before its next press.
+      if (Cursor* cursor = m_server->cursor()) {
+        cursor->refreshPointerContents(this);
+      }
+    }
+    if (sceneChanged || m_gammaDirty) {
       m_inFrame = true;
       UMBRIEL_ZONE("Output::render");
 
@@ -1233,6 +1240,10 @@ namespace umbriel {
       break;
     case OutputFrameFollowup::None:
       break;
+    }
+
+    if (Ipc* ipc = m_server->ipc()) {
+      ipc->notifyOutputFrame(*this);
     }
 
     // Unconditional: see comment above. Never gate this on commit success.

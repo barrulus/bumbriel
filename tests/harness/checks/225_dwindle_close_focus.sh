@@ -173,6 +173,8 @@ wait_for_focus "$expander_id"
 
 # Close the revealed tile too, without moving the pointer. Its predecessor now expands into the same position and must
 # inherit hover focus just like the first survivor did. This catches stale seat pointer focus left by the first unmap.
+# The close decides hover ownership from what is on screen, so the survivor must have been drawn in its new slot.
+"$UMBRIEL" settle
 "$UMBRIEL" msg "window-close:$expander_id" > /dev/null
 for _ in $(seq 40); do
   grep -q '^unmapped$' "$UMBRIEL_RUNTIME_DIR/dwindle-close-expander.log" && break

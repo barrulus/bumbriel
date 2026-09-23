@@ -60,15 +60,10 @@ wait_for_window() {
 }
 
 # Bounding box of the opener's red and green columns, which the fade leaves dim early in the timeline. The blue peer
-# never matches, and the 1px border makes -trim report a page offset even for a full-frame match.
+# never matches.
 opener_bounds() {
   grim "$IMAGE"
-  local x y w h
-  read -r x y w h < <(
-    magick "$IMAGE" -alpha off -fx '(r > 0.1 || g > 0.1) ? 1 : 0' \
-      -bordercolor black -border 1 -trim -format '%X %Y %w %h\n' info: 2> /dev/null
-  )
-  printf '%d %d %d %d\n' "$((${x#+} - 1))" "$((${y#+} - 1))" "$w" "$h"
+  "$UMBRIEL_PIXEL_PROBE" "$IMAGE" bbox 'r > 0.1 || g > 0.1'
 }
 
 peer_blue() {
@@ -91,14 +86,16 @@ assert_centred() {
 FILL_COLOR=0xFF0000FF "$PEER_CLIENT" fullscreen-peer 400 240 \
   > "$UMBRIEL_RUNTIME_DIR/fullscreen-peer.log" 2>&1 &
 wait_for_window fullscreen-peer
-sleep 0.3
+"$UMBRIEL" settle
 
 sed -i 's/^enabled = false # OPEN_ANIMATION$/enabled = true # OPEN_ANIMATION/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 
+# Animation time only moves by clock-advance; advancing 3000 ms finishes the 3000 ms opening timeline.
+"$UMBRIEL" clock-freeze
 "$CLIENT" fullscreen-open 400 240 > "$UMBRIEL_RUNTIME_DIR/fullscreen-open.log" 2>&1 &
 wait_for_window fullscreen-open
-sleep 0.9
+"$UMBRIEL" clock-advance 900
 read -r early_x early_y early_w early_h < <(opener_bounds)
 early_blue=$(peer_blue)
 assert_centred early "$early_x" "$early_y" "$early_w" "$early_h" 640 900
@@ -108,7 +105,7 @@ if ((early_blue < 200)); then
   exit 1
 fi
 
-sleep 0.9
+"$UMBRIEL" clock-advance 900
 read -r late_x late_y late_w late_h < <(opener_bounds)
 assert_centred late "$late_x" "$late_y" "$late_w" "$late_h" 760 1150
 if ((late_w < early_w + 120)); then
@@ -116,7 +113,8 @@ if ((late_w < early_w + 120)); then
   exit 1
 fi
 
-sleep 2.2
+"$UMBRIEL" clock-advance 3000
+"$UMBRIEL" settle
 read -r final_x final_y final_w final_h < <(opener_bounds)
 # One edge column of the client's own pattern may fall outside the colour match, so allow a pixel either way.
 if ((final_x > 1 || final_y > 1 || final_w < 1278 || final_h < 718)); then

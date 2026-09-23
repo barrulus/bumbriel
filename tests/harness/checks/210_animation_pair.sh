@@ -26,6 +26,9 @@ shader = "pair-open.glsl"
 TOML
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" msg 'shader:animation marker' > /dev/null
+# Animation time only moves by clock-advance: the opener starts on the frozen instant, so 800 ms lands mid-way through
+# the pair's 1600 ms timeline and a further 1600 ms finishes it.
+"$UMBRIEL" clock-freeze
 FILL_COLOR=0xFF0000FF "$UMBRIEL_UNMAP_CLIENT" pair-opener 700 500 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
 window=''
 for _ in $(seq 80); do
@@ -44,13 +47,13 @@ read_pixel() {
   magick "$UMBRIEL_RUNTIME_DIR/pair.png" -crop "8x8+$x+$y" +repage \
     -format '%[fx:round(mean.r*255)] %[fx:round(mean.g*255)] %[fx:round(mean.b*255)]\n' info:
 }
-sleep 0.2
+"$UMBRIEL" clock-advance 800
 read -r red green blue < <(read_pixel)
 (( red < 30 && green > 220 && blue < 30 )) || {
   echo "selected pair did not animate the tiled opener: $red $green $blue"
   exit 1
 }
-sleep 1.6
+"$UMBRIEL" clock-advance 1600
 read -r red green blue < <(read_pixel)
 (( red < 30 && green < 30 && blue > 220 )) || {
   echo "selected pair did not finish at its own duration: $red $green $blue"

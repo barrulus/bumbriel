@@ -52,7 +52,7 @@ if ! grep -q '^mapped ' "$CLIENT_LOG"; then
   echo "csd crop client never mapped: $(cat "$CLIENT_LOG")"
   exit 1
 fi
-sleep 0.3
+"$UMBRIEL" settle
 
 read -r window_w window_h buffer_w surface_w margin < <(
   sed -n 's/^mapped \([0-9]*\)x\([0-9]*\) buffer \([0-9]*\)x[0-9]* surface \([0-9]*\)x[0-9]* margin \([0-9]*\) .*/\1 \2 \3 \4 \5/p' \

@@ -107,13 +107,11 @@ capture_series() {
 }
 
 blue_pixels() {
-  magick "$1" -alpha off -fx '(b > 0.8 && r < 0.1 && g < 0.1) ? 1 : 0' \
-    -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count 'b > 0.8 && r < 0.1 && g < 0.1'
 }
 
 blue_bounds() {
-  magick "$1" -alpha off -fx '(b > 0.8 && r < 0.1 && g < 0.1) ? 1 : 0' \
-    -bordercolor black -border 1 -trim -format '%X %Y %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox 'b > 0.8 && r < 0.1 && g < 0.1'
 }
 
 bounds_match() {
@@ -127,13 +125,13 @@ bounds_match() {
 }
 
 spawn retained-owner 0xFFFF0000
-sleep 0.6
+"$UMBRIEL" settle
 spawn retained-peer 0xFFFF0000
 peer_id=$(jq -r .id <<< "$window")
-sleep 0.6
+"$UMBRIEL" settle
 spawn retained-close 0xFF0000FF
 closing_id=$(jq -r .id <<< "$window")
-sleep 0.6
+"$UMBRIEL" settle
 
 survivors_before=$("$UMBRIEL" windows --json | jq -c \
   '[.[] | select(.title == "retained-owner" or .title == "retained-peer") | {title, x, y, w, h}] | sort_by(.title)')

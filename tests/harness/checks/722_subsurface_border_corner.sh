@@ -34,7 +34,7 @@ if ! grep -q '^mapped$' "$CLIENT_LOG"; then
   echo "subsurface border client never mapped: $(cat "$CLIENT_LOG")"
   exit 1
 fi
-sleep 0.5
+"$UMBRIEL" settle
 
 window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "subsurface-border")')
 if [[ -z $window ]]; then

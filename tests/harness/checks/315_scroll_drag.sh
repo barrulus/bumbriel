@@ -222,7 +222,7 @@ if [[ $(window_count) -ne 4 ]]; then
 fi
 pointer move 560 360 press "$BTN_MIDDLE" pause 500 release "$BTN_MIDDLE" &
 middle_click_pid=$!
-sleep 0.2
+sleep 0.2 # real time: the press alone must not close the card before release
 if [[ $(window_count) -ne 4 ]]; then
   echo "overview middle press closed a card before release"
   exit 1

@@ -42,6 +42,10 @@ namespace umbriel {
     [[nodiscard]] bool beginPointerScroll(double lx, double ly);
     void updatePointerScroll(double dx, double dy, uint32_t timeMsec);
     void endPointerScroll(bool cancelled, uint32_t timeMsec);
+    // A gesture or pointer scroll is moving compositor content.
+    [[nodiscard]] bool movingContent() const {
+      return m_state != State::Idle && m_state != State::Forward && m_state != State::Pending;
+    }
 
   private:
     enum class State { Idle, Forward, Pending, Scroll, Switch, Overview, OverviewSelect };

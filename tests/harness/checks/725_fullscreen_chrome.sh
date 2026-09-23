@@ -60,7 +60,7 @@ if [[ ! $box =~ ^-?[0-9]+\ -?[0-9]+\ 1280\ 720$ ]]; then
 fi
 read -r win_x win_y _ _ <<< "$box"
 
-sleep 0.25
+"$UMBRIEL" settle
 grim "$SCREENSHOT"
 
 sample() {

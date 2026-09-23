@@ -69,7 +69,7 @@ headless_one_x=$(output_x HEADLESS-1)
 
 "$CLIENT" target-client-width 800 400 > "$UMBRIEL_RUNTIME_DIR/target-client-width.log" 2>&1 &
 wait_for_width target-client-width 800
-sleep 0.3
+"$UMBRIEL" settle
 if [[ $(window_width target-client-width) != 800 ]]; then
   echo "client-selected width changed after first arrange: $("$UMBRIEL" windows --json)"
   exit 1
@@ -91,7 +91,7 @@ if [[ $first_configure_width != 1000 ]]; then
   echo "default_scrolling_extent_px did not set the first configure width: $(<"$UMBRIEL_RUNTIME_DIR/pixel-width.log")"
   exit 1
 fi
-sleep 0.3
+"$UMBRIEL" settle
 if [[ $(window_width pixel-width) != 1000 ]]; then
   echo "default_scrolling_extent_px width changed after first arrange: $($UMBRIEL windows --json)"
   exit 1

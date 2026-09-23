@@ -49,6 +49,13 @@ duration_ms = $MOVE_MS
 curve = "linear"
 EOF
 "$UMBRIEL" msg workspace-set-layout:master > /dev/null
+# Animation time only moves by clock-advance. Clients still map, acknowledge, and commit in real time, so each sample
+# waits for the client first.
+"$UMBRIEL" clock-freeze
+
+finish_animations() {
+  "$UMBRIEL" clock-advance 1500
+}
 
 spawn() {
   local title=$1 log=$2 color=$3
@@ -86,18 +93,16 @@ wait_for_log_since() {
 
 # The marker band may sit over the moving survivor, so identify it by its green channel alone.
 green_pixels() {
-  magick "$1" -alpha off -fx '(g > 0.12 && b < 0.08) ? 1 : 0' \
-    -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count 'g > 0.12 && b < 0.08'
 }
 
 red_bounds() {
-  magick "$1" -alpha off -fx '(r > 0.2 && g < 0.08 && b < 0.08) ? 1 : 0' \
-    -bordercolor black -border 1 -trim -format '%X %Y %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox 'r > 0.2 && g < 0.08 && b < 0.08'
 }
 
+# The stale survivor's pure blue and green columns, but not the half-alpha marker band of a running windows_out.
 pattern_bounds() {
-  magick "$1" -alpha off -fx '((b > 0.2 || g > 0.2) && r < 0.08) ? 1 : 0' \
-    -bordercolor black -border 1 -trim -format '%X %Y %w %h\n' info: 2> /dev/null
+  "$UMBRIEL_PIXEL_PROBE" "$1" bbox '(b > 0.6 || g > 0.6) && r < 0.08'
 }
 
 bounds_match() {
@@ -114,11 +119,11 @@ verify_layout() {
   local third_log="$UMBRIEL_RUNTIME_DIR/close-configure-$mode-third.log"
 
   spawn "close-configure-$mode-first" "$UMBRIEL_RUNTIME_DIR/close-configure-$mode-first.log" 0xFF000080
-  sleep 0.7
+  finish_animations
   spawn "close-configure-$mode-survivor" "$survivor_log" 0xFFFF0000
-  sleep 0.7
+  finish_animations
   spawn "close-configure-$mode-third" "$third_log" 0xFF808000
-  sleep 0.7
+  finish_animations
 
   wait_for_log "$survivor_log" 'configured-size=640x360' "$mode survivor never received its three-window size"
   local mark closing_id
@@ -130,13 +135,15 @@ verify_layout() {
   wait_for_log_since "$survivor_log" "$mark" 'configured-size=640x720' \
     "$mode survivor did not receive its target configure"
 
-  sleep 0.2
+  # The survivor's target configure proves the close arranged, starting windows_move and windows_out together.
+  "$UMBRIEL" clock-advance 200
   grim "$SHOTS/$mode-held.png"
 
   # windows_move runs for MOVE_MS from the close; windows_out keeps running past it on its own clock.
-  sleep 0.15
+  "$UMBRIEL" clock-advance 150
   grim "$SHOTS/$mode-moving.png"
-  sleep 0.6
+  # After windows_out as well as windows_move, so the close snapshot no longer covers the survivor's bottom band.
+  "$UMBRIEL" clock-advance 1500
   grim "$SHOTS/$mode-final.png"
 
   local before_x before_y before_w before_h held_x held_y held_w held_h
@@ -167,19 +174,19 @@ verify_layout() {
 }
 
 verify_layout dwindle
-sleep 0.7
 "$UMBRIEL" msg workspace-switch:2 > /dev/null
-sleep 0.4
+finish_animations
 "$UMBRIEL" msg workspace-set-layout:master > /dev/null
-sleep 0.1
+finish_animations
 verify_layout master
 
 # A client may acknowledge the configure but keep rendering its old size. The compositor-owned endpoint must remain
 # authoritative after windows_move, rather than snapping back to that stale buffer while waiting for a later commit.
 "$UMBRIEL" msg workspace-switch:3 > /dev/null
-sleep 0.2
+finish_animations
+readonly STALE_LOG="$UMBRIEL_RUNTIME_DIR/close-configure-stale-survivor.log"
 HOLD_SIZE=1 "$UMBRIEL_FRACTIONAL_CLIENT" close-configure-stale-survivor 640 720 \
-  > "$UMBRIEL_RUNTIME_DIR/close-configure-stale-survivor.log" 2>&1 &
+  > "$STALE_LOG" 2>&1 &
 for _ in $(seq 100); do
   window=$(
     "$UMBRIEL" windows --json \
@@ -192,14 +199,17 @@ if [[ -z $window ]]; then
   echo "timed out waiting for stale-size survivor"
   exit 1
 fi
-sleep 0.7
+finish_animations
 spawn close-configure-stale-third "$UMBRIEL_RUNTIME_DIR/close-configure-stale-third.log" 0xFF000000
-sleep 0.7
+finish_animations
 closing_id=$(jq -r .id <<< "$window")
+stale_mark=$(wc -l < "$STALE_LOG")
 "$UMBRIEL" msg "window-close:$closing_id" > /dev/null
 wait_for_log "$UMBRIEL_RUNTIME_DIR/close-configure-stale-third.log" '^unmapped$' \
   "stale-size closer did not unmap"
-sleep 1.2
+# The survivor presents again once it has acknowledged its target configure, still at its old size.
+wait_for_log_since "$STALE_LOG" "$stale_mark" '^mapped 640x720' "stale-size survivor did not acknowledge its target"
+"$UMBRIEL" clock-advance 1200
 grim "$SHOTS/stale-final.png"
 read -r final_x final_y final_w final_h <<< "$(pattern_bounds "$SHOTS/stale-final.png")"
 if ! bounds_match 3 "$final_x" "$final_y" "$final_w" "$final_h" 0 0 1280 720; then
@@ -210,9 +220,9 @@ fi
 # A later geometry-stable arrange must not discard that endpoint ownership while the client still refuses the
 # configured size. Force at least one layout replacement while keeping a lone tiled view fullscreen in both modes.
 "$UMBRIEL" msg workspace-set-layout:master > /dev/null
-sleep 0.05
+"$UMBRIEL" clock-advance 50
 "$UMBRIEL" msg workspace-set-layout:dwindle > /dev/null
-sleep 0.2
+"$UMBRIEL" clock-advance 200
 grim "$SHOTS/stale-after-arrange.png"
 read -r final_x final_y final_w final_h <<< "$(pattern_bounds "$SHOTS/stale-after-arrange.png")"
 if ! bounds_match 3 "$final_x" "$final_y" "$final_w" "$final_h" 0 0 1280 720; then

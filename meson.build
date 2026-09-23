@@ -68,6 +68,13 @@ build_tests = tests_opt.enabled() or (
   and get_option('b_sanitize') == 'none'
 )
 
+# Harness-only IPC commands are compiled out of anything but a debug build unless requested, so a release cannot
+# expose them.
+test_ipc_opt = get_option('test_ipc')
+if test_ipc_opt.enabled() or (test_ipc_opt.auto() and get_option('buildtype') == 'debug')
+  add_project_arguments('-DUMBRIEL_TEST_IPC', language: 'cpp')
+endif
+
 if cpp.get_define('WLR_HAS_SESSION', prefix: '#include <wlr/config.h>', dependencies: wlroots_dep) != '1'
   error('Umbriel requires wlroots built with session support')
 endif

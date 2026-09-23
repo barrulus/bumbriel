@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Established tiled peers share one windows_move transition and remain disjoint through interrupted geometry changes.
 # Lifecycle actors are deliberately outside this contract, so opens and closes settle before sampling. Every window is
-# 50% red over black with a green border ring. Two content layers raise red above 0.5, while a border crossing content
-# mixes red with green. A blue tint supplied only by windows_move also proves the sampled transition really ran.
+# translucent red over black with a green border ring. Two content layers raise red above 0.56, while a border crossing
+# content mixes red with green. The windows_move shader writes the source alpha into blue, which proves the sampled
+# transition really ran. The maximized window is drawn at a lower alpha than its peers, because its resize crossfade
+# carries the windows_move shader too: only blue at the peers' alpha proves the peers themselves moved.
 set -euo pipefail
 
 readonly CLIENT="${UMBRIEL_UNMAP_CLIENT:-./build-debug/tests/unmap-client}"
@@ -48,9 +50,13 @@ vec4 animation(vec2 uv) {
 }
 GLSL
 "$UMBRIEL" msg config-reload > /dev/null
+# Animation time only moves by clock-advance.
+"$UMBRIEL" clock-freeze
 
 spawn() {
-  FILL_COLOR=0x80800000 "$CLIENT" "$1" 1200 700 > "$SHOTS/$1.log" 2>&1 &
+  local fill=0x80800000
+  [[ $1 == *-a ]] && fill=0x60600000
+  FILL_COLOR=$fill "$CLIENT" "$1" 1200 700 > "$SHOTS/$1.log" 2>&1 &
 }
 
 wait_for_windows() {
@@ -69,30 +75,43 @@ window_id() {
   "$UMBRIEL" windows --json | jq -r --arg title "$1" '.[] | select(.title == $title) | .id'
 }
 
+# Runs every animation to its end. A crossfade starts only once its client commits the resized buffer, which happens in
+# real time, so advance until a settle probe succeeds.
+finish() {
+  for _ in $(seq 20); do
+    "$UMBRIEL" clock-advance 2000 > /dev/null
+    if timeout 0.3 "$UMBRIEL" settle > /dev/null 2>&1; then
+      return 0
+    fi
+  done
+  echo "animations never finished: $("$UMBRIEL" windows --json)"
+  return 1
+}
+
 # Fraction of the output covered by pixels only two red layers, or a ring over red content, can produce.
 overlap_pixels() {
-  magick "$1" -alpha off -fx '(r > 0.56 && g < 0.1) || (r > 0.1 && g > 0.2) ? 1 : 0' \
-    -format '%[fx:mean]' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count '(r > 0.56 && g < 0.1) || (r > 0.1 && g > 0.2)'
 }
 
+# Peers are drawn at alpha 0.5 and the maximized window at 0.375, so the marker blue tells them apart.
 move_marker_pixels() {
-  magick "$1" -alpha off -fx 'b > 0.2 && r > 0.2 ? 1 : 0' -format '%[fx:round(mean*w*h)]' info:
+  "$UMBRIEL_PIXEL_PROBE" "$1" count 'b > 0.44 && r > 0.2'
 }
 
-# Fourteen frames 100 ms apart, captured first and analysed afterwards so the samples span the whole 1500 ms motion.
+# Fourteen frames 100 ms of animation time apart, from the trigger on, so the samples span the whole 1500 ms motion.
 sample() {
   local phase=$1
   local i
   local saw_marker=0
   for i in $(seq 14); do
     grim "$SHOTS/$phase-$i.png"
-    sleep 0.1
+    "$UMBRIEL" clock-advance 100 > /dev/null
   done
   for i in $(seq 14); do
     local overlap
     overlap=$(overlap_pixels "$SHOTS/$phase-$i.png")
-    if ! awk -v value="$overlap" 'BEGIN { exit !(value < 0.00001) }'; then
-      echo "$phase: frame $i shows overlapping tiles (overlap fraction $overlap): $SHOTS/$phase-$i.png"
+    if ((overlap > 9)); then
+      echo "$phase: frame $i shows overlapping tiles ($overlap pixels): $SHOTS/$phase-$i.png"
       exit 1
     fi
     if (( $(move_marker_pixels "$SHOTS/$phase-$i.png") > 1000 )); then
@@ -100,17 +119,9 @@ sample() {
     fi
   done
   if ((!saw_marker)); then
-    echo "$phase: no windows_move shader marker appeared during the established-peer transition"
+    echo "$phase: the established peers never carried the windows_move shader during the transition"
     exit 1
   fi
-}
-
-settle_motion() {
-  sleep 0.3
-}
-
-settle_lifecycle() {
-  sleep 1.7
 }
 
 close_all() {
@@ -126,30 +137,30 @@ run_mode() {
   local tag="$mode-$extent"
   sed -i -e "s/^mode = \"[a-z]*\"$/mode = \"$mode\"/" -e "s/^default_extent_fraction = .*$/default_extent_fraction = $extent/" "$UMBRIEL_CONFIG"
   "$UMBRIEL" msg config-reload > /dev/null
-  sleep 0.2
+  finish
 
   spawn "motion-$tag-a"
   wait_for_windows 1
-  settle_lifecycle
+  finish
 
   spawn "motion-$tag-b"
   wait_for_windows 2
-  settle_lifecycle
+  finish
 
   spawn "motion-$tag-c"
   wait_for_windows 3
-  settle_lifecycle
+  finish
 
   "$UMBRIEL" msg "window-focus:$(window_id "motion-$tag-a")" > /dev/null
   "$UMBRIEL" msg window-toggle-maximize > /dev/null
-  sleep 0.3
+  "$UMBRIEL" clock-advance 300 > /dev/null
   "$UMBRIEL" msg window-toggle-maximize > /dev/null
   sample "$tag-maximize-interrupt"
-  settle_motion
+  finish
 
   close_all
   wait_for_windows 0
-  sleep 1.8
+  finish
 }
 
 run_mode scrolling 0.5

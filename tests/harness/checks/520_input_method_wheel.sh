@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # An input method can own a virtual keyboard while grabbing events from physical keyboards. Modifier mouse and wheel
 # binds must use the combined physical state, not the input method keyboard that happens to be current on the seat.
+# It builds its own keyboard topology, so the harness keyboard stays out.
+# harness: keyboard=none
 set -euo pipefail
 
 readonly OUTPUT_W=1280

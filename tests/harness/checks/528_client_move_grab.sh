@@ -127,4 +127,40 @@ if ((target_presses != 1 || target_releases != 1)); then
   exit 1
 fi
 
+# A window that moves under a stationary cursor must see the pointer where it
+# is drawn before the next press, not where it was before the move.
+source_id=$("$UMBRIEL" windows --json | jq -r --arg title "$SOURCE" '.[] | select(.title == $title) | .id')
+"$UMBRIEL" msg "window-focus:$source_id" > /dev/null
+hover_x=$((expected_x + source_w - 20))
+hover_y=$((expected_y + source_h - 20))
+"$POINTER" "$OUTPUT_W" "$OUTPUT_H" move "$hover_x" "$hover_y" > "$POINTER_LOG" 2>&1 || {
+  echo "pointer client failed: $(< "$POINTER_LOG")"
+  exit 1
+}
+"$UMBRIEL" msg window-center > /dev/null
+for _ in $(seq 40); do
+  read -r centered_x centered_y _ _ < <(window_box "$SOURCE")
+  [[ "$centered_x $centered_y" != "$expected_x $expected_y" ]] && break
+  sleep 0.1
+done
+if ((hover_x < centered_x || hover_x >= centered_x + source_w || hover_y < centered_y || hover_y >= centered_y + source_h)); then
+  echo "centering moved $SOURCE to $centered_x,$centered_y, off the cursor at $hover_x,$hover_y"
+  exit 1
+fi
+"$POINTER" "$OUTPUT_W" "$OUTPUT_H" pause 200 click "$BTN_LEFT" > "$POINTER_LOG" 2>&1 || {
+  echo "pointer client failed: $(< "$POINTER_LOG")"
+  exit 1
+}
+position=
+for _ in $(seq 40); do
+  position=$(grep 'press-position' "$SOURCE_LOG" | tail -n 1)
+  [[ $(grep -c 'press-position' "$SOURCE_LOG") -ge 2 ]] && break
+  sleep 0.1
+done
+expected_position="press-position x=$((hover_x - centered_x)) y=$((hover_y - centered_y))"
+if [[ $position != "$expected_position" ]]; then
+  echo "press after the window moved under the cursor: got '$position', expected '$expected_position'"
+  exit 1
+fi
+
 echo "client-requested move changed geometry and released input to a different window"

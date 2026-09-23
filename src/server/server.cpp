@@ -1299,6 +1299,92 @@ namespace umbriel {
     });
   }
 
+  namespace {
+    uint64_t monotonicClockMsec() {
+      timespec now{};
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      return static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
+    }
+  } // namespace
+
+  uint64_t Server::animationClockMsec() const {
+#ifdef UMBRIEL_TEST_IPC
+    if (m_frozenAnimationClockMsec) {
+      return *m_frozenAnimationClockMsec;
+    }
+    return static_cast<uint64_t>(static_cast<int64_t>(monotonicClockMsec()) + m_animationClockOffsetMsec);
+#else
+    return monotonicClockMsec();
+#endif
+  }
+
+#ifdef UMBRIEL_TEST_IPC
+  void Server::freezeAnimationClock() {
+    if (!m_frozenAnimationClockMsec) {
+      m_frozenAnimationClockMsec = animationClockMsec();
+    }
+  }
+
+  bool Server::advanceAnimationClock(uint64_t ms) {
+    if (!m_frozenAnimationClockMsec) {
+      return false;
+    }
+    // An action taken while frozen may have left its arrange for the next frame; run it now so the motion it starts
+    // belongs to this instant. Every frame since the freeze ticked the same instant, which the tick skips as a repeat,
+    // so an animation that began meanwhile has no start time yet. Tick once more at that instant to give it one.
+    for (const auto& output : m_outputs) {
+      if (WorkspaceGroup* group = output->workspaceGroup()) {
+        group->flushArrange();
+      }
+    }
+    m_lastAnimTickMsec = 0;
+    tickAnimations(*m_frozenAnimationClockMsec);
+    *m_frozenAnimationClockMsec += ms;
+    for (const auto& output : m_outputs) {
+      wlr_output_schedule_frame(output->wlr());
+    }
+    return true;
+  }
+
+  void Server::resumeAnimationClock() {
+    if (m_frozenAnimationClockMsec) {
+      m_animationClockOffsetMsec =
+          static_cast<int64_t>(*m_frozenAnimationClockMsec) - static_cast<int64_t>(monotonicClockMsec());
+      m_frozenAnimationClockMsec.reset();
+    }
+  }
+#endif
+
+  bool Server::settled() const {
+    if (std::ranges::any_of(m_animatables, [](const Animatable* owner) { return owner->hasActiveAnimations(); })) {
+      return false;
+    }
+    // A window whose latest configure is still queued, or not yet acknowledged and committed, has not drawn the state
+    // the compositor asked for.
+    for (const auto& view : m_registry.all()) {
+      if (!view->mapped() || view->xwayland() || view->toplevel() == nullptr) {
+        continue;
+      }
+      const wlr_xdg_surface* surface = view->toplevel()->base;
+      if (surface->configure_idle != nullptr || surface->current.configure_serial != surface->scheduled_serial) {
+        return false;
+      }
+    }
+    for (const auto& output : m_outputs) {
+      const WorkspaceGroup* group = output->workspaceGroup();
+      if (group == nullptr) {
+        continue;
+      }
+      for (size_t index = 0; index < group->workspaceCount(); ++index) {
+        if (const Workspace* workspace = group->workspaceAt(index);
+            workspace != nullptr && workspace->arrangePending()) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   CloseSnapshotId Server::animateCloseSnapshot(
       Output* output, wlr_scene_tree* tree, wlr_scene_tree* content, std::vector<BorderSnapshot> borders,
       const wlr_box& box, std::optional<CloseSnapshotOverrides> overrides, ShadowSnapshot shadow

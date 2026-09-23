@@ -60,24 +60,27 @@ spawn() {
 
 red_width() {
   grim "$IMAGE"
-  magick "$IMAGE" -alpha off -crop '1280x8+0+356' +repage \
-    -fx '(r > 0.8 && g < 0.1 && b < 0.1) ? 1 : 0' -format '%[fx:round(w*mean)]\n' info:
+  local pixels
+  pixels=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r > 0.8 && g < 0.1 && b < 0.1' 1280x8+0+356)
+  echo $(((pixels + 4) / 8))
 }
 
 blue_pixels() {
   grim "$IMAGE"
-  magick "$IMAGE" -alpha off -fx '(b > 0.5 && r < 0.2) ? 1 : 0' -format '%[fx:round(mean*w*h)]\n' info:
+  "$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'b > 0.5 && r < 0.2'
 }
 
+# Animation time only moves by clock-advance. Advancing 1700 ms finishes every 1600 ms lifecycle effect.
+"$UMBRIEL" clock-freeze
 spawn lifecycle-move-survivor 0xFFFF0000
-sleep 1.7
+"$UMBRIEL" clock-advance 1700
 
 # A transparent opener leaves the survivor fully observable even if broken code keeps it wide underneath the new slot.
 spawn lifecycle-move-opener 0x00000000
 opener_id=$(jq -r .id <<< "$window")
-sleep 0.35
+"$UMBRIEL" clock-advance 350
 open_early=$(red_width)
-sleep 1.4
+"$UMBRIEL" clock-advance 1700
 open_final=$(red_width)
 if ((open_early < open_final - 20 || open_early > open_final + 20)); then
   echo "opening reflow followed windows_in instead of windows_move: early=$open_early final=$open_final"
@@ -91,9 +94,9 @@ for _ in $(seq 80); do
   fi
   sleep 0.025
 done
-sleep 0.35
+"$UMBRIEL" clock-advance 350
 close_early=$(red_width)
-sleep 1.4
+"$UMBRIEL" clock-advance 1700
 close_final=$(red_width)
 if ((close_early < close_final - 20 || close_early > close_final + 20)); then
   echo "closing reflow followed windows_out instead of windows_move: early=$close_early final=$close_final"
@@ -102,18 +105,18 @@ fi
 
 # Re-tiling is not an admission: the returning window keeps what it shows while its neighbour reflows.
 spawn lifecycle-move-peer 0xFF0000FF
-sleep 1.9
+"$UMBRIEL" clock-advance 1700
 tiled_blue=$(blue_pixels)
 if ((tiled_blue < 20000)); then
   echo "peer never settled as a visible tile: $tiled_blue"
   exit 1
 fi
 "$UMBRIEL" msg window-toggle-floating > /dev/null
-sleep 0.5
+"$UMBRIEL" clock-advance 1700
 "$UMBRIEL" msg window-toggle-floating > /dev/null
-sleep 0.15
+"$UMBRIEL" clock-advance 150
 retiled_early=$(blue_pixels)
-sleep 0.25
+"$UMBRIEL" clock-advance 250
 retiled_late=$(blue_pixels)
 if ((retiled_early < 20000 || retiled_late < 20000)); then
   echo "re-tiling replayed windows_in on a window that was already visible: early=$retiled_early late=$retiled_late"

@@ -138,6 +138,7 @@ namespace umbriel {
     // next frame. targetBox() is the only thing arrange() produces that is not simply applied to the scene.
     void markArrange(bool animate = true);
     void flushArrange();
+    [[nodiscard]] bool arrangePending() const { return m_arrangePending; }
     void refreshAloneRuleStates();
     void syncViewPresentation(View* view);
     [[nodiscard]] View* focusAdjacent(int direction) const;

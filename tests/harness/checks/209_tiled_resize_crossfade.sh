@@ -59,17 +59,29 @@ survivor_rgb() {
 }
 
 spawn resize-crossfade-survivor FILL_COLOR=0xFFFF0000 RESIZE_FILL_COLOR=0xFF00FF00
-sleep 1.2
+"$UMBRIEL" settle
+survivor_w() {
+  "$UMBRIEL" windows --json | jq -r '.[] | select(.title == "resize-crossfade-survivor") | .w'
+}
+first_w=$(survivor_w)
 read -r red green blue < <(survivor_rgb)
 if ! ((red > 220 && green < 30 && blue < 30)); then
   echo "setup did not settle the survivor on its first red frame: $red $green $blue"
   exit 1
 fi
 
+# Animation time only moves by clock-advance: the sample lands halfway through the 1000 ms linear timeline.
+"$UMBRIEL" clock-freeze
 spawn resize-crossfade-opener FILL_COLOR=0xFF0000FF
-sleep 0.35
+# The crossfade starts when the survivor commits its new size, which happens in real time.
+for _ in $(seq 80); do
+  [[ $(survivor_w) != "$first_w" ]] && break
+  sleep 0.025
+done
+"$UMBRIEL" clock-advance 500
 read -r mid_red mid_green mid_blue < <(survivor_rgb)
-sleep 1.2
+"$UMBRIEL" clock-advance 1000
+"$UMBRIEL" settle
 read -r end_red end_green end_blue < <(survivor_rgb)
 
 if ! ((mid_red >= 40 && mid_red <= 215 && mid_green >= 40 && mid_green <= 215 && mid_blue < 30)); then
