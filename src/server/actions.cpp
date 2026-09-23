@@ -566,6 +566,17 @@ namespace umbriel {
         prepareAnimationShaders(server.renderer());
         return true;
       }
+      if (arg->scope == "border") {
+        auto* target = arg->target.empty() ? focusedWindow(server) : viewByForeignIdentifier(server, arg->target);
+        if (!target || !target->selectBorderShader(arg->operation)) {
+          if (error)
+            *error = target ? "unknown border preset or pool: " + arg->operation : "shader target not found";
+          return false;
+        }
+        if (server.overview() && server.overview()->active())
+          server.overview()->onFocusChanged();
+        return true;
+      }
       ShaderSelection* selection = nullptr;
       View* view = nullptr;
       Output* output = nullptr;
@@ -594,9 +605,16 @@ namespace umbriel {
       else if (arg->operation == "default") {
         selection->preset.reset();
         selection->enabled = true;
-      } else if (arg->operation == "cycle")
-        cycleShader(*selection, arg->scope);
-      else if (postprocessPreset(arg->operation) != nullptr) {
+      } else if (arg->operation == "cycle" || arg->operation.starts_with("cycle:")) {
+        const std::string pool = arg->operation == "cycle" ? (arg->scope == "window" ? config().shaders.windowPool : "")
+                                                           : arg->operation.substr(6);
+        if (arg->operation == "cycle:"
+            || !cycleShader(*selection, arg->scope, pool, view ? view->windowShaderName() : "")) {
+          if (error)
+            *error = "unknown shader pool: " + pool;
+          return false;
+        }
+      } else if (postprocessPreset(arg->operation) != nullptr) {
         selection->preset = arg->operation;
         selection->enabled = true;
       } else {

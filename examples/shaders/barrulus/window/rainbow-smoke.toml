@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.rainbow-smoke"]
+scope = "window"
+
+[[shaders.preset."window.rainbow-smoke".passes]]
+shader = "rainbow-smoke.glsl"

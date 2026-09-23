@@ -1,0 +1,7 @@
+# Barrulus shader collection.
+[shaders.preset."cursor.blueglow"]
+scope = "global"
+cursor_radius = 130
+
+[[shaders.preset."cursor.blueglow".passes]]
+shader = "blueglow.glsl"

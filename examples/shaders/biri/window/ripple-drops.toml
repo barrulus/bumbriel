@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."window.ripple-drops"]
-scope = "window"
-
-[[shaders.preset."window.ripple-drops".passes]]
-shader = "ripple-drops.glsl"

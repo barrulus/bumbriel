@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."window.cvd-deutan-combo"]
-scope = "window"
-
-[[shaders.preset."window.cvd-deutan-combo".passes]]
-shader = "cvd-deutan-combo.glsl"

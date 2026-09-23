@@ -1,7 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."cursor.trail"]
-scope = "global"
-
-[[shaders.preset."cursor.trail".passes]]
-shader = "trail.glsl"
-buffer = true

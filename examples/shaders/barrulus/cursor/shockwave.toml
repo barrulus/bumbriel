@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."cursor.shockwave"]
+scope = "global"
+
+[[shaders.preset."cursor.shockwave".passes]]
+shader = "shockwave.glsl"

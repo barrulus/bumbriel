@@ -297,7 +297,9 @@ int main(int argc, char** argv) {
     for (int close = 0; ok && close < 2; close++) {
       char name[128];
       snprintf(name, sizeof(name), "%s-%s.glsl", names[i], close ? "close" : "open");
-      char* source = read_text_file(argv[1], name);
+      char path[160];
+      snprintf(path, sizeof(path), "animations/%s", name);
+      char* source = read_text_file(argv[1], path);
       struct fx_animation_shader* shader =
           source != NULL ? fx_animation_shader_create(fixture.renderer, source, name) : NULL;
       free(source);

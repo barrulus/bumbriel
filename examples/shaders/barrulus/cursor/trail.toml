@@ -1,0 +1,7 @@
+# Barrulus shader collection.
+[shaders.preset."cursor.trail"]
+scope = "global"
+
+[[shaders.preset."cursor.trail".passes]]
+shader = "trail.glsl"
+buffer = true

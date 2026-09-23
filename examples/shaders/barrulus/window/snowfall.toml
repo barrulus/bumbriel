@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.snowfall"]
+scope = "window"
+
+[[shaders.preset."window.snowfall".passes]]
+shader = "snowfall.glsl"

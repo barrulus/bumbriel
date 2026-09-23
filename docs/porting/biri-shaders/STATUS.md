@@ -16,8 +16,8 @@ implemented. The converted bundle contains **59 editable GLSL files**.
 | 6. Feedback cursors | Comet, comet-glow and trail, separate per-pass accumulators and source history | Empty first frame, independent instances, 140-frame decay, changing backgrounds, capture/failed-submit isolation |
 | 7. Integration | Capture inclusion policy, scoped scheduling, idle cap, reload/cycle, installed collection and documentation | Output and isolated-toplevel protocol captures, retained consumers, colour-managed capture, scene idling and lock tests |
 
-See [configuration and authoring](../../user/biri-shaders.md) and
-[the asset README](../../../examples/shaders/biri/README.md). The installation
+See [configuration and authoring](../../user/barrulus-shaders.md) and
+[the asset README](../../../examples/shaders/barrulus/README.md). The installation
 includes `collection.toml`, which registers all postprocess presets and animation
 pairs without selecting an effect.
 
@@ -78,7 +78,7 @@ mkdir -p build-debug/biri-frames
 meson compile -C build-debug umbrielfx/umbrielfx-postprocess-test
 BIRI_SHADER_FRAMES=build-debug/biri-frames \
   build-debug/umbrielfx/umbrielfx-postprocess-test \
-  examples/shaders/biri /tmp/biri-reference
+  examples/shaders/barrulus /tmp/biri-reference
 ```
 
 `BIRI_SHADER_FRAMES` also makes `umbrielfx-biri-shader-test` emit lifecycle/ring
@@ -112,5 +112,7 @@ Review images are build artifacts and are not installed as shader assets.
   scanout/cursor behaviour and long-running mixed-display stress remain live-display
   validation tasks; the headless/GPU tests do not establish those results.
 
-Copied Biri assets retain GPL v3 attribution and license. Package metadata lists
-both the compositor and asset licenses. Frozen sources remain reference material.
+The installed examples are authored by Barrulus and live under
+`examples/shaders/barrulus`. The earlier GPL attribution inferred from the source
+repository has been removed at the author's request. Frozen sources remain
+reference material.

@@ -1,9 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."cursor.comet-glow"]
-scope = "global"
-
-[[shaders.preset."cursor.comet-glow".passes]]
-shader = "comet-glow-0.glsl"
-
-[[shaders.preset."cursor.comet-glow".passes]]
-shader = "comet-glow-1.glsl"

@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."window.fire"]
-scope = "window"
-
-[[shaders.preset."window.fire".passes]]
-shader = "fire.glsl"

@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.ripple-drops"]
+scope = "window"
+
+[[shaders.preset."window.ripple-drops".passes]]
+shader = "ripple-drops.glsl"

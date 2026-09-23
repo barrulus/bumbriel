@@ -36,7 +36,7 @@ UMBRIEL_TEST(windowRuleOpacityDoesNotAttenuateBlur) {
   umbriel::ResolvedWindowRule rule;
   rule.blur = true;
   umbriel::ViewDecoration decoration;
-  decoration.applyRule(rule);
+  decoration.applyRule(rule, {});
 
   const wlr_box box{0, 0, 100, 100};
   decoration.updateBlur(&scene->tree, nullptr, box, box, 0, nullptr, 0.8F, 1.0F);
@@ -62,7 +62,7 @@ UMBRIEL_TEST(transitionOpacityStillAttenuatesBlur) {
   umbriel::ResolvedWindowRule rule;
   rule.blur = true;
   umbriel::ViewDecoration decoration;
-  decoration.applyRule(rule);
+  decoration.applyRule(rule, {});
 
   const wlr_box box{0, 0, 100, 100};
   decoration.updateBlur(&scene->tree, nullptr, box, box, 0, nullptr, 0.4F, 0.5F);

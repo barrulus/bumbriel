@@ -190,8 +190,8 @@ file override earlier values.
 
 See [`examples/config.toml`](examples/config.toml) for the packaged starting configuration and
 [`our online documentation`](https://docs.noctalia.dev/umbriel/) for the full reference.
-The fork's [Biri shader collection](docs/user/biri-shaders.md) covers lifecycle, border, window,
-screen and cursor presets; [port status](docs/porting/biri-shaders/STATUS.md) records validation and differences.
+The fork's [Barrulus shader collection](docs/user/barrulus-shaders.md) covers lifecycle, border, window,
+screen and cursor presets.
 
 ### Nix (home-manager / NixOS)
 

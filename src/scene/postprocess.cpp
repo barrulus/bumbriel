@@ -93,7 +93,20 @@ namespace umbriel {
       return *selection.preset;
     return fallback;
   }
-  void cycleShader(ShaderSelection& selection, std::string_view scope) {
+  bool cycleShader(
+      ShaderSelection& selection, std::string_view scope, std::string_view poolName, std::string_view fallback
+  ) {
+    if (!poolName.empty()) {
+      const auto* pool = shaderPool(poolName, scope);
+      if (!pool)
+        return false;
+      const auto current = std::ranges::find(pool->presets, selectedShader(selection, fallback));
+      selection.preset = current == pool->presets.end() || std::next(current) == pool->presets.end()
+          ? pool->presets.front()
+          : *std::next(current);
+      selection.enabled = true;
+      return true;
+    }
     std::vector<std::string> names;
     const bool category = scope == "cursor" || scope == "screen";
     const std::string prefix = std::string(scope) + ".";
@@ -110,6 +123,7 @@ namespace umbriel {
       selection.preset.reset();
     else
       selection.preset = *std::next(current);
+    return true;
   }
   ShaderSelection& globalShaderSelection() { return globalSelection; }
 } // namespace umbriel

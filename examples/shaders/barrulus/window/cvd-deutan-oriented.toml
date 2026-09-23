@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.cvd-deutan-oriented"]
+scope = "window"
+
+[[shaders.preset."window.cvd-deutan-oriented".passes]]
+shader = "cvd-deutan-oriented.glsl"

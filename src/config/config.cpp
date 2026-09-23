@@ -128,20 +128,6 @@ namespace umbriel {
       return std::nullopt;
     }
 
-    void readDecorationShader(Section& section, DecorationShaderConfig& target) {
-      section.boolean("enabled", target.enabled)
-          .boolean("animated", target.animated)
-          .real("speed", 0.0, 10.0, target.speed)
-          .integer("padding", 0, 1024, target.padding);
-      section.sub("light", [&](Section& light) {
-        light.boolean("enabled", target.light.enabled)
-            .real("spread", 1.0, 256.0, target.light.spread)
-            .real("intensity", 0.0, 4.0, target.light.intensity)
-            .real("threshold", 0.0, 1.0, target.light.threshold);
-      });
-      target.shader = readShaderSource(section);
-    }
-
     void emitDiag(ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg) {
       ConfigDiagnostic diag;
       diag.severity = severity;
@@ -2548,6 +2534,16 @@ namespace umbriel {
           readShaders(root, loaded);
           readKeybinds(root, loaded);
           readWindowRules(root, loaded);
+          const auto validateBorderPool = [&](const DecorationShaderConfig& shader) {
+            if (!shader.pool.empty() && !std::ranges::any_of(loaded.shaders.pools, [&](const auto& pool) {
+                  return pool.name == shader.pool && pool.scope == "border";
+                }))
+              warnAt(root.table().source(), "unknown border shader pool: {}", shader.pool);
+          };
+          validateBorderPool(loaded.appearance.borderShader);
+          for (const auto& rule : loaded.windowRules)
+            if (rule.borderShader)
+              validateBorderPool(*rule.borderShader);
           readLayerRules(root, loaded);
           readSecurityContextRules(root, loaded);
           readWorkspaces(root, loaded);

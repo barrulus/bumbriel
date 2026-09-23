@@ -705,12 +705,7 @@ install_data(
   'examples/config.toml',
   install_dir: get_option('datadir') / 'umbriel',
 )
-install_data(
-  'examples/shaders/reveal.glsl',
-  'examples/shaders/squash.glsl',
-  install_dir: get_option('datadir') / 'umbriel' / 'shaders',
-)
 install_subdir(
-  'examples/shaders/biri',
+  'examples/shaders/barrulus',
   install_dir: get_option('datadir') / 'umbriel' / 'shaders',
 )

@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."screen.vignette"]
+scope = "global"
+
+[[shaders.preset."screen.vignette".passes]]
+shader = "vignette.glsl"

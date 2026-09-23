@@ -53,7 +53,7 @@ namespace umbriel {
     // Blur
     [[nodiscard]] SurfaceBlurOptions blurOptions() const { return m_blurOptions; }
     [[nodiscard]] SurfaceBlurOptions popupBlurOptions() const { return m_popupBlurOptions; }
-    void applyRule(const ResolvedWindowRule& rule);
+    void applyRule(const ResolvedWindowRule& rule, const DecorationShaderConfig& shader);
     void updateBlur(
         wlr_scene_tree* tree, wlr_surface* surface, const wlr_box& nodeBox, const wlr_box& geometry, int radius,
         const wlr_box* clip, float surfaceOpacity, float blurAlpha

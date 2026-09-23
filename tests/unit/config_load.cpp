@@ -3259,7 +3259,7 @@ preset="unknown"
 
 UMBRIEL_TEST(collectionRegistersEveryPresetAndRuntimeAnimationPairs) {
   auto& store = umbriel::configStore();
-  const auto path = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/biri/collection.toml";
+  const auto path = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/barrulus/collection.toml";
   CHECK(store.load(path.c_str()));
   CHECK(store.diagnostics().empty());
   CHECK_EQ(store.config().shaders.presets.size(), size_t{45});
@@ -3278,6 +3278,61 @@ UMBRIEL_TEST(collectionRegistersEveryPresetAndRuntimeAnimationPairs) {
   CHECK(!umbriel::selectedWindowsOut().shader);
   CHECK(!umbriel::selectAnimationPair("nonexistent"));
   CHECK(umbriel::selectAnimationPair("default"));
+}
+
+UMBRIEL_TEST(shaderPoolsValidateEntriesAndPreserveOrder) {
+  const TempConfig file;
+  file.write(R"(
+[shaders]
+window_pool = "reading"
+[shaders.border.fuse]
+padding = 48
+speed = 2
+[shaders.border.fuse.light]
+enabled = true
+intensity = 1.4
+[shaders.border.pulse]
+padding = 0
+[shaders.pool.rings]
+scope = "border"
+presets = ["pulse", "fuse"]
+[shaders.pool.reading]
+presets = ["invert", "grayscale"]
+[shaders.pool.bad]
+presets = ["missing"]
+[shaders.pool.duplicate]
+scope = "border"
+presets = ["fuse", "fuse"]
+[[window_rule]]
+match.app_id = "ghostty"
+[window_rule.border_shader]
+pool = "rings"
+)");
+  auto& store = umbriel::configStore();
+  CHECK(store.load(file.path().c_str()));
+  const auto& shaders = store.config().shaders;
+  CHECK_EQ(shaders.pools.size(), size_t{2});
+  CHECK_EQ(shaders.windowPool, std::string("reading"));
+  CHECK_EQ(umbriel::shaderPool("rings", "border")->presets.front(), std::string("pulse"));
+  CHECK(!umbriel::shaderPool("rings", "window"));
+  CHECK_EQ(umbriel::borderPreset("fuse")->padding, 48);
+  CHECK_EQ(umbriel::borderPreset("fuse")->light.intensity, 1.4);
+  CHECK_EQ(store.config().windowRules.front().borderShader->pool, std::string("rings"));
+  CHECK(containsDiagnostic(store, "invalid shader pool"));
+}
+
+UMBRIEL_TEST(examplePoolsLoadWithTheWindowCollection) {
+  const TempConfig file;
+  const auto base = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/barrulus";
+  file.write(
+      "[include]\nfiles = ['" + (base / "windows.toml").string() + "', '" + (base / "pools.toml").string() + "']\n"
+  );
+  auto& store = umbriel::configStore();
+  CHECK(store.load(file.path().c_str()));
+  CHECK(store.diagnostics().empty());
+  CHECK_EQ(store.config().shaders.pools.size(), size_t{2});
+  CHECK_EQ(store.config().shaders.borders.size(), size_t{4});
+  CHECK(umbriel::borderPreset("fuse")->shader.has_value());
 }
 
 int main() { return RUN_TESTS(); }

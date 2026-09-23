@@ -204,6 +204,7 @@ namespace umbriel {
     return outputAllowed && windowOverride.value_or(clientHintAsync);
   }
   struct DecorationShaderConfig {
+    std::string pool;
     bool enabled = true;
     bool animated = true;
     double speed = 1.0;
@@ -497,6 +498,21 @@ namespace umbriel {
         int x = 0, y = 0, width = 0, height = 0;
         bool operator==(const Region&) const = default;
       };
+      struct Pool {
+        std::string name;
+        std::string scope = "window";
+        std::string allocation = "unused-first";
+        std::vector<std::string> presets;
+        bool operator==(const Pool&) const = default;
+      };
+      struct BorderPreset {
+        std::string name;
+        DecorationShaderConfig settings;
+        bool operator==(const BorderPreset&) const = default;
+      };
+      std::vector<Pool> pools;
+      std::vector<BorderPreset> borders;
+      std::string windowPool;
       std::vector<Preset> presets;
       std::vector<Region> regions;
       std::string window, output, global;

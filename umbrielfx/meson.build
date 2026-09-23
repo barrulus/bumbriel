@@ -201,7 +201,7 @@ if build_tests
     link_with: umbrielfx_lib, build_by_default: false,
   )
   test('postprocess-collection', umbrielfx_postprocess_test,
-    args: meson.project_source_root() / 'examples/shaders/biri', suite: 'umbrielfx')
+    args: meson.project_source_root() / 'examples/shaders/barrulus', suite: 'umbrielfx')
 
   umbrielfx_biri_shader_test = executable(
     'umbrielfx-biri-shader-test',
@@ -215,7 +215,7 @@ if build_tests
   test(
     'biri-shader-collection',
     umbrielfx_biri_shader_test,
-    args: meson.project_source_root() / 'examples/shaders/biri',
+    args: meson.project_source_root() / 'examples/shaders/barrulus',
     suite: 'umbrielfx',
   )
 

@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."window.autumn-leaves"]
-scope = "window"
-
-[[shaders.preset."window.autumn-leaves".passes]]
-shader = "autumn-leaves.glsl"

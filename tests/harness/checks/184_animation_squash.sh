@@ -2,7 +2,7 @@
 # Hold layout still while the opening timeline exercises the bundled shader.
 # Its middle frame must compress the client, then restore the same edge pixels.
 set -euo pipefail
-readonly SHADER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/shaders" && pwd)/squash.glsl"
+readonly SHADER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/shaders/barrulus/animations" && pwd)/squash.glsl"
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/squash.png"
 cat >> "$UMBRIEL_CONFIG" <<EOF
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "config/config.h"
+#include "config/shader_pool.h"
 #include "core/animation.h"
 #include "scene/node.h"
 #include "scene/postprocess.h"
@@ -76,6 +77,9 @@ namespace umbriel {
     [[nodiscard]] bool onActiveWorkspace() const { return m_onActiveWorkspace; }
     fx_postprocess_chain* windowShader();
     void refreshWindowShader();
+    std::string_view windowShaderName();
+    DecorationShaderConfig borderShaderSettings();
+    bool selectBorderShader(std::string_view operation);
     ShaderSelection& shaderSelection() { return m_shaderSelection; }
     [[nodiscard]] bool tiled() const { return m_tiled; }
     [[nodiscard]] bool floating() const { return !m_tiled; }
@@ -607,6 +611,9 @@ namespace umbriel {
     wlr_scene* m_captureScene = nullptr;
     ViewDecoration m_decoration;
     ShaderSelection m_shaderSelection;
+    ShaderSelection m_borderSelection;
+    std::optional<std::string> m_borderPool;
+    std::shared_ptr<ShaderPoolLease> m_borderLease;
     wlr_scene_rect* m_shaderRect = nullptr;
     wlr_scene_rect* m_captureShaderRect = nullptr;
     ViewPresentation m_presentation;

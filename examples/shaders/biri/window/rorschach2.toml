@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."window.rorschach2"]
-scope = "window"
-
-[[shaders.preset."window.rorschach2".passes]]
-shader = "rorschach2.glsl"

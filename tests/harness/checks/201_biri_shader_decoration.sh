@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Persistent ring pixels must continue changing with every transition disabled.
 set -euo pipefail
-readonly SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/shaders/biri/rings" && pwd)"
+readonly SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/shaders/barrulus/rings" && pwd)"
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/ring.png"
 cp "$SOURCE/pulse.glsl" "$UMBRIEL_RUNTIME_DIR/ring.glsl"
 cat >> "$UMBRIEL_CONFIG" <<'TOML'

@@ -899,4 +899,14 @@ UMBRIEL_TEST(shaderSelectorsKeepTargetAndCategorySemantics) {
   CHECK(!parseAction("shader:window", bind));
 }
 
+UMBRIEL_TEST(borderPoolActionsAcceptWindowTargets) {
+  umbriel::Keybind bind;
+  CHECK(umbriel::parseAction("shader:border cycle:rings window-id", bind));
+  const auto& arg = std::get<umbriel::ShaderArg>(bind.payload);
+  CHECK_EQ(arg.scope, std::string("border"));
+  CHECK_EQ(arg.operation, std::string("cycle:rings"));
+  CHECK_EQ(arg.target, std::string("window-id"));
+  CHECK(umbriel::parseAction("shader:window cycle:reading", bind));
+}
+
 int main() { return RUN_TESTS(); }

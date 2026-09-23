@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.parchment"]
+scope = "window"
+
+[[shaders.preset."window.parchment".passes]]
+shader = "parchment.glsl"

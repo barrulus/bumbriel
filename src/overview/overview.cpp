@@ -284,8 +284,7 @@ namespace umbriel {
     }
     wlr_scene_node_set_enabled(&card.border->node, borderVisible);
     if (borderVisible) {
-      const auto& overrideSettings = view->resolvedRules().borderShader;
-      const auto& settings = overrideSettings ? *overrideSettings : appearance.borderShader;
+      const auto settings = view->borderShaderSettings();
       auto* shader = view == liveTarget ? decorationShader(settings) : nullptr;
       const int padding = shader != nullptr ? static_cast<int>(std::ceil(settings.padding * z)) : 0;
       const auto parameters = decorationParameters(settings, static_cast<float>(padding), static_cast<float>(z), false);

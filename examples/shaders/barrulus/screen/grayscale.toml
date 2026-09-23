@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."screen.grayscale"]
+scope = "global"
+
+[[shaders.preset."screen.grayscale".passes]]
+shader = "grayscale.glsl"

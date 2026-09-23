@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."cursor.spotlight"]
-scope = "global"
-
-[[shaders.preset."cursor.spotlight".passes]]
-shader = "spotlight.glsl"

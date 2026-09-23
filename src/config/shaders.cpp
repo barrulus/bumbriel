@@ -9,6 +9,21 @@
 #include <format>
 
 namespace umbriel {
+  void readDecorationShader(Section& section, DecorationShaderConfig& target) {
+    section.text("pool", target.pool)
+        .boolean("enabled", target.enabled)
+        .boolean("animated", target.animated)
+        .real("speed", 0.0, 10.0, target.speed)
+        .integer("padding", 0, 1024, target.padding);
+    section.sub("light", [&](Section& light) {
+      light.boolean("enabled", target.light.enabled)
+          .real("spread", 1.0, 256.0, target.light.spread)
+          .real("intensity", 0.0, 4.0, target.light.intensity)
+          .real("threshold", 0.0, 1.0, target.light.threshold);
+    });
+    target.shader = readShaderSource(section);
+  }
+
   std::optional<AnimationShaderSource> readShaderSource(Section& section) {
     auto result = readAnimationShader(section, configStore().mutableDiagnostics());
     for (auto& path : result.watchPaths)
@@ -61,6 +76,19 @@ namespace umbriel {
     return AnimationShaderSource{start + body, "builtin:" + std::string(name)};
   }
 
+  const Config::Shaders::Pool* shaderPool(std::string_view name, std::string_view scope) {
+    for (const auto& pool : config().shaders.pools)
+      if (pool.name == name && pool.scope == scope)
+        return &pool;
+    return nullptr;
+  }
+  const DecorationShaderConfig* borderPreset(std::string_view name) {
+    for (const auto& preset : config().shaders.borders)
+      if (preset.name == name)
+        return &preset.settings;
+    return nullptr;
+  }
+
   void readShaders(Section& root, Config& loaded) {
     auto& settings = loaded.shaders;
     auto& diagnostics = configStore().mutableDiagnostics();
@@ -69,6 +97,7 @@ namespace umbriel {
     };
     root.sub("shaders", [&](Section& section) {
       section.text("window", settings.window)
+          .text("window_pool", settings.windowPool)
           .text("output", settings.output)
           .text("global", settings.global)
           .text("redraw", settings.redraw)
@@ -125,6 +154,71 @@ namespace umbriel {
           settings.presets.push_back(std::move(preset));
         }
       });
+      section.sub("border", [&](Section& borders) {
+        borders.freeform();
+        for (const auto& [name, node] : borders.table()) {
+          if (!node.is_table()) {
+            warn(node, "border preset must be a table");
+            continue;
+          }
+          Config::Shaders::BorderPreset preset;
+          preset.name = name.str();
+          Section keys(*node.as_table(), "shaders.border." + preset.name, diagnostics);
+          readDecorationShader(keys, preset.settings);
+          if (!preset.settings.pool.empty()) {
+            warn(node, "border presets cannot reference pools");
+            preset.settings.pool.clear();
+          }
+          settings.borders.push_back(std::move(preset));
+        }
+      });
+      section.sub("pool", [&](Section& pools) {
+        pools.freeform();
+        for (const auto& [name, node] : pools.table()) {
+          if (!node.is_table()) {
+            warn(node, "shader pool must be a table");
+            continue;
+          }
+          Config::Shaders::Pool pool;
+          pool.name = name.str();
+          Section keys(*node.as_table(), "shaders.pool." + pool.name, diagnostics);
+          keys.text("scope", pool.scope).text("allocation", pool.allocation);
+          bool valid = pool.scope == "window" || pool.scope == "border";
+          valid &= pool.allocation == "unused-first" || pool.allocation == "round-robin";
+          const auto* entries = keys.take("presets");
+          if (entries && entries->is_array()) {
+            for (const auto& entry : *entries->as_array()) {
+              const auto value = entry.value<std::string>();
+              if (!value || std::ranges::contains(pool.presets, *value)) {
+                valid = false;
+                continue;
+              }
+              const bool known = pool.scope == "border"
+                  ? std::ranges::any_of(settings.borders, [&](const auto& p) { return p.name == *value; })
+                  : std::ranges::any_of(settings.presets, [&](const auto& p) {
+                      return p.name == *value && p.scope == "window";
+                    }) || std::ranges::contains(kBuiltinShaders, std::string_view(*value));
+              valid &= known;
+              pool.presets.push_back(*value);
+            }
+          }
+          if (!valid || pool.presets.empty()) {
+            warn(
+                node,
+                "ignoring invalid shader pool: expected scope window/border, allocation unused-first/round-robin and "
+                "unique known presets"
+            );
+            continue;
+          }
+          settings.pools.push_back(std::move(pool));
+        }
+      });
+      if (!settings.windowPool.empty() && !std::ranges::any_of(settings.pools, [&](const auto& pool) {
+            return pool.name == settings.windowPool && pool.scope == "window";
+          })) {
+        warn(section.table(), "unknown window_pool; using the full window cycle");
+        settings.windowPool.clear();
+      }
       if (settings.redraw != "auto" && settings.redraw != "on-damage" && settings.redraw != "continuous") {
         warn(section.table(), "shaders.redraw must be auto, on-damage or continuous; using auto");
         settings.redraw = "auto";

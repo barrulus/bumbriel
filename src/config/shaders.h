@@ -8,6 +8,9 @@
 namespace umbriel {
   class Section;
   inline constexpr std::array<std::string_view, 4> kBuiltinShaders{"grayscale", "invert", "saturation", "temperature"};
+  void readDecorationShader(Section& section, DecorationShaderConfig& target);
+  const Config::Shaders::Pool* shaderPool(std::string_view name, std::string_view scope);
+  const DecorationShaderConfig* borderPreset(std::string_view name);
   void readShaders(Section& root, Config& loaded);
   // Reads a shader file and registers it with the config watcher.
   std::optional<AnimationShaderSource> readShaderSource(Section& section);

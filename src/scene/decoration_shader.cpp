@@ -42,6 +42,8 @@ namespace umbriel {
     for (const auto& rule : config().windowRules)
       if (rule.borderShader)
         prepare(*rule.borderShader);
+    for (const auto& preset : config().shaders.borders)
+      prepare(preset.settings);
     cachedRenderer = renderer;
   }
   void clearDecorationShaderCache() {

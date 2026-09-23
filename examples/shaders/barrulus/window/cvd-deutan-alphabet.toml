@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.cvd-deutan-alphabet"]
+scope = "window"
+
+[[shaders.preset."window.cvd-deutan-alphabet".passes]]
+shader = "cvd-deutan-alphabet.glsl"

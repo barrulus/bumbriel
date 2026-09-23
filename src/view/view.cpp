@@ -2,6 +2,7 @@
 
 #include "config/config.h"
 #include "config/resolve.h"
+#include "config/shaders.h"
 #include "config/store.h"
 #include "core/log.h"
 #include "core/tracy.h"
@@ -2207,10 +2208,70 @@ namespace umbriel {
       wlr_scene_rect_set_size(m_shaderRect, contentWidth, contentHeight);
   }
 
-  fx_postprocess_chain* View::windowShader() {
-    const auto& rule = resolvedRules();
-    return postprocessShader(selectedShader(m_shaderSelection, rule.shader ? *rule.shader : config().shaders.window));
+  namespace {
+    ShaderPoolAllocator borderPools;
   }
+
+  DecorationShaderConfig View::borderShaderSettings() {
+    auto settings = resolvedRules().borderShader.value_or(config().appearance.borderShader);
+    const bool ruleEnabled = settings.enabled;
+    const auto poolName = m_borderPool.value_or(settings.pool);
+    if (m_borderSelection.preset) {
+      if (const auto* preset = borderPreset(*m_borderSelection.preset))
+        settings = *preset;
+      else
+        m_borderSelection.preset.reset();
+    }
+    if (!m_borderSelection.preset && m_mapped) {
+      if (const auto* pool = shaderPool(poolName, "border")) {
+        borderPools.select(*pool, m_borderLease);
+        if (m_borderLease)
+          if (const auto* preset = borderPreset(m_borderLease->preset))
+            settings = *preset;
+      } else if (m_borderLease && !shaderPool(m_borderLease->pool, "border"))
+        m_borderLease.reset();
+    }
+    settings.enabled &= ruleEnabled && m_borderSelection.enabled;
+    return settings;
+  }
+
+  bool View::selectBorderShader(std::string_view operation) {
+    if (operation == "toggle")
+      m_borderSelection.enabled = !m_borderSelection.enabled;
+    else if (operation == "off" || operation == "on")
+      m_borderSelection.enabled = operation == "on";
+    else if (operation == "default") {
+      m_borderSelection = {};
+      m_borderPool.reset();
+    } else if (operation == "cycle" || operation.starts_with("cycle:")) {
+      const auto settings = resolvedRules().borderShader.value_or(config().appearance.borderShader);
+      const std::string poolName =
+          operation == "cycle" ? m_borderPool.value_or(settings.pool) : std::string(operation.substr(6));
+      const auto* pool = shaderPool(poolName, "border");
+      if (!pool)
+        return false;
+      // Synchronise a rule-assigned pool before advancing its current entry.
+      borderShaderSettings();
+      borderPools.select(*pool, m_borderLease, true, m_borderSelection.preset.value_or(""));
+      m_borderPool = poolName;
+      m_borderSelection = {};
+    } else if (borderPreset(operation)) {
+      m_borderLease.reset();
+      m_borderSelection.preset = operation;
+      m_borderSelection.enabled = true;
+    } else
+      return false;
+    applyDynamicRules();
+    updateBorderGeometry();
+    return true;
+  }
+
+  std::string_view View::windowShaderName() {
+    const auto& rule = resolvedRules();
+    return selectedShader(m_shaderSelection, rule.shader ? *rule.shader : config().shaders.window);
+  }
+
+  fx_postprocess_chain* View::windowShader() { return postprocessShader(windowShaderName()); }
 
   void View::refreshWindowShader() {
     if (m_contentTree == nullptr)
@@ -3116,6 +3177,9 @@ namespace umbriel {
       setSceneParent(m_workspace ? m_workspace->viewLayer(m_tiled) : m_server->xdgTree());
     }
     m_mapped = false;
+    m_borderLease.reset();
+    m_borderPool.reset();
+    m_borderSelection = {};
     m_openingParentRequested = false;
     m_acceptClientMaximizeRequests = false;
     m_consumeRestoredMaximizeRequest = false;
@@ -4590,7 +4654,7 @@ namespace umbriel {
   void View::applyDynamicRules(const ResolvedWindowRule* resolved) {
     const ResolvedWindowRule& rule = resolved != nullptr ? *resolved : resolvedRules();
     m_appliedRuleState = ruleState();
-    m_decoration.applyRule(rule);
+    m_decoration.applyRule(rule, borderShaderSettings());
     refreshWindowShader();
     const float newOpacity = rule.opacity ? static_cast<float>(*rule.opacity) : 1.0F;
     if (newOpacity != m_ruleOpacity) {

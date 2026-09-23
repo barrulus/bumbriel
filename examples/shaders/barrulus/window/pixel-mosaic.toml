@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.pixel-mosaic"]
+scope = "window"
+
+[[shaders.preset."window.pixel-mosaic".passes]]
+shader = "pixel-mosaic.glsl"

@@ -1,6 +1,0 @@
-# Biri collection; GPL-3.0-only, see ../LICENSE.
-[shaders.preset."screen.grayscale"]
-scope = "global"
-
-[[shaders.preset."screen.grayscale".passes]]
-shader = "grayscale.glsl"

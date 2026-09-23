@@ -1,0 +1,6 @@
+# Barrulus shader collection.
+[shaders.preset."window.adaptive-text-v4"]
+scope = "window"
+
+[[shaders.preset."window.adaptive-text-v4".passes]]
+shader = "adaptive-text-v4.glsl"

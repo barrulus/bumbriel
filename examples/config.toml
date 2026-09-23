@@ -181,6 +181,7 @@ blur_optimized = false
 
 # ==============================================================================
 # Overview
+# Shader presets and pools: shaders/barrulus/README.md
 # Built-in overview and animation values are used. The top-left hot corner opens
 # the overview after a short delay.
 # Overview: https://docs.noctalia.dev/umbriel/workspaces-overview/

@@ -222,13 +222,13 @@ For example, after conversion the existing configuration accepts:
 enabled = true
 duration_ms = 400
 curve = "linear"
-shader = "shaders/biri/whirlpool-open.glsl"
+shader = "shaders/barrulus/whirlpool-open.glsl"
 
 [animation.windows_out]
 enabled = true
 duration_ms = 500
 curve = "linear"
-shader = "shaders/biri/whirlpool-close.glsl"
+shader = "shaders/barrulus/whirlpool-close.glsl"
 ```
 
 Those file paths are proposed converted assets, not files already supplied by this

@@ -83,11 +83,7 @@ stdenv.mkDerivation {
   meta = with lib; {
     description = "A Wayland compositor built on wlroots";
     homepage = "https://github.com/noctalia-dev/umbriel";
-    # The compositor is MIT; the installed Biri shader assets retain GPL v3.
-    license = [
-      licenses.mit
-      licenses.gpl3Only
-    ];
+    license = licenses.mit;
     platforms = platforms.linux;
     mainProgram = "umbriel";
   };

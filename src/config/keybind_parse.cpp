@@ -498,15 +498,18 @@ namespace umbriel {
             arg.remove_prefix(std::min(arg.find_first_not_of(' '), arg.size()));
             return word;
           };
-          constexpr std::array<std::string_view, 6> kScopes{"window",    "output", "global",
-                                                            "animation", "cursor", "screen"};
+          constexpr std::array<std::string_view, 7> kScopes{"window", "output", "global", "animation",
+                                                            "cursor", "screen", "border"};
           ShaderArg shader;
           shader.scope = nextWord();
           shader.operation = nextWord();
           shader.target = arg;
           if (shader.operation.empty() || !std::ranges::contains(kScopes, std::string_view(shader.scope)))
             return false;
-          if (shader.scope != "window" && shader.scope != "output" && !shader.target.empty())
+          if (shader.scope != "window"
+              && shader.scope != "border"
+              && shader.scope != "output"
+              && !shader.target.empty())
             return false;
           output.action = spec.action;
           output.payload = std::move(shader);

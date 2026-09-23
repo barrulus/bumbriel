@@ -146,8 +146,8 @@ namespace umbriel {
   }
 
   // Blur
-  void ViewDecoration::applyRule(const ResolvedWindowRule& rule) {
-    m_shaderConfig = rule.borderShader.value_or(config().appearance.borderShader);
+  void ViewDecoration::applyRule(const ResolvedWindowRule& rule, const DecorationShaderConfig& shader) {
+    m_shaderConfig = shader;
     updateShader();
     m_blurOptions = SurfaceBlurOptions{
         .ignoreAlpha = static_cast<float>(rule.blurIgnoreAlpha.value_or(0.0)),

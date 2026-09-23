@@ -68,7 +68,7 @@ chooses its own duration, so `duration_ms` has no effect on that event.
 
 ## Event tables
 
-The [Biri collection](biri-shaders.md) provides matched open/close presets and
+The [Barrulus collection](barrulus-shaders.md) provides matched open/close presets and
 persistent active-border shaders. Persistent rings have their own settings and
 continue after the `animation.border` colour transition ends.
 
@@ -139,15 +139,15 @@ directly:
 [animation.windows_in]
 duration_ms = 300
 curve = "easeout"
-shader = "/usr/share/umbriel/shaders/reveal.glsl"
+shader = "/usr/share/umbriel/shaders/barrulus/animations/reveal.glsl"
 
 [animation.windows_out]
 duration_ms = 250
 curve = "easeout"
-shader = "/usr/share/umbriel/shaders/reveal.glsl"
+shader = "/usr/share/umbriel/shaders/barrulus/animations/reveal.glsl"
 
 [animation.windows_move]
-shader = "/usr/share/umbriel/shaders/squash.glsl"
+shader = "/usr/share/umbriel/shaders/barrulus/animations/squash.glsl"
 ```
 
 Adjust `/usr/share` for the package prefix. Relative paths resolve from the
@@ -159,7 +159,7 @@ NixOS users can derive the path from the configured package:
 ```nix
 {
   programs.umbriel.settings.animation.windows_in.shader =
-    "${config.programs.umbriel.package}/share/umbriel/shaders/reveal.glsl";
+    "${config.programs.umbriel.package}/share/umbriel/shaders/barrulus/animations/reveal.glsl";
 }
 ```
 

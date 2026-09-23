@@ -17,6 +17,8 @@ namespace umbriel {
   fx_postprocess_chain* postprocessShader(std::string_view name);
   const Config::Shaders::Preset* postprocessPreset(std::string_view name);
   std::string_view selectedShader(const ShaderSelection& selection, std::string_view fallback);
-  void cycleShader(ShaderSelection& selection, std::string_view scope);
+  bool cycleShader(
+      ShaderSelection& selection, std::string_view scope, std::string_view pool = {}, std::string_view fallback = {}
+  );
   ShaderSelection& globalShaderSelection();
 } // namespace umbriel
