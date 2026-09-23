@@ -181,9 +181,9 @@ static inline char* read_text_file(const char* directory, const char* name) {
   return text;
 }
 
-// With BIRI_SHADER_FRAMES set, dumps a frame as a PPM composited over a checkerboard.
+// With UMBRIEL_SHADER_FRAMES set, dumps a frame as a PPM composited over a checkerboard.
 static inline bool write_frame(const char* name, int frame, const uint32_t* pixels, int width, int height) {
-  const char* directory = getenv("BIRI_SHADER_FRAMES");
+  const char* directory = getenv("UMBRIEL_SHADER_FRAMES");
   if (directory == NULL)
     return true;
   char flat[256];

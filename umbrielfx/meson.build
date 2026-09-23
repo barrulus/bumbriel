@@ -203,9 +203,9 @@ if build_tests
   test('postprocess-collection', umbrielfx_postprocess_test,
     args: meson.project_source_root() / 'examples/shaders/barrulus', suite: 'umbrielfx')
 
-  umbrielfx_biri_shader_test = executable(
-    'umbrielfx-biri-shader-test',
-    'tests/biri_shader.c',
+  umbrielfx_shader_collection_test = executable(
+    'umbrielfx-shader-collection-test',
+    'tests/shader_collection.c',
     c_args: umbrielfx_c_args,
     dependencies: umbrielfx_deps,
     include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
@@ -213,8 +213,8 @@ if build_tests
     build_by_default: false,
   )
   test(
-    'biri-shader-collection',
-    umbrielfx_biri_shader_test,
+    'shader-collection',
+    umbrielfx_shader_collection_test,
     args: meson.project_source_root() / 'examples/shaders/barrulus',
     suite: 'umbrielfx',
   )

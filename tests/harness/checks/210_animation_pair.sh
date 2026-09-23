@@ -34,9 +34,12 @@ for _ in $(seq 80); do
   sleep 0.025
 done
 [[ -n $window ]] || { echo "pair opener never mapped"; exit 1; }
-x=$(jq -r '.x + 100' <<< "$window")
-y=$(jq -r '.y + 100' <<< "$window")
 read_pixel() {
+  # The first IPC record can precede the admitting arrange. Sample the current
+  # client centre, not coordinates captured before tiled placement settled.
+  window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "pair-opener")')
+  x=$(jq -r '.x + (.w / 2 | floor)' <<< "$window")
+  y=$(jq -r '.y + (.h / 2 | floor)' <<< "$window")
   grim "$UMBRIEL_RUNTIME_DIR/pair.png"
   magick "$UMBRIEL_RUNTIME_DIR/pair.png" -crop "8x8+$x+$y" +repage \
     -format '%[fx:round(mean.r*255)] %[fx:round(mean.g*255)] %[fx:round(mean.b*255)]\n' info:

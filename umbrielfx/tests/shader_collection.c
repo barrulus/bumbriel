@@ -1,4 +1,4 @@
-// Pixel tests for the Biri collection through the production renderer.
+// Pixel tests for the Barrulus collection through the production renderer.
 #include "render/fx_renderer/decoration.h"
 #include "render_fixture.h"
 
