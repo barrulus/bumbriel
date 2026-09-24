@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -51,10 +52,12 @@ namespace umbriel {
     void sortDiagnostics();
     // Adopt a successfully parsed config and bump the generation.
     [[nodiscard]] ConfigReloadResult commit(Config&& config, std::filesystem::path rootPath, bool fileMissing);
+    void setEffectValidator(std::function<bool(const Config&)> validator) { m_effectValidator = std::move(validator); }
     void setMissingIncludes(bool missing) { m_missingIncludes = missing; }
     void setRootPath(std::filesystem::path path, bool explicitPath);
 
   private:
+    std::function<bool(const Config&)> m_effectValidator;
     Config m_config;
     std::vector<ConfigDiagnostic> m_diagnostics;
     std::vector<std::filesystem::path> m_watchPaths;

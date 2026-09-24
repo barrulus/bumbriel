@@ -26,13 +26,14 @@ endif
 
 umbrielfx_sources = files(
   'render/color.c',
-  'render/wobble.c',
+  'render/drag_physics.c',
   'render/egl.c',
   'render/pixel_format.c',
   'render/fx_renderer/fx_framebuffer.c',
   'render/fx_renderer/fx_offscreen_buffers.c',
   'render/fx_renderer/fx_pass.c',
   'render/fx_renderer/postprocess.c',
+  'render/fx_renderer/params.c',
   'render/fx_renderer/fx_renderer.c',
   'render/fx_renderer/fx_texture.c',
   'render/fx_renderer/pixel_format.c',
@@ -145,7 +146,8 @@ foreach shader : [
   'decoration.frag',
   'decoration_light.frag',
   'postprocess.frag',
-  'wobble.frag',
+  'palette.frag',
+  'drag_physics.frag',
   'postprocess_composite.frag',
   'box_shadow.frag',
   'common.vert',
@@ -196,13 +198,21 @@ umbrielfx_dep = declare_dependency(
 )
 
 if build_tests
-  umbrielfx_wobble_test = executable(
-    'umbrielfx-wobble-test', ['tests/wobble.c', 'render/wobble.c'],
+  umbrielfx_drag_physics_test = executable(
+    'umbrielfx-drag-physics-test', ['tests/drag_physics.c', 'render/drag_physics.c'],
     include_directories: umbrielfx_inc,
     dependencies: umbrielfx_math_dep,
     build_by_default: false,
   )
-  test('wobble', umbrielfx_wobble_test, suite: 'umbrielfx')
+  test('drag-physics', umbrielfx_drag_physics_test, suite: 'umbrielfx')
+
+  umbrielfx_effects_test = executable(
+    'umbrielfx-effects-test', 'tests/effects.c',
+    c_args: umbrielfx_c_args, dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib, build_by_default: false,
+  )
+  test('effects-renderer', umbrielfx_effects_test, suite: 'umbrielfx')
 
   umbrielfx_postprocess_test = executable(
     'umbrielfx-postprocess-test', 'tests/postprocess.c',

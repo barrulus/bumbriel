@@ -26,6 +26,7 @@ GLSL
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 corner_radius = 0
 [appearance.shadow]
@@ -37,11 +38,9 @@ duration_ms = 1800
 curve = "linear"
 [animation.windows_in]
 style = "none"
-shader = "seed.glsl"
 [animation.windows_out]
 duration_ms = 900
 style = "fade"
-shader = "seed-passthrough.glsl"
 [animation.windows_move]
 enabled = false
 
@@ -49,6 +48,12 @@ enabled = false
 match.title = "^shader-seed$"
 default_floating = true
 default_position = { x = 300, y = 180, anchor = "top_left" }
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "seed.glsl"}]
+[effects.fixture.close]
+passes = [{shader = "seed-passthrough.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

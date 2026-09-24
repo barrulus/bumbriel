@@ -18,6 +18,7 @@ cat >> "$UMBRIEL_CONFIG" <<EOF
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -41,7 +42,6 @@ enabled = false
 enabled = true
 duration_ms = 6500
 curve = "linear"
-shader = "solid-blue.glsl"
 
 [animation.windows_move]
 enabled = true
@@ -57,6 +57,10 @@ default_scrolling_column_order = 10
 match.title = "^retained-opener$"
 default_scrolling_column = "retained-left-stack"
 default_scrolling_column_order = 20
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "solid-blue.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

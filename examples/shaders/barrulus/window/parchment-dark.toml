@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.parchment-dark"]
-scope = "window"
-
-[[shaders.preset."window.parchment-dark".passes]]
-shader = "parchment-dark.glsl"
+[effects."window.parchment-dark".content]
+passes = [{ shader = "parchment-dark.glsl" }]

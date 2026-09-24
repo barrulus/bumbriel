@@ -1,14 +1,6 @@
-# Paired focus ring; the overlay is independent of the window-content shader.
-[appearance]
-border_width = 6
-outer_border_width = 0
-corner_radius = 10
-
-[appearance.border_shader]
-shader = "portal-lava.glsl"
+[effects.portal-lava.border.outer]
 padding = 14
-overlay = "ring.portal-lava"
+passes = [{ shader = "portal-lava.glsl" }]
 
-[shaders.preset."ring.portal-lava"]
-scope = "border"
+[effects.portal-lava.border.inner]
 passes = [{ shader = "../window/portal-lava-overlay.glsl" }]

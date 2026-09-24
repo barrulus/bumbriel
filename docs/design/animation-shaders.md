@@ -5,16 +5,19 @@ and authoring details are in [Animation](../user/animation.md#custom-glsl-shader
 
 ## Configuration and compilation
 
-`readAnimationShader` uses a `Section` reader for the `shader` file path.
+Effect pass parsing uses the shared `readAnimationShader` source reader for each
+`shader` file path.
 Inline GLSL is not accepted. Paths resolve relative
 to the declaring TOML file, including included files. The loader registers file
 dependencies even when missing, and includes source contents in configuration
 equality. Validation rejects blank/NUL text, nonregular files, and inputs larger
 than 256 KiB. Nonblocking file opens prevent FIFOs hanging config reload.
 
-The C++ scene adapter caches one program per event, exact source, and renderer.
-Startup and animation config reload prepare programs before rendering. Failures
-are cached too, avoiding per-frame compiler retries. UmbrielFX supplies a GLSL
+The C++ scene adapter caches prepared pipelines by contract, source, and settings.
+UmbrielFX shares compiled programs by exact wrapped source and renderer, independently
+of instance parameters. Startup and reload prepare every enabled definition before
+committing the configuration. Invalid generations leave the active configuration
+unchanged. Failed compilations have a bounded cache, avoiding per-frame retries. UmbrielFX supplies a GLSL
 ES 1.00 wrapper around `vec4 animation(vec2 uv)`, normalized target sampling,
 target-local previous-result sampling, a stable four-channel random seed,
 logical target size, eased and linear progress, and transition direction.
@@ -33,9 +36,12 @@ start from a partial alpha that normalized progress does not carry.
 ## Scene processing
 
 Effect state is attached through scene-node addons, preserving the scene ABI.
-Ten ordered slots permit simultaneous effects on a node. Descendant effects
-run before ancestor effects; same-node order is dimming, border, movement,
-opening, closing, scratchpad, layers, workspaces, overview, then interactive wobble.
+Eleven ordered event slots permit simultaneous effects on a node. Each slot owns
+up to sixteen passes and independent per-pass feedback; passes do not consume
+event slots. Descendant effects run before ancestor effects; same-node order is
+dimming, border, resize, movement, opening, closing, scratchpad, layers, workspaces,
+overview, then drag physics. Identical move/resize pipelines run once during a
+combined geometry transition.
 
 | Event | Target and timeline owner |
 | --- | --- |
@@ -48,22 +54,24 @@ opening, closing, scratchpad, layers, workspaces, overview, then interactive wob
 | `border` | Border tree and focus-color animation |
 | `dim_unfocused` | View tree and focus-opacity animation |
 | `layers` | Layer tree or close snapshot and map/unmap fade |
-| Interactive wobble | View content tree, driven by pointer displacement and a settling spring grid |
+| Drag physics | View content tree, driven by pointer displacement and a settling spring grid |
 
 The compositor supplies the grab location, actual scene-position deltas, release
-and animation-clock ticks. `umbrielfx/render/wobble.c` owns the 4×4 spring
+and animation-clock ticks. `umbrielfx/render/drag_physics.c` owns the 4×4 spring
 simulation; the compositor keeps its per-view state alive after the grab ends.
 The grab constraint pins the interpolated point rather than rounding to a grid
 vertex. Neighbor springs propagate the impulse, restoring springs return the
 sheet to its rest shape, and damping removes energy. Integration uses fixed
 240 Hz steps. Large clock gaps settle the sheet instead of replaying stale motion.
-Pointer deltas receive a 2× gain spread smoothly around the grab, with softer
-springs and damping for a pronounced bend and a longer jiggle. Limits follow the
+Native Jelly applies a 2× pointer response spread smoothly around the grab. Named
+`drag` presets supply stiffness, coupling, damping, response, vertical gradients,
+and motion-driven downward pull with decay. Live reload replaces coefficients
+without resetting displacement, velocity, grab position, or the motion reservoir. Limits follow the
 actual neighbouring displacement gradients, allowing broad bends without folding
 the sheet. Excursion remains
 capped at 20% of each dimension and 200 logical pixels.
 
-Normalized displacements reach `umbriel_wobble[16]` in the built-in shader.
+Normalized displacements reach `umbriel_deformation[16]` in the built-in shader.
 Smooth interpolation and bounded displacement gradients allow inverse texture
 sampling without a separate mesh API. The final draw quad expands with the
 spring excursion; source sampling stays in the original window rectangle.
@@ -149,7 +157,9 @@ arbitrary target sampling and changes in alpha without stale pixels.
 
 Nodes and the compilation cache hold independent program references. In-flight
 transitions retain their program across source edits until completion or
-retargeting. Removing/disabling an effect clears its active slot. Close
+retargeting. Ordinary edits, including selection removal, retain captured event
+programs and settings. Explicit runtime off and native/master gates cancel custom
+state safely. Close
 snapshots copy current window and border effect parameters, retaining an
 interrupted opening effect inside the new closing effect. Layer unmap capture runs before the
 scene helper disables its subtree.
@@ -186,8 +196,8 @@ layout paths record the resting origin instead of animating toward it. The
 fullscreen backdrop is the window's own letterbox and follows the presented box,
 so the opener scales with its surround rather than inside an output-wide one.
 
-A normal tiled close snapshots the complete decorated view, drops any copied
-movement effect, and is appended above every workspace tree under the output's
+A normal tiled close snapshots the complete decorated view, retains captured
+in-flight effects, and is appended above every workspace tree under the output's
 view root. It is a fixed canvas: `CloseSnapshot::present(canvasX, canvasY,
 visible)` only translates it with its workspace's slide and hides it while that
 workspace is not showing. `umbriel_size` is therefore constant for a close
@@ -281,7 +291,7 @@ The isolated running-compositor checks `180_animation_shaders`,
 `330_overview_close_fade` inspect
 shader-specific intermediate pixels, file-watcher reloads, every animation
 event, both layer lifecycle directions, rotated fractional-scale UVs, nested
-sampling, output containment, invalid-GLSL fallback, and a tiled close effect
+sampling, output containment, invalid-GLSL generation retention, and a tiled close effect
 that outlasts its configured `windows_move` timeline. Checks 193 and 195 also
 verify that a tiled opener runs its own `windows_in` in its final slot on the
 same tick its established neighbours begin to reflow, with each clock keeping

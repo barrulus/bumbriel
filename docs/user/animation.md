@@ -66,9 +66,9 @@ enabled = false
 Each event also accepts `enabled`, `duration_ms`, and `curve`. A spring curve
 chooses its own duration, so `duration_ms` has no effect on that event.
 
-## Pointer-driven wobble
+## Drag physics
 
-Set `wobble = true` in `[animation.windows_move]` to make a dragged window behave
+Set `drag_physics = true` in `[animation.windows_move]` to make a dragged window behave
 like an elastic sheet. The grab point follows the pointer; the rest trails your
 movement, responds to reversals and repeated shaking, and settles after release.
 Grabbing near a corner produces an asymmetric bend. This is independent of the
@@ -77,8 +77,57 @@ still apply. It is disabled by default.
 
 ```toml
 [animation.windows_move]
-wobble = true
+drag_physics = true
 ```
+
+Select a named drag preset for a different spring response. Selecting one enables
+pointer deformation without `drag_physics = true`; the native animation master and
+`windows_move.enabled` switches still apply. The custom-effect master switch gates
+the selected preset. Without a selected custom preset, `drag_physics = true` retains jelly.
+
+```toml
+[appearance]
+effects = ["taffy"]
+
+[effects.taffy.drag]
+stiffness = 36
+coupling = 48
+damping = 4.8
+pointer_response = 2
+stiffness_gradient = -0.55
+lag_gradient = 0.9
+downward_pull = 18
+motion_gain = 8
+decay = 2.8
+```
+
+Taffy's bottom trails further, droops into a curved pouch, and swings into a stretch.
+Motion builds the downward pull, which fades at rest. These are CPU simulation
+parameters, separate from timeline shaders and their durations or curves. Reloads
+update the coefficients even during a grab, preserving displacement and pinning.
+The temporary `wobble_style` key has been removed.
+
+| Drag parameter | Range | Jelly default |
+| --- | --- | --- |
+| `stiffness` | 1–1000 | 36 |
+| `coupling` | 0–500 | 100 |
+| `damping` | 0.5–60 | 6.5 |
+| `pointer_response` | 0–10 | 2 |
+| `stiffness_gradient` | −0.9–1 | 0 |
+| `lag_gradient` | −0.9–4 | 0 |
+| `downward_pull` | 0–50 | 0 |
+| `motion_gain` | 0–32 | 8 |
+| `decay` | 0.1–30 | 2.8 |
+
+Gradients vary linearly from top to bottom: a stiffness gradient of −0.55 gives
+the bottom 45% of the top's stiffness; a lag gradient of 0.9 gives it 190% of the
+pointer response. Motion gain loads a bounded 0–1 pull reservoir from normalized
+pointer travel. Decay is its exponential decay rate per second. Downward pull
+scales acceleration by window height and distance below the grab point.
+
+`drag` is window-only and accepts simulation parameters instead of shader passes.
+It supports the same named selectors, choices, and disabled-leaf replacement rules.
+Native geometry, input, inverse sampling, and rendering bounds remain unchanged.
 
 The effect covers compositor and client-requested window moves, including tiles
 after they detach for dragging. It does not change input geometry or client
@@ -95,7 +144,7 @@ continue after the `animation.border` colour transition ends.
 | --- | --- | --- |
 | `[animation.windows_in]` | `style`, `scale` | Window opening |
 | `[animation.windows_out]` | `style`, `scale` | Window closing |
-| `[animation.windows_move]` | `wobble` | Move, resize, reflow, maximize, and restore |
+| `[animation.windows_move]` | `drag_physics` | Move, resize, reflow, maximize, and restore |
 | `[animation.workspaces]` | none | Workspace switching |
 | `[animation.overview]` | `workspace_curve` | Overview opening, closing, and filmstrip movement |
 | `[animation.scratchpad]` | `dim`, `blur`, `scale`, `maximize`, `fullscreen` | Scratchpad windows and backdrop |
@@ -151,36 +200,37 @@ Then set `curve = "myBezier"` or `curve = "myBounce"`.
 Every animation event can use a custom fragment shader. The event's enabled
 state and curve still control its timeline.
 
-Umbriel ships `reveal.glsl` and `squash.glsl`. Reference the installed files
-directly:
+Select named lifecycle and movement leaves while keeping native enables and clocks:
 
 ```toml
-[animation.windows_in]
+[appearance]
+effects = ["elastic"]
+
+[effects.elastic.open]
 duration_ms = 300
 curve = "easeout"
-shader = "/usr/share/umbriel/shaders/barrulus/animations/reveal.glsl"
+passes = [{shader = "/usr/share/umbriel/shaders/barrulus/animations/reveal.glsl"}]
 
-[animation.windows_out]
+[effects.elastic.close]
 duration_ms = 250
 curve = "easeout"
-shader = "/usr/share/umbriel/shaders/barrulus/animations/reveal.glsl"
+passes = [{shader = "/usr/share/umbriel/shaders/barrulus/animations/reveal.glsl"}]
 
-[animation.windows_move]
-shader = "/usr/share/umbriel/shaders/barrulus/animations/squash.glsl"
+[effects.elastic.move]
+passes = [{shader = "/usr/share/umbriel/shaders/barrulus/animations/squash.glsl"}]
+
+[effects.elastic.resize]
+passes = [{shader = "/usr/share/umbriel/shaders/barrulus/animations/squash.glsl"}]
 ```
 
-Adjust `/usr/share` for the package prefix. Relative paths resolve from the
-configuration file containing the setting. Shader files are watched and reload
-with the configuration.
+Adjust `/usr/share` for the package prefix. Relative paths resolve from the file
+containing the pass. Source edits reload automatically; active events retain their
+starting generation, while invalid generations leave the working configuration
+in place. See the [effects reference](barrulus-shaders.md) for choices, parameters,
+runtime selection, inspection and capture policy.
 
-NixOS users can derive the path from the configured package:
-
-```nix
-{
-  programs.umbriel.settings.animation.windows_in.shader =
-    "${config.programs.umbriel.package}/share/umbriel/shaders/barrulus/animations/reveal.glsl";
-}
-```
+For Nix, derive each `passes` entry's `shader` path from
+`${config.programs.umbriel.package}/share/umbriel/shaders/barrulus/animations/`.
 
 The `shader` value must name a regular GLSL file smaller than 256 KiB. Inline
 GLSL and recursive includes are not supported.

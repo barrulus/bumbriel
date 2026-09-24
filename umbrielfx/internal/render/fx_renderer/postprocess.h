@@ -4,6 +4,7 @@
 #include <pixman.h>
 #include <umbrielfx/render/postprocess.h>
 #include <umbrielfx/types/fx/clipped_region.h>
+#include "types/fx/clipped_region.h"
 #include <wayland-server-core.h>
 
 struct fx_gles_render_pass;
@@ -17,6 +18,7 @@ struct fx_postprocess_parameters {
   struct wlr_box box;
   enum wl_output_transform transform;
   struct fx_corner_radii corners;
+  struct clipped_fregion hole;
 };
 
 // advance=false reads history without promoting it; promotion waits for a successful submit.

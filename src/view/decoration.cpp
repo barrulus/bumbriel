@@ -5,6 +5,7 @@
 #include "scene/border_rect.h"
 #include "scene/color.h"
 #include "scene/decoration_shader.h"
+#include "scene/effects.h"
 
 extern "C" {
 #include <umbrielfx/render/animation.h>
@@ -42,10 +43,12 @@ namespace umbriel {
   void ViewDecoration::updateShader() {
     if (m_border == nullptr)
       return;
-    auto* shader = m_shaderFocused ? decorationShader(m_shaderConfig) : nullptr;
+    auto* shader = (m_shaderFocused || !m_shaderConfig.focusedOnly) ? decorationShader(m_shaderConfig) : nullptr;
     const auto parameters =
         decorationParameters(m_shaderConfig, static_cast<float>(m_shaderConfig.padding), 1.0F, m_lightSuppressed);
     wlr_scene_border_set_shader(m_border, shader, &parameters);
+    const auto program = shader ? preparedEffect(m_shaderConfig.effect, EffectScope::BorderOuter) : nullptr;
+    wlr_scene_border_set_postprocess(m_border, program ? program->postprocess.get() : nullptr);
     if (shader != nullptr && m_shaderConfig.palette) {
       const auto palette = shaderPalette(config().colors);
       wlr_scene_border_set_palette(m_border, palette.data(), kShaderPaletteCount);

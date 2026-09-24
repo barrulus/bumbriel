@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Selected animation pairs must govern the new deferred tiled-opening path,
-# including their enable flag and duration when the base event is disabled.
+# Named lifecycle effects retain their duration on deferred tiled opening.
 set -euo pipefail
 
 cat > "$UMBRIEL_RUNTIME_DIR/pair-open.glsl" <<'GLSL'
 vec4 animation(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }
 GLSL
 cat >> "$UMBRIEL_CONFIG" <<'TOML'
+[render.effects]
+in_capture = true
 [appearance]
 border_width = 0
 outer_border_width = 0
@@ -14,18 +15,18 @@ corner_radius = 0
 [appearance.shadow]
 enabled = false
 [animation.windows_in]
-enabled = false
+enabled = true
 [animation.windows_move]
 enabled = false
-[animation.pair.marker.open]
-shader = "pair-open.glsl"
+[effects.marker.open]
+passes = [{shader = "pair-open.glsl"}]
 duration_ms = 1600
 curve = "linear"
-[animation.pair.marker.close]
-shader = "pair-open.glsl"
+[effects.marker.close]
+passes = [{shader = "pair-open.glsl"}]
 TOML
 "$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" msg 'shader:animation marker' > /dev/null
+"$UMBRIEL" msg 'effect:global set marker --scope open,close' > /dev/null
 # Animation time only moves by clock-advance: the opener starts on the frozen instant, so 800 ms lands mid-way through
 # the pair's 1600 ms timeline and a further 1600 ms finishes it.
 "$UMBRIEL" clock-freeze
@@ -59,4 +60,4 @@ read -r red green blue < <(read_pixel)
   echo "selected pair did not finish at its own duration: $red $green $blue"
   exit 1
 }
-echo "selected pair controls tiled opening with the base event disabled"
+echo "selected pair controls tiled opening with the native event enabled"

@@ -63,10 +63,10 @@ namespace umbriel {
       if (fade.tick(nowMsec)) {
         updateDimAndBlur(output);
         if (const auto rect = m_dimRects.find(output); rect != m_dimRects.end()) {
-          updateAnimationShader(&rect->second->node, m_server->renderer(), AnimationEvent::Scratchpad, fade);
+          output->updateEffect(&rect->second->node, EffectScope::Backdrop, AnimationEvent::Scratchpad, fade);
         }
         if (const auto blur = m_blurNodes.find(output); blur != m_blurNodes.end()) {
-          updateAnimationShader(&blur->second->node, m_server->renderer(), AnimationEvent::Scratchpad, fade);
+          output->updateEffect(&blur->second->node, EffectScope::Backdrop, AnimationEvent::Scratchpad, fade);
         }
         movedBackdrop = true;
       }

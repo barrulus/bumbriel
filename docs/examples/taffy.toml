@@ -1,0 +1,13 @@
+[appearance]
+effects = ["taffy"]
+
+[effects.taffy.drag]
+stiffness = 36
+coupling = 48
+damping = 4.8
+pointer_response = 2
+stiffness_gradient = -0.55
+lag_gradient = 0.9
+downward_pull = 18
+motion_gain = 8
+decay = 2.8

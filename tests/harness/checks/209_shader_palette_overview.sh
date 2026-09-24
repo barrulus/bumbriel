@@ -23,22 +23,20 @@ TOML
 
 set_effect() {
   local target=$1 palette=$2 color=$3
-  local window=off overlay=off
-  if [[ $target == window ]]; then window=window.probe; else overlay=window.probe; fi
+  local scope=content
+  if [[ $target != window ]]; then scope=border.inner; fi
   cat > "$SETTINGS" <<TOML
 [colors]
 accent_primary = "$color"
 accent_secondary = "$color"
 warning = "$color"
 error = "$color"
-[appearance.border_shader]
-overlay = "$overlay"
-[shaders]
+[appearance]
+effects = ["probe"]
+[render.effects]
 in_capture = true
 redraw = "continuous"
-window = "$window"
-[shaders.preset."window.probe"]
-scope = "window"
+[effects.probe.$scope]
 palette = $palette
 passes = [{ shader = "probe.glsl" }]
 TOML

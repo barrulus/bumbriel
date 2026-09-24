@@ -20,16 +20,14 @@ cat >> "$UMBRIEL_CONFIG" <<TOML
 files = ["$PALETTE"]
 [animation]
 enabled = false
-[appearance.border_shader]
-enabled = false
-[shaders]
+[appearance]
+effects = ["window.probe"]
+[render.effects]
 # Postprocess effects are excluded from captures unless this is set, so grim would
 # otherwise photograph the unfiltered scene and see nothing this check asserts.
 in_capture = true
-window = "window.probe"
 redraw = "continuous"
-[shaders.preset."window.probe"]
-scope = "window"
+[effects."window.probe".content]
 palette = true
 passes = [{ shader = "probe.glsl" }]
 TOML

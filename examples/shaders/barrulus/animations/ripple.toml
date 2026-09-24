@@ -1,21 +1,9 @@
-[animation.windows_in]
-enabled = true
+[effects.ripple.open]
 duration_ms = 400
 curve = "linear"
-shader = "ripple-open.glsl"
+passes = [{ shader = "ripple-open.glsl" }]
 
-[animation.windows_out]
-enabled = true
+[effects.ripple.close]
 duration_ms = 500
 curve = "linear"
-shader = "ripple-close.glsl"
-
-[animation.pair.ripple.open]
-shader = "ripple-open.glsl"
-duration_ms = 400
-curve = "linear"
-
-[animation.pair.ripple.close]
-shader = "ripple-close.glsl"
-duration_ms = 500
-curve = "linear"
+passes = [{ shader = "ripple-close.glsl" }]

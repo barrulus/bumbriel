@@ -14,8 +14,8 @@
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
 #include "scene/decoration_shader.h"
+#include "scene/effects.h"
 #include "scene/hint_rect.h"
-#include "scene/postprocess.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
 #include "server/ipc.h"
@@ -483,6 +483,17 @@ namespace umbriel {
     }
   } // namespace
   void Server::applyConfig(const ConfigEffects& effects) {
+    auto& diagnostics = configStore().mutableDiagnostics();
+    const auto prune = [&](EffectState& state) { state.prune(config().effects, &diagnostics); };
+    prune(globalEffectState());
+    for (auto& [name, state] : regionEffectOverrides())
+      prune(state);
+    for (auto& output : m_outputs)
+      prune(output->effectState());
+    for (const auto& view : views())
+      prune(view->effectState());
+    for (auto& layer : m_layerSurfaces)
+      prune(layer->effectState());
     if (!effects.any()) {
       return;
     }
@@ -501,8 +512,6 @@ namespace umbriel {
       prepareAnimationShaders(m_renderer);
     }
     if (effects.viewChrome) {
-      prepareDecorationShaders(m_renderer);
-      preparePostprocessShaders(m_renderer);
       for (auto& output : m_outputs)
         output->applyPostprocessConfig();
     }
@@ -740,9 +749,8 @@ namespace umbriel {
 
     m_renderer = newRenderer;
     m_allocator = newAllocator;
+    (void)prepareEffects(m_renderer, config(), configStore().mutableDiagnostics());
     prepareAnimationShaders(m_renderer);
-    prepareDecorationShaders(m_renderer);
-    preparePostprocessShaders(m_renderer);
     for (auto& output : m_outputs)
       output->applyPostprocessConfig();
     for (const auto& view : m_registry.all()) {
@@ -750,6 +758,9 @@ namespace umbriel {
         view->applyDynamicRules();
       }
     }
+    for (const auto& layer : m_layerSurfaces)
+      if (layer->mapped())
+        layer->refreshEffects();
     if (m_overview != nullptr && m_overview->active()) {
       m_overview->onFocusChanged();
     }

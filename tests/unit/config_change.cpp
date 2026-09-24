@@ -883,4 +883,17 @@ UMBRIEL_TEST(aFailedReloadResultCarriesNoChangesOrEffects) {
   CHECK(!result.effects.any());
 }
 
+UMBRIEL_TEST(effectChangesDoNotReapplyOutputModes) {
+  umbriel::Config before;
+  auto after = before;
+  after.effects["reading"].scopes[static_cast<size_t>(umbriel::EffectScope::Screen)].emplace();
+  auto change = umbriel::ConfigEffects::between(before, after);
+  CHECK(change.viewChrome);
+  CHECK(change.layerEffects);
+  CHECK(!change.outputState);
+  CHECK(!change.workspaceLayout);
+  CHECK(!change.animation);
+  CHECK(!umbriel::ConfigEffects::between(after, after).any());
+}
+
 int main() { return RUN_TESTS(); }

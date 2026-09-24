@@ -1,3 +1,4 @@
+#include "render/fx_renderer/params.h"
 #include "render/color.h"
 #include "render/egl.h"
 #include "render/fx_renderer/animation_history.h"
@@ -701,6 +702,7 @@ static void draw_animation_texture(
 ) {
   struct fx_texture* texture = fx_get_texture(wlr_texture);
   glUseProgram(shader->program);
+  fx_uniform_values_bind(shader->params);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture->tex);
   const GLint filter =
@@ -713,18 +715,21 @@ static void draw_animation_texture(
   glUniform1f(shader->direction, parameters->direction);
   glUniform2f(shader->size, logical_box->width, logical_box->height);
   glUniform4fv(shader->random_seed, 1, parameters->random_seed);
-  glUniform2fv(shader->wobble, FX_WOBBLE_POINTS, &parameters->wobble[0][0]);
+  glUniform1i(shader->palette_count, parameters->palette_count);
+  if (parameters->palette_count > 0)
+    glUniform4fv(shader->palette, parameters->palette_count, parameters->palette);
+  glUniform2fv(shader->deformation, FX_DRAG_PHYSICS_POINTS, &parameters->deformation[0][0]);
   struct wlr_box draw_box = *box;
   const bool rotated = transform & WL_OUTPUT_TRANSFORM_90;
   const float logical_width = rotated ? logical_box->height : logical_box->width;
   const float scale = logical_width > 0 ? box->width / logical_width : 1;
   float logical_padding = fmaxf(parameters->padding, 0);
-  if (shader->wobble >= 0) {
+  if (shader->deformation >= 0) {
     // A drag can retarget its size, and overview mirrors have another size.
     // Derive the excursion from this target's dimensions, not the original grab.
-    for (int i = 0; i < FX_WOBBLE_POINTS; i++) {
-      logical_padding = fmaxf(logical_padding, fabsf(parameters->wobble[i][0]) * logical_box->width + 2);
-      logical_padding = fmaxf(logical_padding, fabsf(parameters->wobble[i][1]) * logical_box->height + 2);
+    for (int i = 0; i < FX_DRAG_PHYSICS_POINTS; i++) {
+      logical_padding = fmaxf(logical_padding, fabsf(parameters->deformation[i][0]) * logical_box->width + 2);
+      logical_padding = fmaxf(logical_padding, fabsf(parameters->deformation[i][1]) * logical_box->height + 2);
     }
   }
   const int padding = (int)ceilf(logical_padding * scale);
@@ -802,13 +807,12 @@ static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pas
   return pass->animation_textures[pass->animation_depth];
 }
 
-void fx_render_pass_end_animation_with_history(
-    struct fx_gles_render_pass* pass, struct fx_animation_shader* shader,
+static void render_animation_with_history(
+    struct fx_gles_render_pass* pass, struct wlr_texture* texture, struct fx_animation_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
     struct fx_animation_history* history, struct wlr_output* output, bool update_history
 ) {
-  struct wlr_texture* texture = pop_animation_capture(pass);
   struct fx_renderer* renderer = pass->buffer->renderer;
   struct fx_animation_output_history* output_history = NULL;
   struct wlr_texture* previous_texture = NULL;
@@ -923,6 +927,84 @@ fallback:
     wlr_texture_destroy(previous_texture);
   }
   wlr_texture_destroy(texture);
+}
+
+void fx_render_pass_end_animation_with_history(
+    struct fx_gles_render_pass* pass, struct fx_animation_shader* shader,
+    const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
+    enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
+    struct fx_animation_history* history, struct wlr_output* output, bool update_history
+) {
+  struct wlr_texture* texture = pop_animation_capture(pass);
+  render_animation_with_history(pass, texture, shader, parameters, box, logical_box, transform,
+                                capture_clip, output_clip, history, output, update_history);
+}
+
+void fx_render_pass_end_animation_pipeline(
+    struct fx_gles_render_pass* pass, struct fx_animation_shader* const* shaders, size_t count,
+    const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
+    enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
+    struct fx_animation_history* histories, struct wlr_output* output, bool update_history
+) {
+  struct wlr_texture* texture = pop_animation_capture(pass);
+  struct fx_framebuffer* parent = pass->buffer;
+  const bool suppress = pass->suppress_updated;
+  struct fx_framebuffer* buffers[2] = {0};
+  struct wlr_texture* targets[2] = {0};
+  for (size_t i = 0; i < 2 && i + 1 < count; ++i) {
+    buffers[i] = ensure_offscreen_buffer(pass, &pass->fx_offscreen_buffers->animation_pipeline_buffers[i], true);
+    if (buffers[i] == NULL)
+      goto fallback;
+    targets[i] = fx_texture_from_buffer(&parent->renderer->wlr_renderer, buffers[i]->buffer);
+    if (targets[i] == NULL || fx_get_texture(targets[i])->target != GL_TEXTURE_2D)
+      goto fallback;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    const bool final = i + 1 == count;
+    pass->buffer = final ? parent : buffers[i % 2];
+    pass->suppress_updated = final ? suppress : true;
+    fx_framebuffer_bind(pass->buffer);
+    if (!final) {
+      glDisable(GL_SCISSOR_TEST);
+      glClearColor(0, 0, 0, 0);
+      glClear(GL_COLOR_BUFFER_BIT);
+    }
+    render_animation_with_history(pass, texture, shaders[i], parameters, box, logical_box, transform,
+                                  capture_clip, final ? output_clip : capture_clip,
+                                  &histories[i], output, update_history);
+    texture = NULL;
+    if (!final) {
+      texture = targets[i % 2];
+      targets[i % 2] = NULL;
+      if (i + 2 < count) {
+        const size_t next = (i + 1) % 2;
+        if (targets[next] == NULL)
+          targets[next] = fx_texture_from_buffer(&parent->renderer->wlr_renderer, buffers[next]->buffer);
+        if (targets[next] == NULL)
+          goto fallback;
+      }
+    }
+  }
+  goto finish;
+fallback:
+  pass->buffer = parent;
+  pass->suppress_updated = suppress;
+  fx_framebuffer_bind(parent);
+  if (texture != NULL) {
+    fx_render_pass_add_texture(pass, &(struct fx_render_texture_options){.base = {
+        .texture = texture, .dst_box = {0, 0, texture->width, texture->height}, .clip = output_clip,
+        .filter_mode = WLR_SCALE_FILTER_NEAREST, .blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
+        .transfer_function = pass->has_color_transform ? WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR : 0,
+    }});
+    wlr_texture_destroy(texture);
+  }
+finish:
+  for (size_t i = 0; i < 2; ++i)
+    if (targets[i] != NULL)
+      wlr_texture_destroy(targets[i]);
+  pass->buffer = parent;
+  pass->suppress_updated = suppress;
+  fx_framebuffer_bind(parent);
 }
 
 void fx_render_pass_end_animation(
@@ -1797,6 +1879,112 @@ decoration_uniforms(struct fx_decoration_shader* shader, const struct fx_render_
 }
 
 // Per-ring emission pyramid; the key covers everything the blur depends on.
+struct fx_decoration_pipeline {
+  struct fx_renderer* renderer;
+  struct wl_listener destroy;
+  struct fx_framebuffer* raster;
+  struct fx_postprocess_state* state;
+  struct fx_postprocess_chain* chain;
+  struct fx_decoration_shader* shader;
+  uint64_t sequence;
+};
+
+static void decoration_pipeline_renderer_destroy(struct wl_listener* listener, void* data) {
+  struct fx_decoration_pipeline* pipeline = wl_container_of(listener, pipeline, destroy);
+  animation_history_drop_buffer(&pipeline->raster);
+  fx_postprocess_state_destroy(pipeline->state);
+  pipeline->state = NULL;
+  pipeline->renderer = NULL;
+  wl_list_remove(&pipeline->destroy.link);
+}
+
+void fx_decoration_pipeline_destroy(struct fx_decoration_pipeline* pipeline) {
+  if (pipeline == NULL)
+    return;
+  if (pipeline->renderer != NULL) {
+    animation_history_drop_buffer(&pipeline->raster);
+    wl_list_remove(&pipeline->destroy.link);
+  }
+  fx_postprocess_state_destroy(pipeline->state);
+  fx_postprocess_chain_unref(pipeline->chain);
+  fx_decoration_shader_unref(pipeline->shader);
+  free(pipeline);
+}
+
+static struct wlr_texture* decoration_pipeline_texture(
+    struct fx_gles_render_pass* pass, const struct fx_render_border_options* options
+) {
+  if (options->postprocess == NULL || options->pipeline == NULL || pass->fx_offscreen_buffers == NULL)
+    return NULL;
+  struct fx_renderer* renderer = pass->buffer->renderer;
+  struct fx_decoration_pipeline** owner = options->pipeline;
+  if (*owner != NULL && ((*owner)->renderer != renderer || (*owner)->chain != options->postprocess || (*owner)->shader != options->shader)) {
+    fx_decoration_pipeline_destroy(*owner);
+    *owner = NULL;
+  }
+  if (*owner == NULL) {
+    *owner = calloc(1, sizeof(**owner));
+    if (*owner == NULL)
+      return NULL;
+    (*owner)->renderer = renderer;
+    (*owner)->chain = fx_postprocess_chain_ref(options->postprocess);
+    (*owner)->shader = fx_decoration_shader_ref(options->shader);
+    (*owner)->destroy.notify = decoration_pipeline_renderer_destroy;
+    wl_signal_add(&renderer->wlr_renderer.events.destroy, &(*owner)->destroy);
+  }
+  struct fx_decoration_pipeline* pipeline = *owner;
+  if (pipeline->sequence == pass->sequence && pipeline->raster != NULL)
+    return fx_texture_from_buffer(&renderer->wlr_renderer, pipeline->raster->buffer);
+  const float scale = options->shader_scale;
+  const int width = ceilf(options->logical_width * scale), height = ceilf(options->logical_height * scale);
+  bool failed = false;
+  fx_framebuffer_get_or_create_custom(renderer, pass->fx_offscreen_buffers->allocator, width, height,
+      pass->has_color_transform ? DRM_FORMAT_ABGR16161616F : DRM_FORMAT_ABGR8888, &pipeline->raster, &failed);
+  fx_framebuffer_bind(pass->buffer);
+  if (failed || pipeline->raster == NULL)
+    return NULL;
+  struct fx_framebuffer* parent = pass->buffer;
+  const bool suppress = pass->suppress_updated;
+  float projection[9];
+  memcpy(projection, pass->projection_matrix, sizeof(projection));
+  GLint viewport[4];
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  pass->buffer = pipeline->raster;
+  pass->suppress_updated = true;
+  matrix_projection(pass->projection_matrix, width, height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  fx_framebuffer_bind(pass->buffer);
+  glViewport(0, 0, width, height);
+  glDisable(GL_SCISSOR_TEST);
+  glClearColor(0, 0, 0, 0);
+  glClear(GL_COLOR_BUFFER_BIT);
+  struct fx_render_border_options local = *options;
+  local.postprocess = NULL;
+  local.box = (struct wlr_box){.width = width, .height = height};
+  local.clip = NULL;
+  local.shader_transform = WL_OUTPUT_TRANSFORM_NORMAL;
+  local.clipped_region.area = (struct wlr_box){
+      lroundf(options->logical_hole.x * scale), lroundf(options->logical_hole.y * scale),
+      lroundf(options->logical_hole.width * scale), lroundf(options->logical_hole.height * scale)};
+  local.clipped_region.corners = fx_corner_radii_scale(options->logical_corners, scale);
+  fx_render_pass_add_border(pass, &local);
+  const struct fx_postprocess_parameters parameters = {
+      .time = options->shader_time, .scale = scale,
+      .palette = options->palette, .palette_count = options->palette_count,
+      .output_size = {width, height}, .region = {0, 0, 1, 1}, .box = local.box,
+      .hole = local.clipped_region,
+  };
+  const bool ok = fx_render_pass_postprocess(pass, &pipeline->state, pipeline->chain, &parameters, NULL, true);
+  pass->buffer = parent;
+  pass->suppress_updated = suppress;
+  memcpy(pass->projection_matrix, projection, sizeof(projection));
+  fx_framebuffer_bind(parent);
+  glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+  if (!ok)
+    return NULL;
+  pipeline->sequence = pass->sequence;
+  return fx_texture_from_buffer(&renderer->wlr_renderer, pipeline->raster->buffer);
+}
+
 struct fx_decoration_light {
   struct fx_decoration_shader* shader;
   GLuint textures[7], framebuffers[7];
@@ -1916,7 +2104,8 @@ bool fx_render_pass_add_decoration_light(
       parameters->threshold,
       parameters->spread
   };
-  const bool changed = !light->valid || memcmp(key, light->key, sizeof(key)) != 0;
+  struct wlr_texture* processed = decoration_pipeline_texture(pass, ring);
+  const bool changed = processed != NULL || !light->valid || memcmp(key, light->key, sizeof(key)) != 0;
   GLint viewport[4];
   glGetIntegerv(GL_VIEWPORT, viewport);
   const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST), stencil = glIsEnabled(GL_STENCIL_TEST);
@@ -1950,7 +2139,25 @@ bool fx_render_pass_add_decoration_light(
     glBindFramebuffer(GL_FRAMEBUFFER, light->framebuffers[0]);
     glViewport(0, 0, w, h);
     glDisable(GL_BLEND);
+    if (processed != NULL) {
+      glUseProgram(shader->light_program);
+      glBindTexture(GL_TEXTURE_2D, fx_get_texture(processed)->tex);
+      glUniform1i(shader->light_tex, 0);
+      glUniform1i(shader->light_emission, true);
+      glUniform1i(shader->light_source_linear, pass->has_color_transform);
+      glUniform1f(shader->light_threshold, parameters->threshold);
+      glUniform4f(shader->light_source_region, margin / width, margin / height,
+          ring->logical_width / z / width, ring->logical_height / z / height);
+      float projection[9];
+      matrix_projection(projection, w, h, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+      const struct wlr_box emission_box = {.width = w, .height = h};
+      const struct wlr_fbox uv = {.width = 1, .height = 1};
+      fx_set_proj_matrix(shader->light_proj, projection, &emission_box);
+      fx_set_tex_matrix(shader->light_tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+      fx_render_box(&emission_box, NULL, shader->light_position);
+    } else {
     glUseProgram(shader->program);
+    fx_uniform_values_bind(shader->params);
     float projection[9];
     matrix_projection(projection, w, h, WL_OUTPUT_TRANSFORM_FLIPPED_180);
     const struct wlr_box emission_box = {.width = w, .height = h};
@@ -1968,6 +2175,7 @@ bool fx_render_pass_add_decoration_light(
     );
     fx_render_box(&emission_box, NULL, shader->position);
     glUniform1i(shader->emission, false);
+    }
     const float offset = radius / (3 * ((1 << levels) - 1));
     for (int i = 1; i <= levels; ++i)
       decoration_light_blur(light, i - 1, i, &shader->renderer->shaders.blur1, offset, true);
@@ -1977,6 +2185,8 @@ bool fx_render_pass_add_decoration_light(
     light->valid = true;
   }
 restore:
+  if (processed != NULL)
+    wlr_texture_destroy(processed);
   fx_framebuffer_bind(pass->buffer);
   glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
   if (scissor)
@@ -1987,6 +2197,7 @@ restore:
   if (!light->valid)
     return false;
   glUseProgram(shader->light_program);
+  glUniform1i(shader->light_emission, false);
   glBindTexture(GL_TEXTURE_2D, light->textures[0]);
   glUniform1i(shader->light_tex, 0);
   glUniform1f(
@@ -2007,6 +2218,17 @@ restore:
 }
 
 void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx_render_border_options* options) {
+  struct wlr_texture* processed = decoration_pipeline_texture(pass, options);
+  if (processed != NULL) {
+    fx_render_pass_add_texture(pass, &(struct fx_render_texture_options){.base = {
+        .texture = processed, .dst_box = options->box, .transform = options->shader_transform,
+        .clip = options->clip, .blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
+        .transfer_function = pass->has_color_transform ? WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR : 0,
+    }});
+    wlr_texture_destroy(processed);
+    return;
+  }
+
   struct fx_renderer* renderer = pass->buffer->renderer;
   const struct wlr_render_color inner_color = pass_color(pass, &options->inner_color);
   const struct wlr_render_color outer_color = pass_color(pass, &options->outer_color);
@@ -2028,6 +2250,7 @@ void fx_render_pass_add_border(struct fx_gles_render_pass* pass, const struct fx
   if (options->shader != NULL && options->shader->renderer == renderer) {
     struct fx_decoration_shader* shader = options->shader;
     glUseProgram(shader->program);
+    fx_uniform_values_bind(shader->params);
     fx_set_proj_matrix(shader->proj, pass->projection_matrix, &options->box);
     const struct wlr_fbox unit = {.width = 1, .height = 1};
     fx_set_tex_matrix(shader->tex_proj, options->shader_transform, &unit);
@@ -2759,6 +2982,8 @@ struct fx_gles_render_pass* fx_begin_buffer_pass(
     return NULL;
   }
 
+  static uint64_t sequence = 0;
+  pass->sequence = ++sequence;
   struct fx_framebuffer* target = buffer;
   if (has_color_transform) {
     struct output_transform_state state = {

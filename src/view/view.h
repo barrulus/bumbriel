@@ -1,9 +1,10 @@
 #pragma once
 #include "config/config.h"
+#include "config/effect_state.h"
 #include "config/shader_pool.h"
 #include "core/animation.h"
+#include "scene/effects.h"
 #include "scene/node.h"
-#include "scene/postprocess.h"
 #include "view/decoration.h"
 #include "view/deferred_unfullscreen.h"
 #include "view/floating.h"
@@ -23,7 +24,7 @@
 #include <wayland-server-core.h>
 
 extern "C" {
-#include <umbrielfx/render/wobble.h>
+#include <umbrielfx/render/drag_physics.h>
 #include <wlr/util/box.h>
 }
 struct wlr_ext_foreign_toplevel_handle_v1;
@@ -63,9 +64,16 @@ namespace umbriel {
     // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
     void syncAnimationShaders(wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr);
-    void beginPointerWobble(double x, double y);
-    void movePointerWobble(double dx, double dy);
-    void endPointerWobble();
+    const ResolvedEffects& resolvedEffects();
+    EffectState& effectState() { return m_effectState; }
+    const EffectState& effectState() const { return m_effectState; }
+    const EffectEvent* activeEffect(EffectScope scope) const { return &m_effectEvents[static_cast<size_t>(scope)]; }
+    void refreshEffects();
+    Config::Animation::WindowsOut selectedWindowsOut();
+    bool customEffect(EffectScope scope);
+    void beginPointerPhysics(double x, double y);
+    void movePointerPhysics(double dx, double dy);
+    void endPointerPhysics();
     [[nodiscard]] wlr_scene_tree* captureTree() const;
     [[nodiscard]] bool mapped() const { return m_mapped; }
     [[nodiscard]] bool xwayland() const { return m_xwayland; }
@@ -83,8 +91,6 @@ namespace umbriel {
     void refreshWindowShader();
     std::string_view windowShaderName();
     DecorationShaderConfig borderShaderSettings();
-    bool selectBorderShader(std::string_view operation);
-    ShaderSelection& shaderSelection() { return m_shaderSelection; }
     [[nodiscard]] bool tiled() const { return m_tiled; }
     [[nodiscard]] bool floating() const { return !m_tiled; }
     [[nodiscard]] bool isAloneInLayout() const;
@@ -201,7 +207,7 @@ namespace umbriel {
     void resumeTiledOpening();
     [[nodiscard]] bool tiledOpeningDeferred() const { return m_tiledOpeningDeferred; }
     // windows_move owns this established view's box until endLayoutMotion. `direction` feeds its custom shader.
-    void beginLayoutMotion(float direction);
+    void beginLayoutMotion(float direction, const wlr_box& from, const wlr_box& to);
     // Finish at the workspace target without falling back to an older committed client buffer. If the configure that
     // supplies the target buffer is still outstanding, compositor presentation remains authoritative until it lands.
     void completeLayoutMotion(const wlr_box& target);
@@ -420,6 +426,7 @@ namespace umbriel {
     [[nodiscard]] bool fullscreenOpaque() const;
     // The lifecycle fade runs through a whole-window shader, so buffers and borders stay opaque under it.
     [[nodiscard]] bool fadeComposited() const;
+    Config::Animation::WindowsIn selectedWindowsIn();
     void applyEffectiveOpacity();
     void flushPendingEffectiveOpacity();
     void watchViewSurfaceTree(wlr_surface* root, wlr_subsurface* attachment = nullptr);
@@ -616,10 +623,6 @@ namespace umbriel {
     // must never sample the composited desktop behind translucent content.
     wlr_scene* m_captureScene = nullptr;
     ViewDecoration m_decoration;
-    ShaderSelection m_shaderSelection;
-    ShaderSelection m_borderSelection;
-    std::optional<std::string> m_borderPool;
-    std::shared_ptr<ShaderPoolLease> m_borderLease;
     wlr_scene_rect* m_shaderRect = nullptr;
     wlr_scene_rect* m_captureShaderRect = nullptr;
     wlr_scene_rect* m_borderOverlayRect = nullptr;
@@ -664,6 +667,7 @@ namespace umbriel {
       int height = 0;
     };
     std::optional<TiledSizeRequest> m_tiledSizeRequest;
+    bool m_layoutMoves = false, m_layoutResizes = false;
     float m_layoutMotionDirection = 1.0F;
     bool m_tiledOpeningDeferred = false;
     // Inset a built-in windows_in style starts an opener at, interpolated to rest by the fade: a popin or zoom scale
@@ -695,9 +699,15 @@ namespace umbriel {
     // arrive before map. Window-rule policy is deliberately resolved only after the window maps.
     std::optional<bool> m_deferredActivationTrusted;
     AnimatedValue m_posX;
-    fx_wobble m_wobble{};
-    uint64_t m_wobbleLastMsec = 0;
-    void tickPointerWobble(uint64_t nowMsec);
+    std::array<EffectEvent, kEffectScopeCount> m_effectEvents;
+    EffectState m_effectState{EffectOwner::Window};
+    uint64_t m_effectGeneration = 0, m_geometryEffectTransition = 0;
+    bool m_combinedGeometryEffect = false;
+    std::vector<EffectInput> m_effectInputs;
+    std::optional<fx_drag_physics_parameters> pointerPhysicsParameters();
+    fx_drag_physics m_dragPhysics{};
+    uint64_t m_dragPhysicsLastMsec = 0;
+    void tickPointerPhysics(uint64_t nowMsec);
     AnimatedValue m_posY;
     AnimatedValue m_fade;
     bool m_customFade = false;

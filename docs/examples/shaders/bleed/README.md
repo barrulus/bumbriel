@@ -24,10 +24,9 @@ passes evaluate the same liquid surface, including its roots and highlights.
 
 The adapters match a 6px border, 14px raster padding, corner radius 10 and
 animation speed 1. Update the window adapter if that geometry or speed changes.
-Both effects are defined in `effects.toml` and listed in the terminal pool in
-`pools.toml`. Use Mod+Alt+S to cycle the focused window's border and its matching
-overlay together. Each border preset names its overlay with `overlay`; the
-overlay preset uses `scope = "border"`.
+Both effects are defined in `effects.toml` and listed in the terminal choice in
+`choices.toml`. Use Mod+Alt+S to cycle the focused window's border and its matching
+overlay together. Each named effect defines `border.outer` and `border.inner` leaves.
 
 Edit `bleed/droplets.glsl` for the shared geometry and motion, and
 `bleed/neon.glsl` or `bleed/portal.glsl` for pigment and band edges. Regenerate

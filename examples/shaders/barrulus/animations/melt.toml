@@ -1,21 +1,9 @@
-[animation.windows_in]
-enabled = true
+[effects.melt.open]
 duration_ms = 400
 curve = "linear"
-shader = "melt-open.glsl"
+passes = [{ shader = "melt-open.glsl" }]
 
-[animation.windows_out]
-enabled = true
+[effects.melt.close]
 duration_ms = 500
 curve = "linear"
-shader = "melt-close.glsl"
-
-[animation.pair.melt.open]
-shader = "melt-open.glsl"
-duration_ms = 400
-curve = "linear"
-
-[animation.pair.melt.close]
-shader = "melt-close.glsl"
-duration_ms = 500
-curve = "linear"
+passes = [{ shader = "melt-close.glsl" }]

@@ -45,6 +45,8 @@ namespace umbriel {
       return "unknown";
     }
 
+    void printEffects(const nlohmann::json& ok) { std::println("{}", ok.dump(2)); }
+
     void printWindows(const nlohmann::json& ok) {
       for (const auto& entry : ok) {
         const std::string appId = entry.value("app_id", "");
@@ -432,6 +434,7 @@ namespace umbriel {
         continue;
       }
       nlohmann::json entry;
+      entry["id"] = l->inspectionId();
       entry["layer"] = layerName(s->current.layer);
       entry["namespace"] = s->namespace_ != nullptr ? s->namespace_ : "";
       entry["output"] = s->output != nullptr ? s->output->name : "";
@@ -641,6 +644,8 @@ namespace umbriel {
 
   static constexpr IpcCommandSpec kIpcCommands[] = {
       {"msg", "<action> [args...]", "send an action to the compositor", true, &IpcCommands::msg, nullptr},
+      {"effects", "[--window ID|--output ID|--layer ID|--region NAME]",
+       "inspect effect library and resolved selections", true, &IpcCommands::effects, &printEffects},
       {"windows", "", "list windows (app id and title)", false, &IpcCommands::windows, &printWindows},
       {"workspaces", "", "list workspaces and their layouts", false, &IpcCommands::workspaces, &printWorkspaces},
       {"submap", "", "show the active keybind submap", false, &IpcCommands::submap, &printSubmap},

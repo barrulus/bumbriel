@@ -1,10 +1,9 @@
-[appearance]
-border_width = 6
-outer_border_width = 0
-
-[appearance.border_shader]
+[effects.pulse.border.outer]
 enabled = true
 animated = true
 speed = 1
 padding = 0
-shader = "pulse.glsl"
+passes = [{ shader = "pulse.glsl" }]
+
+[effects.pulse.border.inner]
+enabled = false

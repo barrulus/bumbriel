@@ -1,7 +1,9 @@
 #pragma once
 
 #include "config/config.h"
+#include "config/effect_state.h"
 #include "core/animation.h"
+#include "scene/effects.h"
 #include "scene/node.h"
 #include "scene/surface_blur.h"
 
@@ -10,6 +12,7 @@
 struct wlr_layer_surface_v1;
 struct wlr_scene_layer_surface_v1;
 struct wlr_scene_tree;
+struct wlr_scene_rect;
 struct wlr_surface;
 struct wlr_xdg_popup;
 
@@ -39,6 +42,14 @@ namespace umbriel {
     [[nodiscard]] SurfaceBlurOptions blurOptions() const;
     [[nodiscard]] SurfaceBlurOptions popupBlurOptions() const;
 
+    const ResolvedEffects& resolvedEffects();
+    EffectState& effectState() { return m_effectState; }
+    const EffectState& effectState() const { return m_effectState; }
+    const EffectEvent* activeEffect(EffectScope scope) const {
+      return scope == EffectScope::Open ? &m_openEffect : nullptr;
+    }
+    const std::string& inspectionId() const { return m_inspectionId; }
+    void refreshEffects();
     void focus();
     void unconstrainPopup(wlr_xdg_popup* popup);
     // Push the owning output's scale to every surface of this layer surface
@@ -77,6 +88,10 @@ namespace umbriel {
     wlr_layer_surface_v1* m_layerSurface = nullptr;
     wlr_scene_layer_surface_v1* m_scene = nullptr;
     SurfaceBlur m_blur;
+    std::string m_inspectionId;
+    EffectEvent m_openEffect;
+    EffectState m_effectState{EffectOwner::Layer};
+    wlr_scene_rect* m_shaderRect = nullptr;
     ResolvedLayerRule m_rule;
     AnimatedValue m_fade{1.0};
     bool m_mapped = false;

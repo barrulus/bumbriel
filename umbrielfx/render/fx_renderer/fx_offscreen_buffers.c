@@ -17,6 +17,8 @@ static void drop_framebuffer(struct fx_framebuffer **buffer) {
 
 static void clear_effect_buffers(struct fx_offscreen_buffers *fbos) {
 	drop_framebuffer(&fbos->animation_backdrop);
+	for (unsigned i = 0; i < 2; ++i)
+		drop_framebuffer(&fbos->animation_pipeline_buffers[i]);
 	for (size_t i = 0; i < FX_ANIMATION_DEPTH; i++) {
 		drop_framebuffer(&fbos->animation_buffers[i]);
 	}
@@ -88,6 +90,8 @@ void fx_renderer_clear_animation_buffers(struct wlr_output *output) {
 		drop_framebuffer(&fbos->animation_buffers[i]);
 	}
 	drop_framebuffer(&fbos->animation_backdrop);
+	for (unsigned i = 0; i < 2; ++i)
+		drop_framebuffer(&fbos->animation_pipeline_buffers[i]);
 }
 
 void fx_offscreen_buffers_invalidate_blend(struct wlr_output *output) {

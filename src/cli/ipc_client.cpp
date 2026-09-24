@@ -82,7 +82,8 @@ namespace umbriel {
 
     // A one-shot request answers within its command's limit or not at all; the event stream deliberately skips this.
     timeval tv{};
-    tv.tv_sec = spec.replyTimeoutSec;
+    const bool preparesEffects = spec.name == "msg" && (arg == "config-reload" || arg.starts_with("effect:"));
+    tv.tv_sec = preparesEffects ? 30 : spec.replyTimeoutSec;
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     // Build request.

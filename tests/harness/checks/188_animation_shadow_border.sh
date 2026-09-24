@@ -17,6 +17,7 @@ shadow = "#00FF00FF"
 focused = "#FF0000"
 unfocused = "#800000"
 [appearance]
+effects = ["fixture"]
 border_width = 20
 outer_border_width = 0
 corner_radius = 0
@@ -34,9 +35,7 @@ enabled = false
 enabled = false
 [animation.border]
 enabled = true
-shader = "border.glsl"
 [animation.windows_out]
-shader = "identity.glsl"
 [[window_rule]]
 match.title = "^border-a$"
 default_floating = true
@@ -45,6 +44,12 @@ default_position = { x = 200, y = 120, anchor = "top_left" }
 match.title = "^border-b$"
 default_floating = true
 default_position = { x = 800, y = 120, anchor = "top_left" }
+[render.effects]
+in_capture = true
+[effects.fixture.border.focus]
+passes = [{shader = "border.glsl"}]
+[effects.fixture.close]
+passes = [{shader = "identity.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 # Animation time only moves by clock-advance: samples land 200 ms into each 2000 ms timeline.

@@ -979,7 +979,7 @@ namespace umbriel {
 
     for (size_t i = 0; i < m_motion.views.size(); ++i) {
       const LayoutMotion::ViewEntry& entry = m_motion.views[i];
-      entry.view->beginLayoutMotion(entry.direction);
+      entry.view->beginLayoutMotion(entry.direction, entry.from, entry.to);
       entry.view->presentTiledBox(entry.from);
       if (raise[i]) {
         entry.view->raiseToTop();
@@ -2506,7 +2506,9 @@ namespace umbriel {
 
   bool WorkspaceGroup::tickAnimations(uint64_t nowMsec) {
     const bool ticked = m_slideAnim.tick(nowMsec);
-    updateAnimationShader(&m_output->viewRoot()->node, m_server->renderer(), AnimationEvent::Workspaces, m_slideAnim);
+    m_output->updateEffect(
+        &m_output->viewRoot()->node, EffectScope::Workspace, AnimationEvent::Workspaces, m_slideAnim
+    );
     bool active = false;
     if (ticked) {
       slideApply(m_slideAnim.current());

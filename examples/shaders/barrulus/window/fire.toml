@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.fire"]
-scope = "window"
-
-[[shaders.preset."window.fire".passes]]
-shader = "fire.glsl"
+[effects."window.fire".content]
+passes = [{ shader = "fire.glsl" }]

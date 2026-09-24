@@ -13,16 +13,19 @@ gap = 40
 [animation]
 enabled = false
 [appearance]
+effects = ["fixture"]
 border_width = 6
 outer_border_width = 0
 corner_radius = 0
-shader_fps = 20
 [appearance.shadow]
 enabled = false
-[appearance.border_shader]
-shader = "ring.glsl"
+[effects.fixture.border.outer]
+passes = [{shader = "ring.glsl"}]
 padding = 0
 palette = true
+[render.effects]
+in_capture = true
+fps = 20
 TOML
 
 # Every ramp entry identical makes umbriel_palette_at() constant, so the assert needs no timing.

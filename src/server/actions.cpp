@@ -1,8 +1,10 @@
 #include "server/actions.h"
 
 #include "config/config.h"
+#include "config/store.h"
 #include "input/cursor.h"
 #include "input/seat.h"
+#include "layer/layer_surface.h"
 #include "layout/layout.h"
 #include "layout/scrolling.h"
 #include "output/direction.h"
@@ -567,84 +569,101 @@ namespace umbriel {
       return nullptr;
     }
 
-    bool actionShader(Server& server, const Keybind& bind, std::string* error) {
-      const auto* arg = payloadIf<ShaderArg>(bind);
-      if (arg == nullptr)
+    bool actionEffect(Server& server, const Keybind& bind, std::string* error) {
+      const auto* action = payloadIf<EffectAction>(bind);
+      if (!action)
         return false;
-      if (arg->scope == "animation") {
-        if (!selectAnimationPair(arg->operation)) {
-          if (error != nullptr)
-            *error = "unknown animation pair: " + arg->operation;
-          return false;
-        }
-        prepareAnimationShaders(server.renderer());
-        return true;
-      }
-      if (arg->scope == "border") {
-        auto* target = arg->target.empty() ? focusedWindow(server) : viewByForeignIdentifier(server, arg->target);
-        if (!target || !target->selectBorderShader(arg->operation)) {
-          if (error)
-            *error = target ? "unknown border preset or pool: " + arg->operation : "shader target not found";
-          return false;
-        }
-        if (server.overview() && server.overview()->active())
-          server.overview()->onFocusChanged();
-        return true;
-      }
-      ShaderSelection* selection = nullptr;
-      View* view = nullptr;
-      Output* output = nullptr;
-      if (arg->scope == "window") {
-        view = arg->target.empty() ? focusedWindow(server) : viewByForeignIdentifier(server, arg->target);
-        if (view != nullptr)
-          selection = &view->shaderSelection();
-      } else if (arg->scope == "output") {
-        output =
-            arg->target.empty() ? server.outputFromWlr(server.preferredOutput()) : server.outputFromName(arg->target);
-        if (output != nullptr)
-          selection = &output->shaderSelection();
-      } else
-        selection = &globalShaderSelection();
-      if (selection == nullptr) {
-        if (error != nullptr)
-          *error = "shader target not found";
+      const auto reject = [&](std::string message) {
+        if (error)
+          *error = std::move(message);
         return false;
-      }
-      if (arg->operation == "toggle")
-        selection->enabled = !selection->enabled;
-      else if (arg->operation == "off")
-        selection->enabled = false;
-      else if (arg->operation == "on")
-        selection->enabled = true;
-      else if (arg->operation == "default") {
-        selection->preset.reset();
-        selection->enabled = true;
-      } else if (arg->operation == "cycle" || arg->operation.starts_with("cycle:")) {
-        const std::string pool = arg->operation == "cycle" ? (arg->scope == "window" ? config().shaders.windowPool : "")
-                                                           : arg->operation.substr(6);
-        if (arg->operation == "cycle:"
-            || !cycleShader(*selection, arg->scope, pool, view ? view->windowShaderName() : "")) {
-          if (error)
-            *error = "unknown shader pool: " + pool;
-          return false;
+      };
+      std::vector<ConfigDiagnostic> diagnostics;
+      const EffectSelector selector{action->names, {"runtime", 0, 0}};
+      validateEffectSelector(config().effects, selector, action->owner, diagnostics, action->mask);
+      validateEffectTiming(config(), selector, action->owner, diagnostics, action->mask);
+      if (!diagnostics.empty())
+        return reject(diagnostics.front().message);
+      if (action->operation == "cycle" && !config().effects.at(action->names.front()).choose)
+        return reject("effect cycle requires a choice definition");
+      EffectState* state = nullptr;
+      std::optional<ResolvedEffects> defaults;
+      if (action->system) {
+        if (!setEffectSystem(action->operation, server.renderer(), configStore().mutableDiagnostics()))
+          return reject("effect system could not prepare the complete library; previous gate retained");
+      } else if (action->owner == EffectOwner::Window) {
+        auto* view = action->target.empty() ? focusedWindow(server) : viewByForeignIdentifier(server, action->target);
+        if (!view)
+          return reject("effect window target not found");
+        (void)view->resolvedEffects();
+        state = &view->effectState();
+      } else if (action->owner == EffectOwner::Output) {
+        auto* output = action->target.empty() ? server.outputFromWlr(server.preferredOutput())
+                                              : server.outputFromName(action->target);
+        if (!output)
+          return reject("effect output target not found");
+        (void)output->resolvedEffects();
+        state = &output->effectState();
+        if (action->operation == "toggle" && (action->mask & kWindowEffects)) {
+          EffectState preview{EffectOwner::Global};
+          std::vector<EffectInput> inputs;
+          if (config().appearance.effects)
+            inputs.push_back({*config().appearance.effects});
+          globalEffectState().appendOverrides(inputs);
+          output->appendEffectInputs(inputs);
+          preview.resolve(config().effects, inputs, effectAllocator(), kAllEffects);
+          defaults = preview.resolved();
+          for (size_t i = 0; i < kEffectScopeCount; ++i)
+            if (kOutputEffects & (EffectMask{1} << i))
+              (*defaults)[i] = state->resolved()[i];
         }
-      } else if (postprocessPreset(arg->operation) != nullptr) {
-        selection->preset = arg->operation;
-        selection->enabled = true;
+      } else if (action->owner == EffectOwner::Layer) {
+        for (const auto& layer : server.layerSurfaces())
+          if (layer->inspectionId() == action->target && layer->mapped()) {
+            (void)layer->resolvedEffects();
+            state = &layer->effectState();
+            break;
+          }
+        if (!state)
+          return reject("effect layer target not found");
+      } else if (action->owner == EffectOwner::Region) {
+        const auto region = std::ranges::find(config().effectRegions, action->target, &EffectRegion::name);
+        if (region == config().effectRegions.end())
+          return reject("effect region target not found");
+        state = &regionEffectOverrides().try_emplace(action->target, EffectOwner::Global).first->second;
+        const std::array inputs{EffectInput{region->effects, effectBit(EffectScope::Screen)}};
+        state->resolve(config().effects, inputs, effectAllocator(), effectBit(EffectScope::Screen));
       } else {
-        if (error != nullptr)
-          *error = "unknown shader preset: " + arg->operation;
-        return false;
+        state = &globalEffectState();
+        std::vector<EffectInput> inputs;
+        if (config().appearance.effects)
+          inputs.push_back({*config().appearance.effects});
+        state->resolve(config().effects, inputs, effectAllocator(), kAllEffects);
       }
-      if (view != nullptr) {
-        view->refreshWindowShader();
-        if (server.overview() != nullptr && server.overview()->active())
-          server.overview()->onFocusChanged();
-      } else if (output != nullptr)
+      if (state) {
+        if (action->operation == "set")
+          state->set(selector, action->mask);
+        else if (action->operation == "cycle")
+          state->cycle(config().effects, effectAllocator(), action->names.front(), action->mask);
+        else if (action->operation == "off")
+          state->off(action->mask);
+        else if (action->operation == "on")
+          state->on(action->mask);
+        else if (action->operation == "toggle")
+          state->toggle(action->mask, defaults ? &*defaults : nullptr);
+        else
+          state->defaults(action->mask);
+      }
+      for (const auto& output : server.outputs())
         output->applyPostprocessConfig();
-      else
-        for (const auto& candidate : server.outputs())
-          candidate->applyPostprocessConfig();
+      for (const auto& view : server.views())
+        if (view->mapped())
+          view->refreshEffects();
+      for (const auto& layer : server.layerSurfaces())
+        if (layer->mapped())
+          layer->refreshEffects();
+      if (server.overview() && server.overview()->active())
+        server.overview()->onFocusChanged();
       return true;
     }
 
@@ -1856,7 +1875,7 @@ namespace umbriel {
         &actionWindowMoveToWorkspaceAdjacent<1, true>,
         &actionWindowMoveToWorkspaceAdjacent<-1, true>,
         &actionConfigReload,
-        &actionShader,
+        &actionEffect,
         &actionKeyboardLayoutNext,
         &actionShortcutsInhibitToggle,
         &actionLayoutScrollDrag,

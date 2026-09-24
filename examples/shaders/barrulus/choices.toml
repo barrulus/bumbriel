@@ -1,0 +1,61 @@
+[effects.fuse.border.outer]
+padding = 48
+passes = [{ shader = "rings/fuse.glsl" }]
+
+[effects.fuse.border.outer.light]
+enabled = true
+spread = 90
+intensity = 1.4
+threshold = 0.5
+
+[effects.fuse.border.inner]
+enabled = false
+
+[effects.lightning.border.outer]
+padding = 24
+passes = [{ shader = "rings/lightning.glsl" }]
+
+[effects.lightning.border.outer.light]
+enabled = true
+spread = 80
+intensity = 1.0
+threshold = 0.5
+
+[effects.lightning.border.inner]
+enabled = false
+
+[effects.rainbow.border.outer]
+padding = 14
+passes = [{ shader = "rings/rainbow-ripple.glsl" }]
+
+[effects.rainbow.border.inner]
+enabled = false
+
+[effects.pulse.border.outer]
+padding = 0
+passes = [{ shader = "rings/pulse.glsl" }]
+
+[effects.pulse.border.inner]
+enabled = false
+
+[effects.neon-bleed.border.outer]
+padding = 14
+passes = [{ shader = "rings/neon-bleed.glsl" }]
+
+[effects.neon-bleed.border.inner]
+passes = [{ shader = "window/neon-bleed-overlay.glsl" }]
+
+[effects.portal-lava.border.outer]
+padding = 14
+passes = [{ shader = "rings/portal-lava.glsl" }]
+
+[effects.portal-lava.border.inner]
+passes = [{ shader = "window/portal-lava-overlay.glsl" }]
+
+[effects.favourites]
+choose = ["window.crt", "window.parchment-dark", "window.adaptive-text-v4"]
+selection = "round_robin"
+
+[effects.terminals]
+choose = ["fuse", "lightning", "rainbow", "pulse", "neon-bleed", "portal-lava"]
+selection = "unused_first"

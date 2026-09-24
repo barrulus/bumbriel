@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# A card admitted while the overview is open follows the same reveal as a normal-mode opener: fading in on windows_in
-# while the neighbour reflows on windows_move. Closing a card during tiled reflow must discard
-# the copied windows_move effect before windows_out runs. The move shader paints the live blue card red. The close
-# shader then paints its snapshot green only when it samples the original blue client, or magenta when the stale
-# move shader is still composed into the snapshot.
+# Overview cards share opening/reflow effects and close with their selected lifecycle pipeline.
 set -euo pipefail
 
 readonly FIRST_LOG="$UMBRIEL_RUNTIME_DIR/overview-close-first.log"
@@ -39,12 +35,10 @@ style = "fade"
 [animation.windows_out]
 enabled = true
 duration_ms = 1000
-shader = "overview-close.glsl"
 
 [animation.windows_move]
 enabled = true
 duration_ms = 1600
-shader = "overview-move.glsl"
 
 [colors]
 backdrop = "#000000FF"
@@ -54,6 +48,7 @@ background_tint = "#000000FF"
 workspace_background = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -63,6 +58,14 @@ enabled = false
 
 [overview]
 zoom = 0.5
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "overview-close.glsl"}]
+[effects.fixture.move]
+passes = [{shader = "overview-move.glsl"}]
+[effects.fixture.resize]
+passes = [{shader = "overview-move.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

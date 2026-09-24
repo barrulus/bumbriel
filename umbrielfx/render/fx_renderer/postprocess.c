@@ -1,7 +1,9 @@
 #include "render/fx_renderer/postprocess.h"
+#include "render/fx_renderer/params.h"
 
 #include "postprocess_composite_frag_src.h"
 #include "postprocess_frag_src.h"
+#include "palette_frag_src.h"
 #include "render/egl.h"
 #include "render/fx_renderer/fx_renderer.h"
 #include "render/pass.h"
@@ -16,6 +18,7 @@
 #include <wlr/util/transform.h>
 
 struct effect_program {
+  struct fx_uniform_values* params;
   GLuint program;
   GLint proj, tex_proj, pos, size, output_size, cursor, region, time, scale;
   GLint screen, source, previous, screen_previous, buffer, source_matrix, first, linear;
@@ -33,7 +36,7 @@ struct fx_postprocess_chain {
   bool animated, pointer, screen_previous;
   struct effect_pass passes[FX_POSTPROCESS_MAX_PASSES];
   GLuint composite;
-  GLint proj, tex_proj, pos, tex, linear, size, radius, mask;
+  GLint proj, tex_proj, pos, tex, linear, size, radius, mask, hole, hole_radius;
 };
 struct effect_target {
   GLuint texture, fbo;
@@ -75,13 +78,17 @@ void fx_postprocess_chain_unref(struct fx_postprocess_chain* chain) {
     struct wlr_egl_context previous;
     if (wlr_egl_make_current(chain->renderer->egl, &previous)) {
       for (size_t i = 0; i < chain->count; ++i) {
-        glDeleteProgram(chain->passes[i].color.program);
-        glDeleteProgram(chain->passes[i].buffer.program);
+        fx_effect_program_release(chain->renderer, chain->passes[i].color.program);
+        fx_effect_program_release(chain->renderer, chain->passes[i].buffer.program);
       }
-      glDeleteProgram(chain->composite);
+      fx_effect_program_release(chain->renderer, chain->composite);
       wlr_egl_restore_context(&previous);
     }
     wl_list_remove(&chain->destroy.link);
+  }
+  for (size_t i = 0; i < chain->count; ++i) {
+    free(chain->passes[i].color.params);
+    free(chain->passes[i].buffer.params);
   }
   free(chain);
 }
@@ -92,20 +99,20 @@ bool fx_postprocess_chain_reads_pointer(const struct fx_postprocess_chain* chain
   return chain != NULL && chain->renderer != NULL && chain->pointer;
 }
 
-static bool compile_effect(struct effect_program* p, const struct fx_postprocess_source* source, bool buffer) {
+static bool compile_effect(struct fx_renderer* renderer, struct effect_program* p, const struct fx_postprocess_source* source, bool buffer) {
   const char* entry = buffer ? "postprocess_buffer" : "postprocess";
-  size_t capacity = sizeof(postprocess_frag_src) + strlen(source->code) + 256;
+  size_t capacity = sizeof(postprocess_frag_src) + sizeof(palette_frag_src) + strlen(source->code) + 256;
   char* code = malloc(capacity);
   if (code == NULL)
     return false;
   snprintf(
       code, capacity,
-      "%s\n#line 1\n%s\nvoid main() { gl_FragColor = %s(vec3(umbriel_region.xy + v_texcoord * umbriel_region.zw, "
+      "%s\n%s\n#line 1\n%s\nvoid main() { gl_FragColor = %s(vec3(umbriel_region.xy + v_texcoord * umbriel_region.zw, "
       "1.0)); }\n",
-      postprocess_frag_src, source->code, entry
+      postprocess_frag_src, palette_frag_src, source->code, entry
   );
   wlr_log(WLR_DEBUG, "Compiling postprocess %s: %s", entry, source->label);
-  p->program = link_program(code);
+  p->program = fx_effect_program_acquire(renderer, code);
   free(code);
   if (p->program == 0) {
     wlr_log(WLR_ERROR, "Postprocess '%s' failed; disabling its complete chain", source->label);
@@ -132,7 +139,8 @@ static bool compile_effect(struct effect_program* p, const struct fx_postprocess
   UNIFORM(palette_count, "umbriel_palette_count");
 #undef UNIFORM
   p->pos = glGetAttribLocation(p->program, "pos");
-  return true;
+  p->params = fx_uniform_values_create(p->program, source->params, source->param_count, source->buffer);
+  return p->params != NULL;
 }
 
 struct fx_postprocess_chain*
@@ -156,9 +164,15 @@ fx_postprocess_chain_create(struct wlr_renderer* renderer, const struct fx_postp
   for (size_t i = 0; i < count; ++i) {
     struct effect_pass* pass = &chain->passes[i];
     if (sources[i].code == NULL
-        || !compile_effect(&pass->color, &sources[i], false)
-        || (sources[i].buffer && !compile_effect(&pass->buffer, &sources[i], true)))
+        || !compile_effect(fx, &pass->color, &sources[i], false)
+        || (sources[i].buffer && !compile_effect(fx, &pass->buffer, &sources[i], true)))
       goto fail;
+    for (size_t param = 0; param < sources[i].param_count; ++param)
+      if (pass->color.params->values[param].location < 0
+          && (!sources[i].buffer || pass->buffer.params->values[param].location < 0)) {
+        wlr_log(WLR_ERROR, "Shader parameter '%s' is unknown or inactive", sources[i].params[param].name);
+        goto fail;
+      }
     const struct effect_program* programs[] = {&pass->color, &pass->buffer};
     pass->feedback = sources[i].buffer;
     for (size_t j = 0; j < 2; ++j) {
@@ -172,7 +186,7 @@ fx_postprocess_chain_create(struct wlr_renderer* renderer, const struct fx_postp
     }
   }
   chain->animated |= chain->screen_previous;
-  chain->composite = link_program(postprocess_composite_frag_src);
+  chain->composite = fx_effect_program_acquire(fx, postprocess_composite_frag_src);
   if (chain->composite == 0)
     goto fail;
   chain->proj = glGetUniformLocation(chain->composite, "proj");
@@ -183,6 +197,8 @@ fx_postprocess_chain_create(struct wlr_renderer* renderer, const struct fx_postp
   chain->size = glGetUniformLocation(chain->composite, "size");
   chain->radius = glGetUniformLocation(chain->composite, "radius");
   chain->mask = glGetUniformLocation(chain->composite, "mask");
+  chain->hole = glGetUniformLocation(chain->composite, "hole");
+  chain->hole_radius = glGetUniformLocation(chain->composite, "hole_radius");
   wlr_egl_restore_context(&previous);
   return chain;
 fail:
@@ -390,6 +406,7 @@ bool fx_render_pass_postprocess(
       struct effect_target* target = step == 0 ? &storage->buffer[next] : &storage->result[next];
       glBindFramebuffer(GL_FRAMEBUFFER, target->fbo);
       glUseProgram(p->program);
+      fx_uniform_values_bind(p->params);
       const GLuint textures[] = {
           input, original, old_result, valid ? previous->source[previous->current].texture : original, accumulator
       };
@@ -433,6 +450,9 @@ bool fx_render_pass_postprocess(
   glUniform1i(chain->tex, 0);
   glUniform1i(chain->linear, pass->has_color_transform);
   glUniform1i(chain->mask, true);
+  glUniform4f(chain->hole, parameters->hole.area.x, parameters->hole.area.y, parameters->hole.area.width, parameters->hole.area.height);
+  glUniform4f(chain->hole_radius, parameters->hole.corners.top_left, parameters->hole.corners.top_right,
+      parameters->hole.corners.bottom_right, parameters->hole.corners.bottom_left);
   glUniform2f(chain->size, width, height);
   glUniform4f(
       chain->radius, parameters->corners.top_left, parameters->corners.top_right, parameters->corners.bottom_right,

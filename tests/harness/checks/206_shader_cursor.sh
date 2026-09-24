@@ -20,12 +20,13 @@ transform = "90"
 [output.HEADLESS-2]
 position = [576, 0]
 scale = 2
-[shaders]
-global = "pointer"
+[render.effects]
 in_capture = true
-[shaders.preset.pointer]
+[appearance]
+effects = ["pointer"]
+[effects.pointer.overlay]
 cursor_radius = 40
-[[shaders.preset.pointer.passes]]
+[[effects.pointer.overlay.passes]]
 shader = "pointer.glsl"
 TOML
 "$UMBRIEL" msg config-reload >/dev/null

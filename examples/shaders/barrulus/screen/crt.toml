@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."screen.crt"]
-scope = "global"
-
-[[shaders.preset."screen.crt".passes]]
-shader = "crt.glsl"
+[effects."screen.crt".screen]
+passes = [{ shader = "crt.glsl" }]

@@ -6,12 +6,14 @@
 struct wlr_scene_node;
 struct wlr_renderer;
 struct fx_animation_shader;
+struct fx_animation_parameters;
 
 namespace umbriel {
   // Stable inner-to-outer composition order for effects sharing a target.
   enum class AnimationEvent : unsigned {
     DimUnfocused,
     Border,
+    WindowsResize,
     WindowsMove,
     WindowsIn,
     WindowsOut,
@@ -22,22 +24,10 @@ namespace umbriel {
     InteractiveMove
   };
 
-  // The configured custom shader for `event`, or null.
-  [[nodiscard]] fx_animation_shader* animationShader(wlr_renderer* renderer, AnimationEvent event);
-  [[nodiscard]] fx_animation_shader* interactiveWobbleShader(wlr_renderer* renderer);
-  Config::Animation::WindowsIn selectedWindowsIn();
-  Config::Animation::WindowsOut selectedWindowsOut();
-  bool selectAnimationPair(std::string_view operation);
-  // The program a lifecycle fade composes through: the custom shader, or for windows_in and windows_out without one, a
-  // built-in fade that applies the lifecycle alpha to the whole window at once. Null when buffers fade individually.
+  [[nodiscard]] fx_animation_shader* interactivePhysicsShader(wlr_renderer* renderer);
   [[nodiscard]] fx_animation_shader* lifecycleShader(wlr_renderer* renderer, AnimationEvent event);
   void prepareAnimationShaders(wlr_renderer* renderer);
   void clearAnimationShaderCache();
-  void updateAnimationShader(
-      wlr_scene_node* node, wlr_renderer* renderer, AnimationEvent event, const AnimatedValue& value,
-      float direction = 0.0F
-  );
-  void updateAnimationShader(
-      wlr_scene_node* node, wlr_renderer* renderer, AnimationEvent event, const AnimatedColor& value, float direction
-  );
+  fx_animation_parameters animationParameters(const AnimatedValue& value, float direction = 0.0F);
+  fx_animation_parameters animationParameters(const AnimatedColor& value, float direction);
 } // namespace umbriel

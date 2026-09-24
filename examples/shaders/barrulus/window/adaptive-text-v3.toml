@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.adaptive-text-v3"]
-scope = "window"
-
-[[shaders.preset."window.adaptive-text-v3".passes]]
-shader = "adaptive-text-v3.glsl"
+[effects."window.adaptive-text-v3".content]
+passes = [{ shader = "adaptive-text-v3.glsl" }]

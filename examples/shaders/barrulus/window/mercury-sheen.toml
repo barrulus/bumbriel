@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.mercury-sheen"]
-scope = "window"
-
-[[shaders.preset."window.mercury-sheen".passes]]
-shader = "mercury-sheen.glsl"
+[effects."window.mercury-sheen".content]
+passes = [{ shader = "mercury-sheen.glsl" }]

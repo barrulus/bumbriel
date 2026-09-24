@@ -1,8 +1,11 @@
 #include "layer/layer_surface.h"
 
 #include "scene/animation_shader.h"
+#include "scene/color.h"
+#include "scene/effects.h"
 extern "C" {
 #include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/postprocess.h>
 }
 
 #include "config/resolve.h"
@@ -41,6 +44,8 @@ namespace umbriel {
 
   LayerSurface::LayerSurface(Server& server, wlr_layer_surface_v1* layerSurface)
       : SceneNode(SceneNodeKind::LayerSurface), m_server(&server), m_layerSurface(layerSurface) {
+    static uint64_t nextId = 0;
+    m_inspectionId = "layer-" + std::to_string(++nextId);
     if (m_layerSurface->output == nullptr) {
       m_layerSurface->output = m_server->preferredOutput();
     }
@@ -108,7 +113,14 @@ namespace umbriel {
   bool LayerSurface::tickAnimations(uint64_t nowMsec) {
     const bool ticked = m_fade.tick(nowMsec);
     if (m_scene != nullptr) {
-      updateAnimationShader(&m_scene->tree->node, m_server->renderer(), AnimationEvent::Layers, m_fade);
+      m_openEffect.update(
+          &m_scene->tree->node, static_cast<unsigned>(AnimationEvent::Layers),
+          resolvedEffects()[static_cast<size_t>(EffectScope::Open)], EffectScope::Open, animationParameters(m_fade),
+          m_fade.animating(),
+          effectsEnabled()
+              && nativeEffectEnabled(EffectScope::Open, true)
+              && !(m_effectState.disabled() & effectBit(EffectScope::Open))
+      );
     }
     if (!ticked) {
       return false;
@@ -124,7 +136,7 @@ namespace umbriel {
       return;
     }
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
-    float alpha = m_fade.animating() && animationShader(m_server->renderer(), AnimationEvent::Layers) != nullptr
+    float alpha = m_fade.animating() && m_openEffect.custom()
         ? 1.0F
         : std::clamp(static_cast<float>(m_fade.current()), 0.0F, 1.0F);
     wlr_scene_node_for_each_buffer(
@@ -194,11 +206,21 @@ namespace umbriel {
       return;
     }
 
+    wlr_scene_rect_snapshot_postprocess(snap, m_shaderRect);
     wlr_scene_node_copy_animations_for_snapshot(&snap->node, &m_scene->tree->node);
+    const auto& leaf = resolvedEffects()[static_cast<size_t>(EffectScope::Close)];
+    const bool enabled = effectsEnabled()
+        && leaf.pipeline
+        && leaf.pipeline->enabled
+        && !(m_effectState.disabled() & effectBit(EffectScope::Close));
     (void)m_server->animateCloseSnapshot(
         out, snap, snap, {}, {},
         Server::CloseSnapshotOverrides{
-            .durationMs = layers.durationMs, .curve = layers.curve, .style = "fade", .event = AnimationEvent::Layers
+            .durationMs = enabled ? leaf.pipeline->durationMs.value_or(layers.durationMs) : layers.durationMs,
+            .curve = enabled ? effectCurve(*leaf.pipeline, config(), layers.curve) : layers.curve,
+            .style = "fade",
+            .event = AnimationEvent::Layers,
+            .effect = enabled ? leaf : ResolvedEffect{}
         }
     );
     wlr_output_schedule_frame(out->wlr());
@@ -311,9 +333,47 @@ namespace umbriel {
     m_blur.update(m_scene->tree, m_layerSurface->surface, box, box, 0, nullptr, blurOptions());
   }
 
+  const ResolvedEffects& LayerSurface::resolvedEffects() {
+    std::vector<EffectInput> inputs;
+    if (config().appearance.effects)
+      inputs.push_back({*config().appearance.effects, kLayerEffects});
+    globalEffectState().appendOverrides(inputs);
+    if (const auto* out = output())
+      out->appendEffectInputs(inputs);
+    for (const auto& selector : m_rule.effects)
+      inputs.push_back({selector, kLayerEffects});
+    if (m_mapped)
+      m_effectState.resolve(config().effects, inputs, effectAllocator(), kLayerEffects);
+    return m_effectState.resolved();
+  }
+
+  void LayerSurface::refreshEffects() {
+    if (!m_scene || !m_layerSurface)
+      return;
+    const auto& leaf = resolvedEffects()[static_cast<size_t>(EffectScope::Content)];
+    const bool enabled = effectsEnabled()
+        && leaf.pipeline
+        && leaf.pipeline->enabled
+        && !(m_effectState.disabled() & effectBit(EffectScope::Content));
+    if (!m_shaderRect && enabled)
+      m_shaderRect = wlr_scene_rect_create(m_scene->tree, 0, 0, kTransparent.data());
+    if (!m_shaderRect)
+      return;
+    if (enabled)
+      applyEffect(m_shaderRect, leaf, EffectScope::Content);
+    else
+      wlr_scene_rect_set_postprocess(m_shaderRect, nullptr);
+    wlr_scene_rect_set_size(
+        m_shaderRect, m_layerSurface->surface->current.width, m_layerSurface->surface->current.height
+    );
+    wlr_scene_node_set_enabled(&m_shaderRect->node, enabled);
+    wlr_scene_node_raise_to_top(&m_shaderRect->node);
+  }
+
   void LayerSurface::applyConfig() {
     m_rule = resolveLayerRules(config(), ruleText(m_layerSurface->namespace_));
     updateBlur();
+    refreshEffects();
   }
 
   void LayerSurface::onMap(wl_listener* listener, void* /*data*/) {
@@ -362,6 +422,7 @@ namespace umbriel {
       focus();
     }
     updateBlur();
+    refreshEffects();
     notifyDesktopStack();
 
     const auto& animation = config().animation;
@@ -369,7 +430,19 @@ namespace umbriel {
     if (animation.enabled && layers.enabled) {
       m_fade.snap(0.0);
       applyFadeAlpha();
-      m_fade.retarget(1.0, layers.durationMs, layers.curve);
+      const auto& leaf = resolvedEffects()[static_cast<size_t>(EffectScope::Open)];
+      const bool enabled = effectsEnabled()
+          && leaf.pipeline
+          && leaf.pipeline->enabled
+          && !(m_effectState.disabled() & effectBit(EffectScope::Open));
+      m_fade.retarget(
+          1.0, enabled ? leaf.pipeline->durationMs.value_or(layers.durationMs) : layers.durationMs,
+          enabled ? effectCurve(*leaf.pipeline, config(), layers.curve) : layers.curve
+      );
+      m_openEffect.update(
+          &m_scene->tree->node, static_cast<unsigned>(AnimationEvent::Layers), leaf, EffectScope::Open,
+          animationParameters(m_fade), true, enabled
+      );
       if (Output* out = output()) {
         wlr_output_schedule_frame(out->wlr());
       }
@@ -385,6 +458,8 @@ namespace umbriel {
     wlr_scene_node_clear_animations(&m_scene->tree->node);
     const bool hadFocus = hasKeyboardFocus();
     m_mapped = false;
+    m_effectState.release();
+    m_openEffect.reset();
     m_server->updateIdleInhibit();
     m_blur.hide();
     m_fade.snap(1.0);
@@ -446,6 +521,7 @@ namespace umbriel {
         out->markDirty(Dirty::LayerArrange);
       }
     }
+    refreshEffects();
   }
 
   void LayerSurface::handleDestroy() {

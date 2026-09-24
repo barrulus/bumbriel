@@ -28,6 +28,7 @@ cat >> "$UMBRIEL_CONFIG" <<EOF
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -46,16 +47,22 @@ enabled = false
 enabled = true
 duration_ms = $OUT_MS
 curve = "linear"
-shader = "dwindle-transparent-close.glsl"
 
 [animation.windows_move]
 enabled = true
 duration_ms = $MOVE_MS
 curve = "$MOVE_CURVE"
-shader = "dwindle-move-marker.glsl"
 
 [animation.workspaces]
 enabled = false
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "dwindle-transparent-close.glsl"}]
+[effects.fixture.move]
+passes = [{shader = "dwindle-move-marker.glsl"}]
+[effects.fixture.resize]
+passes = [{shader = "dwindle-move-marker.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 # Animation time only moves by clock-advance. Samples land every SAMPLE_MS after the close.

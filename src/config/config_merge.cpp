@@ -290,6 +290,21 @@ namespace umbriel::configmerge {
       }
       visited.insert(key);
       result.loadedFiles.push_back(key);
+      if (const auto* effects = parsed["effects"].as_table()) {
+        for (const auto& [name, definition] : *effects) {
+          const auto [owner, inserted] = result.effectOwners.emplace(name.str(), definition.source());
+          if (!inserted) {
+            const auto first = makeDiagnostic(ConfigDiagnostic::Severity::Error, owner->second, "");
+            result.diagnostics.push_back(makeDiagnostic(
+                ConfigDiagnostic::Severity::Error, definition.source(),
+                std::format(
+                    "effect '{}' is already defined at {}; each effect must have one defining file", name.str(),
+                    first.location()
+                )
+            ));
+          }
+        }
+      }
 
       IncludeDirective directive = readInclude(parsed, result);
       parsed.erase("include");

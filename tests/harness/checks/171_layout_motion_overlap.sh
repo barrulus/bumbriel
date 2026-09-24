@@ -28,9 +28,9 @@ curve = "linear"
 style = "popin"
 
 [animation.windows_move]
-shader = "layout-motion.glsl"
 
 [appearance]
+effects = ["fixture"]
 border_width = 2
 outer_border_width = 8
 corner_radius = 0
@@ -42,6 +42,12 @@ outer = "#00FF00FF"
 
 [appearance.shadow]
 enabled = false
+[render.effects]
+in_capture = true
+[effects.fixture.move]
+passes = [{shader = "layout-motion.glsl"}]
+[effects.fixture.resize]
+passes = [{shader = "layout-motion.glsl"}]
 EOF
 cat > "$UMBRIEL_RUNTIME_DIR/layout-motion.glsl" <<'GLSL'
 vec4 animation(vec2 uv) {

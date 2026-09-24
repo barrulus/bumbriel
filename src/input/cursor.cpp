@@ -556,7 +556,7 @@ namespace umbriel {
     m_grabButton = button;
     if (!grab.pending) {
       view->enterDragPresentation();
-      view->beginPointerWobble(grab.startX, grab.startY);
+      view->beginPointerPhysics(grab.startX, grab.startY);
     }
     updateInteractiveCursor(view);
     return true;
@@ -754,7 +754,7 @@ namespace umbriel {
     }
     const bool restoreDragPresentation = isDraggingView(view);
     if (restoreDragPresentation && view != nullptr)
-      view->endPointerWobble();
+      view->endPointerPhysics();
     const auto* tiledResize = std::get_if<TiledResizeGrab>(&m_grab);
     Workspace* resizedWorkspace = tiledResize != nullptr ? tiledResize->workspace : nullptr;
     const bool restoreResizePresentation = std::holds_alternative<FloatingResizeGrab>(m_grab);
@@ -1890,7 +1890,7 @@ namespace umbriel {
       grab.sourceWorkspace->layoutDetach(grab.view);
     }
     grab.view->enterDragPresentation();
-    grab.view->beginPointerWobble(grab.startX, grab.startY);
+    grab.view->beginPointerPhysics(grab.startX, grab.startY);
   }
 
   void Cursor::updateDropTarget() {

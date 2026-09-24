@@ -10,6 +10,15 @@ readonly IMAGE="$UMBRIEL_RUNTIME_DIR/shader-events.png"
 cp "$UMBRIEL_CONFIG" "$BASE"
 
 configure() {
+  local scope
+  case $1 in
+    windows_move) scope=move ;;
+    border) scope=border.focus ;;
+    dim_unfocused) scope=focus ;;
+    workspaces) scope=workspace ;;
+    layers) scope=open ;;
+    *) scope=$1 ;;
+  esac
   cat "$BASE" > "$UMBRIEL_CONFIG"
   cat >> "$UMBRIEL_CONFIG" <<EOF
 
@@ -20,8 +29,22 @@ curve = "linear"
 enabled = false
 [animation.$1]
 enabled = true
-shader = "fixture-1.glsl"
+[appearance]
+effects = ["fixture"]
+[render.effects]
+in_capture = true
+[effects.fixture.$scope]
+passes = [{shader = "fixture-1.glsl"}]
 EOF
+  case $1 in
+    windows_move) scope=resize ;;
+    scratchpad) scope=backdrop ;;
+    layers) scope=close ;;
+    *) scope= ;;
+  esac
+  if [[ -n $scope ]]; then
+    printf '[effects.fixture.%s]\npasses = [{shader = "fixture-1.glsl"}]\n' "$scope" >> "$UMBRIEL_CONFIG"
+  fi
   "$UMBRIEL" msg config-reload > /dev/null
   "$UMBRIEL" clock-advance 1000
 }

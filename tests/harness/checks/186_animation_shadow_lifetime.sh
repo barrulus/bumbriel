@@ -17,6 +17,7 @@ shadow = "#00FF00FF"
 scale = 1.25
 transform = "90"
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -31,13 +32,17 @@ curve = "linear"
 [animation.windows_move]
 enabled = false
 [animation.windows_in]
-shader = "half.glsl"
 [animation.windows_out]
-shader = "identity.glsl"
 [[window_rule]]
 match.title = "^shadow-caster$"
 default_floating = true
 default_position = { x = 80, y = 120, anchor = "top_left" }
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "half.glsl"}]
+[effects.fixture.close]
+passes = [{shader = "identity.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 # Animation time only moves by clock-advance: each sample lands 500 ms into its 2000 ms timeline.

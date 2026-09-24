@@ -20,6 +20,7 @@ cat >> "$UMBRIEL_CONFIG" <<EOF
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -41,12 +42,15 @@ enabled = false
 enabled = true
 duration_ms = $OUT_MS
 curve = "linear"
-shader = "configure-close.glsl"
 
 [animation.windows_move]
 enabled = true
 duration_ms = $MOVE_MS
 curve = "linear"
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "configure-close.glsl"}]
 EOF
 "$UMBRIEL" msg workspace-set-layout:master > /dev/null
 # Animation time only moves by clock-advance. Clients still map, acknowledge, and commit in real time, so each sample

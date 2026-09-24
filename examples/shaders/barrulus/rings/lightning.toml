@@ -1,16 +1,15 @@
-[appearance]
-border_width = 6
-outer_border_width = 0
-
-[appearance.border_shader]
+[effects.lightning.border.outer]
 enabled = true
 animated = true
 speed = 1
 padding = 24
-shader = "lightning.glsl"
+passes = [{ shader = "lightning.glsl" }]
 
-[appearance.border_shader.light]
+[effects.lightning.border.outer.light]
 enabled = true
 spread = 80
 intensity = 1.0
 threshold = 0.5
+
+[effects.lightning.border.inner]
+enabled = false

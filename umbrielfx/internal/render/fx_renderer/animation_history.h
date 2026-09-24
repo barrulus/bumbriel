@@ -3,6 +3,7 @@
 
 #include <pixman.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <wayland-server-core.h>
 #include <wayland-server-protocol.h>
 
@@ -26,6 +27,13 @@ void fx_render_pass_end_animation_with_history(
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
     struct fx_animation_history* history, struct wlr_output* output, bool update_history
+);
+
+void fx_render_pass_end_animation_pipeline(
+    struct fx_gles_render_pass* pass, struct fx_animation_shader* const* shaders, size_t count,
+    const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
+    enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
+    struct fx_animation_history* histories, struct wlr_output* output, bool update_history
 );
 
 #endif

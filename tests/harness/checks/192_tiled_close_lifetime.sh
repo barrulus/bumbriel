@@ -16,6 +16,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -31,12 +32,15 @@ enabled = true
 duration_ms = 1600
 curve = "linear"
 style = "fade"
-shader = "tiled-close-green.glsl"
 
 [animation.windows_move]
 enabled = true
 duration_ms = 150
 curve = "linear"
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "tiled-close-green.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

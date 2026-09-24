@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.prairie-wind"]
-scope = "window"
-
-[[shaders.preset."window.prairie-wind".passes]]
-shader = "prairie-wind.glsl"
+[effects."window.prairie-wind".content]
+passes = [{ shader = "prairie-wind.glsl" }]

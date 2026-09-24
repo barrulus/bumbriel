@@ -5,6 +5,8 @@ uniform bool linear;
 uniform bool mask;
 uniform vec2 size;
 uniform vec4 radius;
+uniform vec4 hole;
+uniform vec4 hole_radius;
 vec3 to_linear(vec3 c) {
     return mix(c / 12.92, pow(max((c + 0.055) / 1.055, 0.0), vec3(2.4)), step(vec3(0.04045), c));
 }
@@ -22,5 +24,13 @@ void main() {
     if (mask && corner && d > -0.5) discard;
     vec4 value = texture2D(tex, v_texcoord);
     if (linear && value.a > 0.0) value.rgb = to_linear(value.rgb / value.a) * value.a;
+    if (mask && hole.z > 0.0 && hole.w > 0.0) {
+        vec2 hp = v_texcoord * size - hole.xy - hole.zw * 0.5;
+        float hr = hp.y < 0.0 ? (hp.x < 0.0 ? hole_radius.x : hole_radius.y) : (hp.x < 0.0 ? hole_radius.w : hole_radius.z);
+        hr = min(hr, min(hole.z, hole.w) * 0.5);
+        vec2 hq = abs(hp) - hole.zw * 0.5 + hr;
+        float hd = length(max(hq, 0.0)) + min(max(hq.x, hq.y), 0.0) - hr;
+        value *= min(1.0, smoothstep(-0.5, 0.5, hd) / max(value.a, 0.000001));
+    }
     gl_FragColor = value;
 }

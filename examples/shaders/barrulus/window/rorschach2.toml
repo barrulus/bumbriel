@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.rorschach2"]
-scope = "window"
-
-[[shaders.preset."window.rorschach2".passes]]
-shader = "rorschach2.glsl"
+[effects."window.rorschach2".content]
+passes = [{ shader = "rorschach2.glsl" }]

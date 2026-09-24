@@ -201,6 +201,8 @@ namespace umbriel {
          ActionArgKind::OptionalOutput},
         {"dpms-on", "[<output>]", "Power on one output, or every output when bare", KeybindAction::DpmsOn,
          ActionArgKind::OptionalOutput},
+        {"effect", "<kind> <operation> [<name> ...] [--target <id>] [--scope <leaf>[,<leaf>...]]",
+         "Select, toggle or cycle named effects", KeybindAction::Effect, ActionArgKind::Effect},
         {"keyboard-layout-next", "", "Switch one keyboard to its next configured layout",
          KeybindAction::KeyboardLayoutNext},
         {"layout-master-count-decrease", "", "Demote the last master window to the stack",
@@ -227,8 +229,7 @@ namespace umbriel {
          KeybindAction::ScratchpadToggle, ActionArgKind::OptionalScratchpad},
         {"session-quit", "[skip-confirmation]", "Quit the session, confirming first unless told to skip",
          KeybindAction::SessionQuit, ActionArgKind::SkipConfirmation},
-        {"shader", "<scope> <preset-or-operation> [<target>]", "Select, toggle or cycle a persistent shader",
-         KeybindAction::Shader, ActionArgKind::Shader},
+
         {"shortcuts-inhibit-toggle", "", "Toggle shortcuts inhibition for the focused surface",
          KeybindAction::ShortcutsInhibitToggle},
         {"spawn", "<cmd>", "Run a command with a launch activation token", KeybindAction::Spawn,
@@ -497,30 +498,14 @@ namespace umbriel {
           return true;
         }
         break;
-      case ActionArgKind::Shader:
+      case ActionArgKind::Effect:
         if (takeActionArg(value, spec, arg)) {
-          const auto nextWord = [&arg] {
-            const std::string_view word = arg.substr(0, arg.find(' '));
-            arg.remove_prefix(word.size());
-            arg.remove_prefix(std::min(arg.find_first_not_of(' '), arg.size()));
-            return word;
-          };
-          constexpr std::array<std::string_view, 7> kScopes{"window", "output", "global", "animation",
-                                                            "cursor", "screen", "border"};
-          ShaderArg shader;
-          shader.scope = nextWord();
-          shader.operation = nextWord();
-          shader.target = arg;
-          if (shader.operation.empty() || !std::ranges::contains(kScopes, std::string_view(shader.scope)))
-            return false;
-          if (shader.scope != "window"
-              && shader.scope != "border"
-              && shader.scope != "output"
-              && !shader.target.empty())
-            return false;
-          output.action = spec.action;
-          output.payload = std::move(shader);
-          return true;
+          if (auto effect = parseEffectAction(arg)) {
+            output.action = spec.action;
+            output.payload = std::move(*effect);
+            return true;
+          }
+          return false;
         }
         break;
       case ActionArgKind::Fraction: {

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "config/config.h"
-
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <random>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,54 +20,62 @@ namespace umbriel {
   class ShaderPoolAllocator {
   public:
     void select(
-        const Config::Shaders::Pool& pool, std::shared_ptr<ShaderPoolLease>& lease, bool cycle = false,
-        std::string_view currentPreset = {}
+        std::string_view name, std::span<const std::string> candidates, std::string_view policy,
+        std::shared_ptr<ShaderPoolLease>& lease, bool cycle = false, std::string_view currentPreset = {}
     ) {
-      if (pool.presets.empty()) {
+      if (candidates.empty()) {
         lease.reset();
         return;
       }
-      const auto current = !currentPreset.empty() ? std::ranges::find(pool.presets, currentPreset)
-          : lease && lease->pool == pool.name     ? std::ranges::find(pool.presets, lease->preset)
-                                                  : pool.presets.end();
-      if (!cycle && current != pool.presets.end())
+      const auto current = !currentPreset.empty() ? std::ranges::find(candidates, currentPreset)
+          : lease && lease->pool == name          ? std::ranges::find(candidates, lease->preset)
+                                                  : candidates.end();
+      if (!cycle && current != candidates.end() && lease && lease->pool == name && lease->preset == *current)
         return;
       std::erase_if(m_leases, [](const auto& entry) { return entry.expired(); });
       size_t start = 0;
-      const auto previous = std::ranges::find(pool.presets, m_previous[pool.name]);
-      if (cycle && current != pool.presets.end())
-        start = (static_cast<size_t>(current - pool.presets.begin()) + 1) % pool.presets.size();
-      else if (previous != pool.presets.end())
-        start = (static_cast<size_t>(previous - pool.presets.begin()) + 1) % pool.presets.size();
+      const auto previous = std::ranges::find(candidates, m_previous[std::string(name)]);
+      if (cycle && current != candidates.end())
+        start = (static_cast<size_t>(current - candidates.begin()) + 1) % candidates.size();
+      else if (previous != candidates.end())
+        start = (static_cast<size_t>(previous - candidates.begin()) + 1) % candidates.size();
       size_t selected = start;
       size_t least = std::numeric_limits<size_t>::max();
-      for (size_t offset = 0; offset < pool.presets.size(); ++offset) {
-        const size_t index = (start + offset) % pool.presets.size();
+      for (size_t offset = 0; offset < candidates.size(); ++offset) {
+        const size_t index = (start + offset) % candidates.size();
         // A cycle must change the effect when there is more than one choice.
-        if (cycle && pool.presets.size() > 1 && current != pool.presets.end() && pool.presets[index] == *current)
+        if (cycle && candidates.size() > 1 && current != candidates.end() && candidates[index] == *current)
           continue;
         size_t count = 0;
         for (const auto& entry : m_leases)
           if (const auto other = entry.lock();
-              other && other != lease && other->pool == pool.name && other->preset == pool.presets[index])
+              other && other != lease && other->pool == name && other->preset == candidates[index])
             ++count;
         if (count < least) {
           least = count;
           selected = index;
         }
-        if (pool.allocation == "round-robin" || count == 0)
+        if (policy == "round_robin" || count == 0)
           break;
+      }
+      if (policy == "random") {
+        std::vector<size_t> eligible;
+        for (size_t i = 0; i < candidates.size(); ++i)
+          if (!cycle || candidates.size() == 1 || current == candidates.end() || candidates[i] != *current)
+            eligible.push_back(i);
+        selected = eligible[std::uniform_int_distribution<size_t>(0, eligible.size() - 1)(m_random)];
       }
       if (!lease) {
         lease = std::make_shared<ShaderPoolLease>();
         m_leases.push_back(lease);
       }
-      lease->pool = pool.name;
-      lease->preset = pool.presets[selected];
-      m_previous[pool.name] = lease->preset;
+      lease->pool = name;
+      lease->preset = candidates[selected];
+      m_previous[std::string(name)] = lease->preset;
     }
 
   private:
+    std::mt19937 m_random{std::random_device{}()};
     std::vector<std::weak_ptr<ShaderPoolLease>> m_leases;
     std::unordered_map<std::string, std::string> m_previous;
   };

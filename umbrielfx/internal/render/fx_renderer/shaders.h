@@ -10,6 +10,7 @@
 struct fx_renderer;
 
 struct fx_animation_shader {
+  struct fx_uniform_values* params;
 	struct fx_renderer *renderer;
 	unsigned references;
 	struct wl_listener destroy;
@@ -17,13 +18,15 @@ struct fx_animation_shader {
 	GLint proj, tex_proj, position, tex, sample_matrix;
 	GLint previous_tex, previous_sample_matrix;
 	GLint progress, linear_progress, direction, size, random_seed;
-	GLint wobble, render_padding;
+	GLint deformation, render_padding, palette, palette_count;
 	bool shape_preserving;
 };
 
 GLuint compile_shader(GLuint type, const GLchar *src);
 
 GLuint link_program(const GLchar *frag_src);
+GLuint fx_effect_program_acquire(struct fx_renderer* renderer, const char* source);
+void fx_effect_program_release(struct fx_renderer* renderer, GLuint program);
 
 bool check_gl_ext(const char *exts, const char *ext);
 

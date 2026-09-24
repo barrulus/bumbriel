@@ -1,21 +1,9 @@
-[animation.windows_in]
-enabled = true
+[effects.whirlpool.open]
 duration_ms = 400
 curve = "linear"
-shader = "whirlpool-open.glsl"
+passes = [{ shader = "whirlpool-open.glsl" }]
 
-[animation.windows_out]
-enabled = true
+[effects.whirlpool.close]
 duration_ms = 500
 curve = "linear"
-shader = "whirlpool-close.glsl"
-
-[animation.pair.whirlpool.open]
-shader = "whirlpool-open.glsl"
-duration_ms = 400
-curve = "linear"
-
-[animation.pair.whirlpool.close]
-shader = "whirlpool-close.glsl"
-duration_ms = 500
-curve = "linear"
+passes = [{ shader = "whirlpool-close.glsl" }]

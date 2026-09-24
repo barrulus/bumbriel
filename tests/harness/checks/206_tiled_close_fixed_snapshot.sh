@@ -24,6 +24,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -45,16 +46,22 @@ enabled = false
 enabled = true
 duration_ms = 1200 # close-duration
 curve = "linear"
-shader = "duration-close-green.glsl"
 
 [animation.windows_move]
 enabled = true
 duration_ms = 600 # move-duration
 curve = "linear"
-shader = "duration-move-blue.glsl"
 
 [animation.workspaces]
 enabled = false
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "duration-close-green.glsl"}]
+[effects.fixture.move]
+passes = [{shader = "duration-move-blue.glsl"}]
+[effects.fixture.resize]
+passes = [{shader = "duration-move-blue.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 
