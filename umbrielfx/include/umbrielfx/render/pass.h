@@ -126,6 +126,8 @@ struct fx_render_border_options {
 	float outer_width;
 	struct wlr_render_color inner_color;
 	struct wlr_render_color outer_color;
+	const float *palette;
+	int palette_count;
 };
 
 struct fx_render_rounded_rect_grad_options {

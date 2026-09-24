@@ -627,6 +627,8 @@ struct fx_decoration_shader *fx_decoration_shader_create(struct wlr_renderer *re
 	shader->emission = glGetUniformLocation(shader->program, "ring_emission");
 	shader->threshold = glGetUniformLocation(shader->program, "ring_threshold");
 	shader->emission_bounds = glGetUniformLocation(shader->program, "ring_emission_bounds");
+	shader->palette = glGetUniformLocation(shader->program, "umbriel_palette");
+	shader->palette_count = glGetUniformLocation(shader->program, "umbriel_palette_count");
 	shader->light_program = link_program(decoration_light_frag_src);
 	shader->light_proj = glGetUniformLocation(shader->light_program, "proj");
 	shader->light_tex_proj = glGetUniformLocation(shader->light_program, "tex_proj");

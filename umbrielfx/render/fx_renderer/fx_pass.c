@@ -1766,6 +1766,10 @@ decoration_uniforms(struct fx_decoration_shader* shader, const struct fx_render_
       shader->color, alpha > 0 ? base.r / alpha : 0, alpha > 0 ? base.g / alpha : 0, alpha > 0 ? base.b / alpha : 0,
       alpha
   );
+  const int palette_count = options->palette != NULL ? options->palette_count : 0;
+  glUniform1i(shader->palette_count, palette_count);
+  if (palette_count > 0)
+    glUniform4fv(shader->palette, palette_count, options->palette);
   glUniform1i(shader->linear, linear);
   glUniform1i(shader->emission, false);
 }

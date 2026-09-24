@@ -2622,6 +2622,7 @@ shader_fps = 30
 shader = "ring.glsl"
 padding = 48
 speed = 2
+palette = true
 [appearance.border_shader.light]
 enabled = true
 spread = 90
@@ -2642,6 +2643,7 @@ enabled = false
     CHECK(settings.shader->file == tree.path("theme/ring.glsl"));
   CHECK_EQ(settings.padding, 48);
   CHECK_EQ(settings.speed, 2.0);
+  CHECK(settings.palette);
   CHECK(settings.light.enabled);
   CHECK_EQ(settings.light.spread, 90.0);
   CHECK_EQ(settings.light.intensity, 1.4);
@@ -2651,6 +2653,7 @@ enabled = false
   CHECK(!store.config().windowRules[0].borderShader->enabled);
   CHECK(!store.config().windowRules[0].borderShader->shader.has_value());
   CHECK_EQ(store.config().windowRules[0].borderShader->padding, 0);
+  CHECK(!store.config().windowRules[0].borderShader->palette);
   CHECK(!store.config().windowRules[0].borderShader->light.enabled);
   CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("theme/ring.glsl")), 1);
   CHECK(!containsDiagnostic(store, "unknown key"));

@@ -208,6 +208,7 @@ namespace umbriel {
     std::string overlay;
     bool enabled = true;
     bool animated = true;
+    bool palette = false;
     double speed = 1.0;
     int padding = 0;
     struct Light {

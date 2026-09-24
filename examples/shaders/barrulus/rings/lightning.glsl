@@ -62,7 +62,14 @@ vec4 ring_color(vec2 coords) {
     float fork = exp(-abs(d - fork_center) * 18.0) * energy;
     float spark = exp(-pow(delta / 0.007, 2.0)) * exp(-abs(d - center) * 2.2);
     float light = core * (0.18 + 0.82 * energy) + 0.7 * fork + 0.85 * spark;
-    rgb = mix(vec3(0.08, 0.24, 0.8), vec3(0.78, 0.94, 1.0), clamp(light, 0.0, 1.0));
+    // A zero count means the palette is off, which is how a shader keeps its own colours.
+    vec3 body = umbriel_palette_count > 0
+        ? umbriel_palette_at(umbriel_time * 0.05).rgb
+        : vec3(0.08, 0.24, 0.8);
+    vec3 tip = umbriel_palette_count > 0
+        ? mix(body, vec3(1.0), 0.75)
+        : vec3(0.78, 0.94, 1.0);
+    rgb = mix(body, tip, clamp(light, 0.0, 1.0));
     coverage = clamp(light + halo * (0.12 + 0.48 * energy), 0.0, 1.0);
 
     float outer_limit = min(RING_OUTSET_MULTIPLIER * width, width + ring_padding);

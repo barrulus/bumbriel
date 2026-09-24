@@ -1,6 +1,7 @@
 #include "view/decoration.h"
 
 #include "config/config.h"
+#include "config/shaders.h"
 #include "scene/border_rect.h"
 #include "scene/color.h"
 #include "scene/decoration_shader.h"
@@ -45,6 +46,12 @@ namespace umbriel {
     const auto parameters =
         decorationParameters(m_shaderConfig, static_cast<float>(m_shaderConfig.padding), 1.0F, m_lightSuppressed);
     wlr_scene_border_set_shader(m_border, shader, &parameters);
+    if (shader != nullptr && m_shaderConfig.palette) {
+      const auto palette = shaderPalette(config().colors);
+      wlr_scene_border_set_palette(m_border, palette.data(), kShaderPaletteCount);
+    } else {
+      wlr_scene_border_set_palette(m_border, nullptr, 0);
+    }
     const int padding = shader != nullptr ? m_shaderConfig.padding : 0;
     if (padding != m_shaderPadding) {
       m_shaderPadding = padding;

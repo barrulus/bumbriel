@@ -11,6 +11,7 @@ extern "C" {
 }
 
 #include "config/config.h"
+#include "config/shaders.h"
 #include "core/log.h"
 #include "input/cursor.h"
 #include "input/gestures.h"
@@ -305,6 +306,12 @@ namespace umbriel {
       const int padding = shader != nullptr ? static_cast<int>(std::ceil(settings.padding * z)) : 0;
       const auto parameters = decorationParameters(settings, static_cast<float>(padding), static_cast<float>(z), false);
       wlr_scene_border_set_shader(card.border, shader, &parameters);
+      if (shader != nullptr && settings.palette) {
+        const auto palette = shaderPalette(config().colors);
+        wlr_scene_border_set_palette(card.border, palette.data(), kShaderPaletteCount);
+      } else {
+        wlr_scene_border_set_palette(card.border, nullptr, 0);
+      }
       applyBorderGeometry(
           card.border, padBorderRing(makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth), padding),
           innerWidth, outerWidth

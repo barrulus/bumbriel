@@ -41,7 +41,10 @@ vec4 ring_color(vec2 coords) {
     float across = clamp((distance - inner_edge) / max(thickness, 0.01), 0.0, 1.0);
     float pigment = u - phase + 0.10 * bend + 0.025 * fine
         + 0.025 * sin(tau * (across * 0.65 + drift * 8.0 + phase));
-    vec3 hue = clamp(abs(fract(pigment + vec3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    // The angular position drives the palette cycle exactly as it drove the hue wheel.
+    vec3 hue = umbriel_palette_count > 0
+        ? umbriel_palette_at(pigment).rgb
+        : clamp(abs(fract(pigment + vec3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
     float milk = clamp(0.30 + 0.18 * bend + 0.12 * pool, 0.12, 0.62);
     vec3 rgb = mix(hue, vec3(1.0), milk);
     float ridge = 0.48 + 0.18 * fine;

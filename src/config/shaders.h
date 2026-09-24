@@ -11,6 +11,9 @@ namespace umbriel {
   void readDecorationShader(Section& section, DecorationShaderConfig& target);
   const Config::Shaders::Pool* shaderPool(std::string_view name, std::string_view scope);
   const DecorationShaderConfig* borderPreset(std::string_view name);
+  // The chromatic palette entries only; the greys and darks would mud a cycle.
+  inline constexpr int kShaderPaletteCount = 4;
+  std::array<float, kShaderPaletteCount * 4> shaderPalette(const Config::Colors& colors);
   void readShaders(Section& root, Config& loaded);
   // Reads a shader file and registers it with the config watcher.
   std::optional<AnimationShaderSource> readShaderSource(Section& section);
