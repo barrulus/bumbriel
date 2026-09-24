@@ -1,12 +1,11 @@
-# Desktop behavior: choose pools for apps, set shortcuts and personal preferences.
-# effects.toml defines effects; pools.toml groups them. All includes are here.
+# Desktop behavior: choose effects for apps, set shortcuts and personal preferences.
+# effects.toml defines effects; choices.toml groups them. All includes are here.
 [include]
-files = ["defaults.toml", "effects.toml", "pools.toml", "wobbly.toml"]
+files = ["defaults.toml", "effects.toml", "choices.toml", "elastic.toml"]
 
-[shaders]
+[render.effects]
 # Include window, region, output and global effects in recordings and screenshots.
 in_capture = true
-window_pool = "favourites"
 
 [keybinds]
 "Print" = { action = 'spawn:python3 "${UMBRIEL_EXAMPLE_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/umbriel}/screengrab.py" region', repeat = false }
@@ -17,34 +16,40 @@ window_pool = "favourites"
 "Mod+2" = { action = "spawn:code", repeat = false }
 "Mod+5" = { action = "spawn:foot --app-id foot-rainbow", repeat = false }
 "Mod+T" = { action = "spawn:ghostty", repeat = false }
-"Mod+S" = { action = "shader:window cycle", repeat = false }
-"Mod+Shift+S" = { action = "shader:window toggle", repeat = false }
-"Mod+Ctrl+S" = { action = "shader:window window.sentient-circuit-v2", repeat = false }
+"Mod+S" = { action = "effect:window cycle favourites --scope content", repeat = false }
+"Mod+Shift+S" = { action = "effect:window toggle --scope content", repeat = false }
+"Mod+Ctrl+S" = { action = "effect:window set window.sentient-circuit-v2 --scope content", repeat = false }
 
-"Mod+Alt+S" = { action = "shader:border cycle:terminals", repeat = false }
-"Mod+Alt+Shift+S" = { action = "shader:border toggle", repeat = false }
-"Mod+Alt+Ctrl+S" = { action = "shader:border default", repeat = false }
+"Mod+Alt+S" = { action = "effect:window cycle terminals --scope border.inner,border.outer", repeat = false }
+"Mod+Alt+Shift+S" = { action = "effect:window toggle --scope border.inner,border.outer", repeat = false }
+"Mod+Alt+Ctrl+S" = { action = "effect:window default --scope border.inner,border.outer", repeat = false }
 
 [input.focus]
 follows_mouse = true
 
 # Focus borders and application assignments
 [appearance]
+effects = ["desktop", "elastic"]
 border_width = 6
 outer_border_width = 0
 corner_radius = 10
 
-# Default pool for applications without a more specific rule.
-[appearance.border_shader]
-enabled = true
-pool = "desktop"
+# Optional frost behind translucent windows, including other windows.
+# defaults.toml already enables blur in its fallback window rule.
+[appearance.blur]
+enabled = false
+optimized = false
+passes = 3
+radius = 8
+noise = 0.025
+brightness = 0.95
+contrast = 0.85
+saturation = 0.9
 
 # Assign once per mapped window; focus changes preserve the selected ring.
 [[window_rule]]
 match.app_id = "^(foot|footclient|foot-.*|com[.]mitchellh[.]ghostty|ghostty|kitty|net[.]kovidgoyal[.]kitty)$"
-[window_rule.border_shader]
-enabled = true
-pool = "terminals"
+effects = ["terminals"]
 
 [[window_rule]]
 match.app_id = "^com[.]gabm[.]satty$"

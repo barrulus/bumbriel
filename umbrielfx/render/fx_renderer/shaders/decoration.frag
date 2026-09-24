@@ -13,8 +13,8 @@ uniform bool ring_linear;
 uniform bool ring_emission;
 uniform float ring_threshold;
 uniform vec4 ring_emission_bounds;
-uniform vec4 umbriel_palette[8];
-uniform int umbriel_palette_count;
+
+
 
 float ring_distance(vec2 coords) {
     vec2 half_size = ring_size * 0.5;
@@ -27,22 +27,8 @@ float ring_distance(vec2 coords) {
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
 }
 vec4 ring_base_color(vec2 coords) { return ring_color_base; }
-// GLSL ES 1.00 only indexes a uniform array by constant expression, so the loop counter is the index.
-vec4 umbriel_palette_at(float position) {
-    if (umbriel_palette_count <= 0) return ring_color_base;
-    float span = float(umbriel_palette_count);
-    float scaled = fract(position) * span;
-    float index = floor(scaled);
-    float next = mod(index + 1.0, span);
-    vec4 from = ring_color_base;
-    vec4 to = ring_color_base;
-    for (int i = 0; i < 8; i++) {
-        if (i >= umbriel_palette_count) break;
-        if (float(i) == index) from = umbriel_palette[i];
-        if (float(i) == next) to = umbriel_palette[i];
-    }
-    return mix(from, to, scaled - index);
-}
+vec4 umbriel_palette_fallback() { return ring_color_base; }
+
 vec4 ring_color(vec2 coords);
 vec3 ring_srgb_to_linear(vec3 rgb) {
     return mix(rgb / 12.92, pow(max((rgb + 0.055) / 1.055, 0.0), vec3(2.4)),

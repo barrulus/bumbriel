@@ -21,6 +21,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -42,7 +43,6 @@ enabled = false
 enabled = true
 duration_ms = 4000
 curve = "linear"
-shader = "workspace-close-stripe.glsl"
 
 [animation.windows_move]
 enabled = false
@@ -63,6 +63,10 @@ match.title = "^ownership-floating-close$"
 default_floating = true
 default_floating_size_px = { width = 600, height = 360 }
 default_position = { x = 420, y = 300, anchor = "top_left" }
+[render.effects]
+in_capture = true
+[effects.fixture.close]
+passes = [{shader = "workspace-close-stripe.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

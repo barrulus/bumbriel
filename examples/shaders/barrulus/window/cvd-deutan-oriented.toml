@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.cvd-deutan-oriented"]
-scope = "window"
-
-[[shaders.preset."window.cvd-deutan-oriented".passes]]
-shader = "cvd-deutan-oriented.glsl"
+[effects."window.cvd-deutan-oriented".content]
+passes = [{ shader = "cvd-deutan-oriented.glsl" }]

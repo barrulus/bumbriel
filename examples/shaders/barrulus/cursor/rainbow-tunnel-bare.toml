@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."cursor.rainbow-tunnel-bare"]
-scope = "global"
-
-[[shaders.preset."cursor.rainbow-tunnel-bare".passes]]
-shader = "rainbow-tunnel-bare.glsl"
+[effects."cursor.rainbow-tunnel-bare".overlay]
+passes = [{ shader = "rainbow-tunnel-bare.glsl" }]

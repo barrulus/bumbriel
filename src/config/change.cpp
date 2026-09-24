@@ -158,6 +158,13 @@ namespace umbriel {
     const bool outputLayout = outputNamesChanged || outputProjectionChanged(before, after, sameOutputLayout);
     const bool sceneBlur =
         before.appearance.blur != after.appearance.blur || before.optimizedBlurNeeded() != after.optimizedBlurNeeded();
+    const bool customEffects = before.effects != after.effects
+        || before.effectPolicy != after.effectPolicy
+        || before.effectRegions != after.effectRegions
+        || before.appearance.effects != after.appearance.effects
+        || outputProjectionChanged(before, after, [](const OutputRule* a, const OutputRule* b) {
+                                 return (a ? a->effects : std::nullopt) == (b ? b->effects : std::nullopt);
+                               });
     const bool focusDim = before.animation.enabled != after.animation.enabled
         || before.animation.dimUnfocused != after.animation.dimUnfocused;
     return {
@@ -173,18 +180,13 @@ namespace umbriel {
         .sceneBlur = sceneBlur,
         // [colors] owns the border, backdrop, insert-hint, and shadow colors, so
         // any color edit refreshes window chrome.
-        .viewChrome =
-            before.appearance != after.appearance
-            || before.shaders != after.shaders
+        .viewChrome = customEffects
+            || before.appearance != after.appearance
             || outputNamesChanged
-            || outputProjectionChanged(
-                before, after,
-                [](const OutputRule* a, const OutputRule* b) { return (a ? a->shader : "") == (b ? b->shader : ""); }
-            )
             || before.colors != after.colors
             || before.windowRules != after.windowRules
             || focusDim,
-        .layerEffects = sceneBlur || before.layerRules != after.layerRules,
+        .layerEffects = customEffects || sceneBlur || before.layerRules != after.layerRules,
         .animation = before.animation != after.animation,
         .input = before.input != after.input || before.hotCorners != after.hotCorners,
         .overviewPresentation = before.overview != after.overview || before.colors != after.colors,
@@ -239,7 +241,9 @@ namespace umbriel {
         .colors = before.colors != after.colors,
         .appearance = before.appearance != after.appearance,
         .animation = before.animation != after.animation,
-        .shaders = before.shaders != after.shaders,
+        .shaders = before.effects != after.effects
+            || before.effectPolicy != after.effectPolicy
+            || before.effectRegions != after.effectRegions,
         .overview = before.overview != after.overview,
         .hotCorners = before.hotCorners != after.hotCorners,
         .layout = before.layout != after.layout,

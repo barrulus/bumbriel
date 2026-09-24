@@ -1,5 +1,5 @@
 #include "check.h"
-#include "config/shaders.h"
+#include "config/shader_builtin.h"
 #include "config/store.h"
 #include "scene/animation_shader.h"
 
@@ -2612,35 +2612,33 @@ UMBRIEL_TEST(tabletConfigDefaults) {
   CHECK(!tablet.calibrationMatrix.has_value());
 }
 
-UMBRIEL_TEST(decorationShadersResolveIncludesWatchEditsAndReplaceRuleBlocks) {
+UMBRIEL_TEST(decorationEffectsResolveIncludesWatchEditsAndReplaceRuleBlocks) {
   const TempConfigTree tree;
   tree.write("config.toml", "[include]\nfiles = ['theme/ring.toml']\n");
   tree.write("theme/ring.toml", R"(
+[render.effects]
+fps = 30
 [appearance]
-shader_fps = 30
-[appearance.border_shader]
-shader = "ring.glsl"
+effects = ["ring"]
+[effects.ring.border.outer]
+passes = [{shader = "ring.glsl"}]
 padding = 48
 speed = 2
 palette = true
-[appearance.border_shader.light]
-enabled = true
-spread = 90
-intensity = 1.4
-threshold = 0.6
+light = {enabled = true, spread = 90, intensity = 1.4, threshold = 0.6}
+[effects.no-ring.border.outer]
+enabled = false
 [[window_rule]]
 match.app_id = "terminal"
-[window_rule.border_shader]
-enabled = false
+effects = ["no-ring"]
 )");
   tree.write("theme/ring.glsl", "vec4 ring_color(vec2 p) { return vec4(1.0); }");
-  ConfigStore& store = umbriel::configStore();
+  auto& store = umbriel::configStore();
   store.setRootPath(tree.path("config.toml"), true);
   CHECK(store.reload().success);
-  const auto& settings = store.config().appearance.borderShader;
-  CHECK(settings.shader.has_value());
-  if (settings.shader)
-    CHECK(settings.shader->file == tree.path("theme/ring.glsl"));
+  const auto& settings =
+      *store.config().effects.at("ring").scopes[static_cast<size_t>(umbriel::EffectScope::BorderOuter)];
+  CHECK(settings.passes.front().source.file == tree.path("theme/ring.glsl"));
   CHECK_EQ(settings.padding, 48);
   CHECK_EQ(settings.speed, 2.0);
   CHECK(settings.palette);
@@ -2648,15 +2646,10 @@ enabled = false
   CHECK_EQ(settings.light.spread, 90.0);
   CHECK_EQ(settings.light.intensity, 1.4);
   CHECK_EQ(settings.light.threshold, 0.6);
-  CHECK_EQ(store.config().appearance.shaderFps, 30);
-  CHECK(store.config().windowRules[0].borderShader.has_value());
-  CHECK(!store.config().windowRules[0].borderShader->enabled);
-  CHECK(!store.config().windowRules[0].borderShader->shader.has_value());
-  CHECK_EQ(store.config().windowRules[0].borderShader->padding, 0);
-  CHECK(!store.config().windowRules[0].borderShader->palette);
-  CHECK(!store.config().windowRules[0].borderShader->light.enabled);
+  CHECK_EQ(store.config().effectPolicy.fps, 30);
+  CHECK_EQ(store.config().windowRules[0].effects->names.front(), std::string("no-ring"));
   CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("theme/ring.glsl")), 1);
-  CHECK(!containsDiagnostic(store, "unknown key"));
+  CHECK(store.diagnostics().empty());
   tree.write("theme/ring.glsl", "vec4 ring_color(vec2 p) { return vec4(0.0); }");
   const auto edited = store.reload();
   CHECK(edited.success);
@@ -2664,53 +2657,43 @@ enabled = false
   CHECK(!edited.effects.animation);
 }
 
-UMBRIEL_TEST(animationShadersResolveIncludedFilesAcrossAllEventsAndTrackContentChanges) {
+UMBRIEL_TEST(eventEffectsResolveIncludedFilesAcrossAllEventsAndTrackContentChanges) {
   const TempConfigTree tree;
-  const std::array sections{"windows_in", "windows_out", "windows_move",  "workspaces", "overview",
-                            "scratchpad", "border",      "dim_unfocused", "layers"};
+  const std::array sections{"open",     "close",      "move",     "resize",       "workspace",
+                            "overview", "scratchpad", "backdrop", "border.focus", "focus"};
   std::string theme;
-  for (const char* section : sections) {
-    theme += std::format("[animation.{}]\nshader = 'effect.glsl'\n", section);
-  }
+  for (const char* section : sections)
+    theme += std::format("[effects.event.{}]\npasses = [{{shader = 'effect.glsl'}}]\n", section);
   tree.write("config.toml", "[include]\nfiles = ['theme/animation.toml']\n");
   tree.write("theme/animation.toml", theme);
   tree.write("theme/effect.glsl", "first shader");
   tree.write("effect.glsl", "wrong source directory");
-  ConfigStore& store = umbriel::configStore();
+  auto& store = umbriel::configStore();
   store.setRootPath(tree.path("config.toml"), true);
   CHECK(store.reload().success);
-  const auto& animation = store.config().animation;
-  const std::array sources{&animation.windowsIn.shader,  &animation.windowsOut.shader,   &animation.windowsMove.shader,
-                           &animation.workspaces.shader, &animation.overview.shader,     &animation.scratchpad.shader,
-                           &animation.border.shader,     &animation.dimUnfocused.shader, &animation.layers.shader};
-  for (const auto* source : sources) {
-    CHECK(source->has_value());
-    if (*source) {
-      CHECK_EQ((*source)->code, std::string("first shader"));
-      CHECK((*source)->file == tree.path("theme/effect.glsl"));
-    }
+  for (const auto& scope : store.config().effects.at("event").scopes) {
+    if (!scope)
+      continue;
+    CHECK_EQ(scope->passes.front().source.code, std::string("first shader"));
+    CHECK(scope->passes.front().source.file == tree.path("theme/effect.glsl"));
   }
-  CHECK(!containsDiagnostic(store, "unknown key"));
+  CHECK(store.diagnostics().empty());
   CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("theme/effect.glsl")), 1);
-
   tree.write("theme/effect.glsl", "edited shader");
   const auto edited = store.reload();
   CHECK(edited.success);
-  CHECK(edited.effects.animation);
-  CHECK(store.config().animation.windowsIn.shader.has_value());
-  if (store.config().animation.windowsIn.shader) {
-    CHECK_EQ(store.config().animation.windowsIn.shader->code, std::string("edited shader"));
-  }
-
+  CHECK(edited.effects.viewChrome);
+  CHECK(!edited.effects.animation);
+  const auto open = static_cast<size_t>(umbriel::EffectScope::Open);
+  CHECK_EQ(store.config().effects.at("event").scopes[open]->passes.front().source.code, std::string("edited shader"));
   tree.write("theme/replacement.glsl", "replacement shader");
-  tree.write("theme/animation.toml", "[animation.windows_in]\nshader = 'replacement.glsl'\n");
+  tree.write("theme/animation.toml", "[effects.event.open]\npasses = [{shader = 'replacement.glsl'}]\n");
   CHECK(store.reload().success);
   CHECK(std::ranges::find(store.watchPaths(), tree.path("theme/effect.glsl")) == store.watchPaths().end());
-  CHECK(store.config().animation.windowsIn.shader.has_value());
-  if (store.config().animation.windowsIn.shader) {
-    CHECK_EQ(store.config().animation.windowsIn.shader->code, std::string("replacement shader"));
-  }
-  CHECK(!store.config().animation.layers.shader.has_value());
+  CHECK_EQ(
+      store.config().effects.at("event").scopes[open]->passes.front().source.code, std::string("replacement shader")
+  );
+  CHECK(!store.config().effects.at("event").scopes[static_cast<size_t>(umbriel::EffectScope::Close)]);
 }
 
 UMBRIEL_TEST(animationUsesCanonicalTopLevelNamespace) {
@@ -3186,186 +3169,274 @@ UMBRIEL_TEST(packagedAnimationDefaultsMatchCompiledDefaults) {
   CHECK(store.config().animation == umbriel::Config{}.animation);
 }
 
-UMBRIEL_TEST(persistentShaderIncludesPreserveOrderPathsAndCapabilities) {
+UMBRIEL_TEST(persistentEffectsPreserveOrderPathsAndCapabilities) {
   const TempConfigTree tree;
-  tree.write("main.toml", "[include]\nfiles=[\"effects/presets.toml\"]\n");
+  tree.write("main.toml", "[include]\nfiles=['effects/presets.toml']\n");
   tree.write("effects/tint.glsl", "vec4 postprocess(vec3 p) { return tex2D_screen(p.xy); }");
   tree.write("effects/presets.toml", R"(
-[shaders]
-window="ink"
-global="ink"
-in_capture=true
-reads_cursor=true
-redraw="on-damage"
-[shaders.preset.ink]
-scope="window"
-palette=true
-[[shaders.preset.ink.passes]]
-shader="tint.glsl"
-buffer=true
-[[shaders.preset.ink.passes]]
-preset="temperature"
-kelvin=6500
-[[shaders.region]]
-output="HEADLESS-1"
-preset="ink"
-x=-10
-y=20
-width=300
-height=200
-[animation.pair.ink.open]
-shader="tint.glsl"
-[animation.pair.ink.close]
-shader="tint.glsl"
-duration_ms=450
+[appearance]
+effects = ["ink"]
+[render.effects]
+in_capture = true
+reads_cursor = true
+redraw = "on_damage"
+[effects.ink.content]
+palette = true
+passes = [{shader = "tint.glsl", buffer = true}, {builtin = "temperature", params = {kelvin = 6500}}]
+[effects.ink.screen]
+passes = [{shader = "tint.glsl"}]
+[effects.ink.open]
+passes = [{shader = "tint.glsl"}]
+duration_ms = 400
+curve = "linear"
+[effects.ink.close]
+passes = [{shader = "tint.glsl"}]
+duration_ms = 450
+curve = "linear"
+[[effect_region]]
+name = "panel"
+output = "HEADLESS-1"
+effects = ["ink"]
+x = -10
+y = 20
+width = 300
+height = 200
 )");
   auto& store = umbriel::configStore();
   CHECK(store.load(tree.path("main.toml").c_str()));
   CHECK(store.diagnostics().empty());
-  const auto& settings = store.config().shaders;
-  CHECK(settings.inCapture && settings.readsCursor);
-  CHECK_EQ(settings.redraw, std::string("on-damage"));
-  CHECK_EQ(settings.presets.size(), size_t{1});
-  CHECK(settings.presets.front().palette);
-  const auto& passes = settings.presets.front().passes;
-  CHECK_EQ(passes.size(), size_t{2});
-  CHECK(passes[0].buffer && passes[0].source.has_value());
-  CHECK_EQ(passes[0].source->file, tree.path("effects/tint.glsl"));
-  CHECK(passes[1].source->code.contains("vec3(1.000000,1.000000,1.000000)"));
-  CHECK_EQ(settings.regions.front().x, -10);
-  const auto& pair = store.config().animation.pairs.at("ink");
-  CHECK_EQ(pair.open.durationMs, 400);
-  CHECK_EQ(pair.close.durationMs, 450);
-  CHECK(pair.open.curve.easing == umbriel::Easing::Linear);
-  CHECK_EQ(pair.open.shader->file, tree.path("effects/tint.glsl"));
+  CHECK(store.config().effectPolicy.inCapture && store.config().effectPolicy.readsCursor);
+  CHECK_EQ(store.config().effectPolicy.redraw, std::string("on_damage"));
+  const auto& scopes = store.config().effects.at("ink").scopes;
+  const auto& content = *scopes[static_cast<size_t>(umbriel::EffectScope::Content)];
+  CHECK(content.palette);
+  CHECK_EQ(content.passes.size(), size_t{2});
+  CHECK(content.passes[0].buffer);
+  CHECK_EQ(content.passes[0].source.file, tree.path("effects/tint.glsl"));
+  CHECK(content.passes[1].source.code.contains("vec3(1.000000,1.000000,1.000000)"));
+  CHECK_EQ(store.config().effectRegions.front().x, -10);
+  CHECK_EQ(*scopes[static_cast<size_t>(umbriel::EffectScope::Open)]->durationMs, 400);
+  CHECK_EQ(*scopes[static_cast<size_t>(umbriel::EffectScope::Close)]->durationMs, 450);
 }
 
-UMBRIEL_TEST(invalidPersistentShaderPassIsNotSilentlyRemovedFromChain) {
+UMBRIEL_TEST(invalidEffectPassRejectsTheGeneration) {
   const TempConfig file;
-  file.write(R"(
-[shaders]
-redraw="typo"
-[shaders.preset.broken]
-scope="typo"
-[[shaders.preset.broken.passes]]
-preset="invert"
-[[shaders.preset.broken.passes]]
-preset="unknown"
-)");
   auto& store = umbriel::configStore();
-  CHECK(store.load(file.path().c_str()));
-  CHECK_EQ(store.config().shaders.presets.front().passes.size(), size_t{2});
-  CHECK(!store.config().shaders.presets.front().passes[1].source);
-  CHECK(containsDiagnostic(store, "known builtin"));
-  CHECK(containsDiagnostic(store, "scope must"));
-  CHECK(containsDiagnostic(store, "shaders.redraw"));
+  file.write("[effects.valid.content]\npasses = [{builtin='invert'}]\n");
+  store.setRootPath(file.path(), true);
+  CHECK(store.reload().success);
+  file.write(
+      "[render.effects]\nredraw='typo'\n[effects.broken.content]\npasses=[{builtin='invert'},{builtin='unknown'}]\n"
+  );
+  CHECK(!store.reload().success);
+  CHECK(store.config().effects.contains("valid"));
+  CHECK(containsDiagnostic(store, "unknown builtin"));
+  CHECK(containsDiagnostic(store, "redraw"));
   CHECK(!umbriel::builtinShader("unknown"));
 }
 
-UMBRIEL_TEST(collectionRegistersEveryPresetAndRuntimeAnimationPairs) {
+UMBRIEL_TEST(collectionRegistersEveryEffectWithoutSelectingIt) {
   auto& store = umbriel::configStore();
   const auto path = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/barrulus/collection.toml";
   CHECK(store.load(path.c_str()));
   CHECK(store.diagnostics().empty());
-  CHECK_EQ(store.config().shaders.presets.size(), size_t{45});
-  CHECK_EQ(store.config().animation.pairs.size(), size_t{4});
-  CHECK(store.config().shaders.global.empty());
-  CHECK(store.config().shaders.window.empty());
-  CHECK(umbriel::selectAnimationPair("default"));
-  CHECK(umbriel::selectAnimationPair("cycle"));
-  CHECK_EQ(umbriel::selectedWindowsIn().shader->file.filename(), std::filesystem::path("lightning-open.glsl"));
-  CHECK_EQ(umbriel::selectedWindowsOut().durationMs, 400);
-  CHECK(umbriel::selectAnimationPair("whirlpool"));
-  CHECK_EQ(umbriel::selectedWindowsOut().durationMs, 500);
-  CHECK_EQ(umbriel::selectedWindowsIn().shader->file.filename(), std::filesystem::path("whirlpool-open.glsl"));
-  CHECK(umbriel::selectAnimationPair("off"));
-  CHECK(!umbriel::selectedWindowsIn().shader);
-  CHECK(!umbriel::selectedWindowsOut().shader);
-  CHECK(!umbriel::selectAnimationPair("nonexistent"));
-  CHECK(umbriel::selectAnimationPair("default"));
+  CHECK_EQ(store.config().effects.size(), size_t{49});
+  CHECK(!store.config().appearance.effects);
+  const auto open = static_cast<size_t>(umbriel::EffectScope::Open);
+  const auto close = static_cast<size_t>(umbriel::EffectScope::Close);
+  const auto& lightning = store.config().effects.at("lightning-melt");
+  CHECK_EQ(lightning.scopes[open]->passes.front().source.file.filename(), std::filesystem::path("lightning-open.glsl"));
+  CHECK_EQ(*lightning.scopes[close]->durationMs, 400);
+  CHECK_EQ(*store.config().effects.at("whirlpool").scopes[close]->durationMs, 500);
 }
 
-UMBRIEL_TEST(shaderPoolsValidateEntriesAndPreserveOrder) {
+UMBRIEL_TEST(effectChoicesValidateEntriesAndPreserveOrder) {
   const TempConfig file;
   file.write(R"(
-[shaders]
-window_pool = "reading"
-[shaders.preset.inward]
-scope = "border"
-passes = [{ preset = "invert" }]
-[shaders.border.fuse]
-padding = 48
-speed = 2
-overlay = "inward"
-[shaders.border.fuse.light]
-enabled = true
-intensity = 1.4
-[shaders.border.pulse]
-padding = 0
-[shaders.pool.rings]
-scope = "border"
-presets = ["pulse", "fuse"]
-[shaders.pool.reading]
-presets = ["invert", "grayscale"]
-[shaders.pool.bad]
-presets = ["missing"]
-[shaders.pool.duplicate]
-scope = "border"
-presets = ["fuse", "fuse"]
+[effects.invert.content]
+passes = [{builtin = "invert"}]
+[effects.gray.content]
+passes = [{builtin = "grayscale"}]
+[effects.reading]
+choose = ["gray", "invert"]
+selection = "round_robin"
 [[window_rule]]
 match.app_id = "ghostty"
-[window_rule.border_shader]
-pool = "rings"
+effects = ["reading"]
 )");
   auto& store = umbriel::configStore();
-  CHECK(store.load(file.path().c_str()));
-  const auto& shaders = store.config().shaders;
-  CHECK_EQ(shaders.pools.size(), size_t{2});
-  CHECK_EQ(shaders.windowPool, std::string("reading"));
-  CHECK_EQ(umbriel::shaderPool("rings", "border")->presets.front(), std::string("pulse"));
-  CHECK(!umbriel::shaderPool("rings", "window"));
-  CHECK_EQ(umbriel::borderPreset("fuse")->padding, 48);
-  CHECK_EQ(umbriel::borderPreset("fuse")->overlay, std::string("inward"));
-  CHECK_EQ(shaders.presets.front().scope, std::string("border"));
-  CHECK_EQ(umbriel::borderPreset("fuse")->light.intensity, 1.4);
-  CHECK_EQ(store.config().windowRules.front().borderShader->pool, std::string("rings"));
-  CHECK(containsDiagnostic(store, "invalid shader pool"));
+  store.setRootPath(file.path(), true);
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().effects.at("reading").choose->front(), std::string("gray"));
+  CHECK_EQ(store.config().windowRules.front().effects->names.front(), std::string("reading"));
+  file.write("[effects.bad]\nchoose=['missing']\n");
+  CHECK(!store.reload().success);
+  CHECK(store.config().effects.contains("reading"));
+  file.write("[effects.invert.content]\npasses=[{builtin='invert'}]\n[effects.bad]\nchoose=['invert','invert']\n");
+  CHECK(!store.reload().success);
+  CHECK(containsDiagnostic(store, "unique"));
 }
 
-UMBRIEL_TEST(examplePoolsLoadWithTheWindowCollection) {
+UMBRIEL_TEST(exampleChoicesLoadWithTheWindowCollection) {
   const TempConfig file;
   const auto base = std::filesystem::path(UMBRIEL_EXAMPLE_CONFIG).parent_path() / "shaders/barrulus";
   file.write(
-      "[include]\nfiles = ['" + (base / "windows.toml").string() + "', '" + (base / "pools.toml").string() + "']\n"
+      "[include]\nfiles = ['" + (base / "windows.toml").string() + "', '" + (base / "choices.toml").string() + "']\n"
   );
   auto& store = umbriel::configStore();
   CHECK(store.load(file.path().c_str()));
   CHECK(store.diagnostics().empty());
-  CHECK_EQ(store.config().shaders.pools.size(), size_t{2});
-  CHECK_EQ(store.config().shaders.borders.size(), size_t{6});
-  CHECK_EQ(umbriel::borderPreset("neon-bleed")->overlay, std::string("ring.neon-bleed"));
-  CHECK_EQ(umbriel::borderPreset("portal-lava")->overlay, std::string("ring.portal-lava"));
-  CHECK(umbriel::borderPreset("fuse")->shader.has_value());
+  const auto inner = static_cast<size_t>(umbriel::EffectScope::BorderInner);
+  const auto outer = static_cast<size_t>(umbriel::EffectScope::BorderOuter);
+  CHECK(store.config().effects.at("favourites").choose.has_value());
+  CHECK(store.config().effects.at("terminals").choose.has_value());
+  CHECK(store.config().effects.at("neon-bleed").scopes[inner]->enabled);
+  CHECK(store.config().effects.at("portal-lava").scopes[inner]->enabled);
+  CHECK(!store.config().effects.at("fuse").scopes[inner]->enabled);
+  CHECK_EQ(store.config().effects.at("fuse").scopes[outer]->passes.size(), size_t{1});
 }
 
 int main() { return RUN_TESTS(); }
 
-UMBRIEL_TEST(pointerWobbleReloadEnablesAndDisablesTheAnimationPath) {
+UMBRIEL_TEST(pointerPhysicsReloadEnablesAndDisablesTheAnimationPath) {
   const TempConfig file;
   ConfigStore& store = umbriel::configStore();
   store.setRootPath(file.path(), true);
-  file.write("[animation.windows_move]\nwobble = false\n");
+  file.write("[animation.windows_move]\ndrag_physics = false\n");
   CHECK(store.reload().success);
-  CHECK(!store.config().animation.windowsMove.wobble);
-  file.write("[animation.windows_move]\nwobble = true\n");
+  CHECK(!store.config().animation.windowsMove.dragPhysics);
+  file.write("[animation.windows_move]\ndrag_physics = true\n");
   const auto enabled = store.reload();
   CHECK(enabled.success);
   CHECK(enabled.effects.animation);
-  CHECK(store.config().animation.windowsMove.wobble);
+  CHECK(store.config().animation.windowsMove.dragPhysics);
   CHECK(!containsDiagnostic(store, "unknown key"));
   file.write("");
   const auto disabled = store.reload();
   CHECK(disabled.success);
   CHECK(disabled.effects.animation);
-  CHECK(!store.config().animation.windowsMove.wobble);
+  CHECK(!store.config().animation.windowsMove.dragPhysics);
+}
+
+UMBRIEL_TEST(pointerDragPresetsReloadWithoutChangingNativeTimelines) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  file.write("[animation.windows_move]\ndrag_physics = true\n");
+  CHECK(store.reload().success);
+  CHECK(store.config().animation.windowsMove.dragPhysics);
+  const auto native = store.config().animation;
+  file.write(
+      "[appearance]\neffects=['taffy']\n[effects.taffy.drag]\ncoupling=48\ndamping=4.8\n"
+      "stiffness_gradient=-0.55\nlag_gradient=0.9\ndownward_pull=18\n"
+  );
+  const auto changed = store.reload();
+  CHECK(changed.success);
+  CHECK(changed.effects.viewChrome);
+  CHECK(!changed.effects.outputState);
+  CHECK(!store.config().animation.windowsMove.dragPhysics);
+  const auto scope = static_cast<size_t>(umbriel::EffectScope::Drag);
+  CHECK_EQ(store.config().effects.at("taffy").scopes[scope]->drag->parameters.downward_pull, 18.0F);
+  CHECK(store.diagnostics().empty());
+  CHECK(store.config().animation.windowsMove.curve == native.windowsMove.curve);
+  file.write("[appearance]\neffects=['taffy']\n[effects.taffy.drag]\ndownward_pull=12\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().effects.at("taffy").scopes[scope]->drag->parameters.downward_pull, 12.0F);
+  const auto valid = store.config();
+  for (const auto invalid : {"damping=0", "decay=0", "stiffness=inf", "stiffness_gradient=-1", "passes=[]"}) {
+    file.write(std::string("[effects.taffy.drag]\n") + invalid);
+    CHECK(!store.reload().success);
+    CHECK(store.config() == valid);
+  }
+  file.write("[animation.windows_move]\nwobble_style='taffy'\n");
+  CHECK(!store.reload().success);
+  CHECK(containsDiagnostic(store, "wobble_style was removed"));
+  file.write("[animation.windows_move]\nwobble=true\n");
+  CHECK(!store.reload().success);
+  CHECK(containsDiagnostic(store, "wobble was removed"));
+}
+
+UMBRIEL_TEST(effectIncludesOwnDefinitionsAndPreserveRelativeSources) {
+  TempConfigTree tree;
+  tree.write("shaders/filter", "vec4 postprocess(vec3 p) { return tex2D_screen(p.xy); }");
+  tree.write("effects/reading.toml", "[effects.reading.screen]\npasses=[{shader='../shaders/filter'}]\n");
+  tree.write("config.toml", R"(
+[include]
+files=['effects/reading.toml']
+[appearance]
+effects=['reading']
+[render.effects]
+fps=60
+[[effect_region]]
+name='reading-area'
+width=100
+height=200
+effects=['reading']
+)");
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("config.toml").c_str()));
+  CHECK(store.diagnostics().empty());
+  CHECK_EQ(store.config().effects.size(), 1U);
+  const auto& screen = store.config().effects.at("reading").scopes[static_cast<size_t>(umbriel::EffectScope::Screen)];
+  CHECK(screen.has_value());
+  CHECK(screen->passes[0].source.file == tree.path("shaders/filter"));
+  CHECK_EQ(screen->origin.file, tree.path("effects/reading.toml").string());
+  const auto generation = store.generation();
+  tree.write("config.toml", "[include]\nfiles=['effects/reading.toml']\n[effects.reading.content]\nenabled=false\n");
+  CHECK(!store.reload().success);
+  CHECK_EQ(store.generation(), generation);
+  CHECK(containsDiagnostic(store, "each effect must have one defining file"));
+  CHECK(containsDiagnostic(store, tree.path("config.toml").string()));
+}
+
+UMBRIEL_TEST(effectReloadIsTransactionalAndWatchesMissingUnselectedPrograms) {
+  TempConfigTree tree;
+  tree.write("config.toml", "[effects.reading.screen]\npasses=[{builtin='invert'}]\n");
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("config.toml").c_str()));
+  const auto generation = store.generation();
+  tree.write("config.toml", "[effects.reading.screen]\npasses=[{shader='new.glsl'}]\n");
+  CHECK(!store.reload().success);
+  CHECK_EQ(store.generation(), generation);
+  CHECK(std::ranges::contains(store.watchPaths(), tree.path("new.glsl")));
+  tree.write("new.glsl", "vec4 postprocess(vec3 p) { return tex2D_screen(p.xy); }");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.generation(), generation + 1);
+  const auto same = store.reload();
+  CHECK(same.success);
+  CHECK(!same.change.any());
+  CHECK(!same.effects.any());
+}
+
+UMBRIEL_TEST(effectSelectorsRejectWrongOwnersAndUnknownNames) {
+  TempConfig file;
+  file.write("[effects.filter.screen]\npasses=[{builtin='grayscale'}]\n");
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(file.path().c_str()));
+  for (const std::string selection :
+       {"[[window_rule]]\neffects=['filter']", "[[layer_rule]]\neffects=['missing']", "[appearance]\neffects='filter'",
+        "[appearance]\neffects=[true]", "[render.effects]\nredraw='on-damage'", "[render.effects]\nfps=241"}) {
+    file.write("[effects.filter.screen]\npasses=[{builtin='grayscale'}]\n" + selection);
+    CHECK(!store.reload().success);
+  }
+}
+
+UMBRIEL_TEST(effectDurationChecksInheritedWindowAndLayerCurves) {
+  const TempConfigTree tree;
+  tree.write("event.glsl", "vec4 animation(vec2 uv) { return umbriel_sample(uv); }");
+  const std::string definition = "[effects.timed.open]\npasses=[{shader='event.glsl'}]\nduration_ms=400\n";
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  tree.write("config.toml", definition);
+  CHECK(store.reload().success);
+  tree.write("config.toml", "[appearance]\neffects=['timed']\n" + definition);
+  CHECK(!store.reload().success);
+  CHECK(containsDiagnostic(store, "inherited spring"));
+  tree.write("config.toml", "[animation]\ncurve='linear'\n[appearance]\neffects=['timed']\n" + definition);
+  CHECK(store.reload().success);
+  tree.write(
+      "config.toml",
+      "[[layer_rule]]\nmatch.namespace='panel'\neffects=['timed']\n[animation.layers]\ncurve='linear'\n" + definition
+  );
+  CHECK(store.reload().success);
 }

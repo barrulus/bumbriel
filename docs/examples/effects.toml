@@ -1,215 +1,199 @@
-# Reusable effect definitions. This file does not assign effects to apps.
-# Border definitions describe the frame; their optional overlay references a
-# scope="border" preset for the matching inward effect. Window presets affect
-# the client content independently. These table names are Umbriel's native syntax.
-
-[shaders.border.flowering-vine]
+[effects.flowering-vine.border.outer]
 enabled = true
 animated = true
 speed = 1
 padding = 8
-shader = "shaders/rings/flowering-vine.glsl"
-overlay = "ring.flowering-vine"
-[shaders.border.flowering-vine.light]
+passes = [{ shader = "shaders/rings/flowering-vine.glsl" }]
+
+[effects.flowering-vine.border.outer.light]
 enabled = true
 spread = 16
 intensity = 0.25
 threshold = 0.75
 
-[shaders.preset."ring.flowering-vine"]
-scope = "border"
+[effects.flowering-vine.border.inner]
 passes = [{ shader = "shaders/window/flowering-vine-overlay.glsl" }]
 
-# Border effect definitions (including paired inward overlays)
-[shaders.border.fuse]
+[effects.fuse.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/fuse.glsl"
 padding = 48
-[shaders.border.fuse.light]
+passes = [{ shader = "shaders/rings/fuse.glsl" }]
+
+[effects.fuse.border.outer.light]
 enabled = true
 spread = 90
 intensity = 1.4
 threshold = 0.5
 
-[shaders.border.lightning]
+[effects.fuse.border.inner]
+enabled = false
+
+[effects.lightning.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/lightning.glsl"
 padding = 24
-[shaders.border.lightning.light]
+passes = [{ shader = "shaders/rings/lightning.glsl" }]
+
+[effects.lightning.border.outer.light]
 enabled = true
 spread = 80
 intensity = 1.0
 threshold = 0.5
 
-[shaders.border.rainbow]
+[effects.lightning.border.inner]
+enabled = false
+
+[effects.rainbow.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/rainbow-ripple.glsl"
 padding = 14
-overlay = "ring.rainbow"
-[shaders.border.rainbow.light]
+passes = [{ shader = "shaders/rings/rainbow-ripple.glsl" }]
+
+[effects.rainbow.border.outer.light]
 enabled = false
 
-[shaders.preset."ring.rainbow"]
-scope = "border"
+[effects.rainbow.border.inner]
 passes = [{ shader = "shaders/window/rainbow-ripple-overlay.glsl" }]
 
-[shaders.border.pulse]
+[effects.pulse.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/pulse.glsl"
 padding = 0
-[shaders.border.pulse.light]
+passes = [{ shader = "shaders/rings/pulse.glsl" }]
+
+[effects.pulse.border.outer.light]
 enabled = false
 
-[shaders.border.neon-bleed]
+[effects.pulse.border.inner]
+enabled = false
+
+[effects.neon-bleed.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/neon-bleed.glsl"
 padding = 14
-overlay = "ring.neon-bleed"
+passes = [{ shader = "shaders/rings/neon-bleed.glsl" }]
 
-[shaders.preset."ring.neon-bleed"]
-scope = "border"
+[effects.neon-bleed.border.inner]
 passes = [{ shader = "shaders/window/neon-bleed-overlay.glsl" }]
 
-[shaders.border.portal-lava]
+[effects.portal-lava.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/portal-lava.glsl"
 padding = 14
-overlay = "ring.portal-lava"
+passes = [{ shader = "shaders/rings/portal-lava.glsl" }]
 
-[shaders.preset."ring.portal-lava"]
-scope = "border"
+[effects.portal-lava.border.inner]
 passes = [{ shader = "shaders/window/portal-lava-overlay.glsl" }]
 
-[shaders.border.sentient-runner]
+[effects.sentient-runner.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/sentient-runner.glsl"
 padding = 14
+passes = [{ shader = "shaders/rings/sentient-runner.glsl" }]
 
-[shaders.border.sentient-spark]
+[effects.sentient-runner.border.inner]
+enabled = false
+
+[effects.sentient-spark.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/sentient-spark.glsl"
 padding = 14
+passes = [{ shader = "shaders/rings/sentient-spark.glsl" }]
 
-[shaders.border.flowing-water]
+[effects.sentient-spark.border.inner]
+enabled = false
+
+[effects.flowing-water.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/flowing-water.glsl"
 padding = 30
+passes = [{ shader = "shaders/rings/flowing-water.glsl" }]
 
-[shaders.border.faerie-magic]
+[effects.flowing-water.border.inner]
+enabled = false
+
+[effects.faerie-magic.border.outer]
 enabled = true
 animated = true
 speed = 1
-shader = "shaders/rings/faerie-magic.glsl"
 padding = 8
-overlay = "ring.faerie-magic"
+passes = [{ shader = "shaders/rings/faerie-magic.glsl" }]
 
-[shaders.preset."ring.faerie-magic"]
-scope = "border"
+[effects.faerie-magic.border.inner]
 passes = [{ shader = "shaders/window/faerie-magic-overlay.glsl" }]
 
-# Window-content effect definitions
-[shaders.preset."window.liquid-glass"]
-scope = "window"
+[effects."window.liquid-glass".content]
 passes = [{ shader = "shaders/window/liquid-glass.glsl" }]
 
-[shaders.preset."window.flap-board"]
-scope = "window"
+[effects."window.flap-board".content]
 passes = [{ shader = "shaders/window/flap-board.glsl" }]
 
-[shaders.preset."window.autumn-leaves"]
-scope = "window"
+[effects."window.autumn-leaves".content]
 passes = [{ shader = "shaders/window/autumn-leaves.glsl" }]
 
-[shaders.preset."window.crt"]
-scope = "window"
+[effects."window.crt".content]
 passes = [{ shader = "shaders/window/crt.glsl" }]
 
-[shaders.preset."window.fire-tendrils"]
-scope = "window"
+[effects."window.fire-tendrils".content]
 passes = [{ shader = "shaders/window/fire-tendrils.glsl" }]
 
-[shaders.preset."window.mercury-sheen"]
-scope = "window"
+[effects."window.mercury-sheen".content]
 passes = [{ shader = "shaders/window/mercury-sheen.glsl" }]
 
-[shaders.preset."window.parchment-dark"]
-scope = "window"
+[effects."window.parchment-dark".content]
 passes = [{ shader = "shaders/window/parchment-dark.glsl" }]
 
-[shaders.preset."window.parchment"]
-scope = "window"
+[effects."window.parchment".content]
 passes = [{ shader = "shaders/window/parchment.glsl" }]
 
-[shaders.preset."window.prairie-wind"]
-scope = "window"
+[effects."window.prairie-wind".content]
 passes = [{ shader = "shaders/window/prairie-wind.glsl" }]
 
-[shaders.preset."window.rainbow-radial"]
-scope = "window"
+[effects."window.rainbow-radial".content]
 passes = [{ shader = "shaders/window/rainbow-radial.glsl" }]
 
-[shaders.preset."window.rainbow-smoke"]
-scope = "window"
+[effects."window.rainbow-smoke".content]
 passes = [{ shader = "shaders/window/rainbow-smoke.glsl" }]
 
-[shaders.preset."window.rainbow-waves"]
-scope = "window"
+[effects."window.rainbow-waves".content]
 passes = [{ shader = "shaders/window/rainbow-waves.glsl" }]
 
-[shaders.preset."window.rainfall"]
-scope = "window"
+[effects."window.rainfall".content]
 passes = [{ shader = "shaders/window/rainfall.glsl" }]
 
-[shaders.preset."window.rgb-border"]
-scope = "window"
+[effects."window.rgb-border".content]
 passes = [{ shader = "shaders/window/rgb-border.glsl" }]
 
-[shaders.preset."window.rgb-shimmer"]
-scope = "window"
+[effects."window.rgb-shimmer".content]
 passes = [{ shader = "shaders/window/rgb-shimmer.glsl" }]
 
-[shaders.preset."window.ripple-drops"]
-scope = "window"
+[effects."window.ripple-drops".content]
 passes = [{ shader = "shaders/window/ripple-drops.glsl" }]
 
-[shaders.preset."window.rolling-clouds"]
-scope = "window"
+[effects."window.rolling-clouds".content]
 passes = [{ shader = "shaders/window/rolling-clouds.glsl" }]
 
-[shaders.preset."window.rorschach2"]
-scope = "window"
+[effects."window.rorschach2".content]
 passes = [{ shader = "shaders/window/rorschach2.glsl" }]
 
-[shaders.preset."window.sentient-circuit"]
-scope = "window"
+[effects."window.sentient-circuit".content]
 passes = [{ shader = "shaders/window/sentient-circuit.glsl" }]
 
-[shaders.preset."window.sentient-circuit-v2"]
-scope = "window"
+[effects."window.sentient-circuit-v2".content]
 passes = [{ shader = "shaders/window/sentient-circuit-v2.glsl" }]
 
-[shaders.preset."window.snowfall"]
-scope = "window"
+[effects."window.snowfall".content]
 passes = [{ shader = "shaders/window/snowfall.glsl" }]
 
-[shaders.preset."window.adaptive-text-v4"]
-scope = "window"
+[effects."window.adaptive-text-v4".content]
 passes = [{ shader = "shaders/window/adaptive-text-v4.glsl" }]

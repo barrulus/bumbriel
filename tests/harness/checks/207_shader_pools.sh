@@ -29,38 +29,38 @@ enabled = false
 [layout]
 gap = 30
 [appearance]
+effects = ["grayscale"]
 border_width = 6
 outer_border_width = 0
 corner_radius = 0
 [appearance.shadow]
 enabled = false
-[shaders]
+[render.effects]
 in_capture = true
-window = "grayscale"
-window_pool = "reading"
-[shaders.pool.reading]
-presets = ["invert", "grayscale"]
-[shaders.preset.red-overlay]
-scope = "border"
-passes = [{ shader = "red-overlay.glsl" }]
-[shaders.preset.green-overlay]
-scope = "border"
-passes = [{ shader = "green-overlay.glsl" }]
-[shaders.border.red]
-shader = "red.glsl"
-overlay = "red-overlay"
-[shaders.border.green]
-shader = "green.glsl"
-overlay = "green-overlay"
-[shaders.border.blue]
-shader = "blue.glsl"
-[shaders.pool.rings]
-scope = "border"
-presets = ["red", "green", "blue"]
+[effects.invert.content]
+passes = [{builtin = "invert"}]
+[effects.grayscale.content]
+passes = [{builtin = "grayscale"}]
+[effects.reading]
+choose = ["invert", "grayscale"]
+selection = "round_robin"
+[effects.red.border.inner]
+passes = [{shader = "red-overlay.glsl"}]
+[effects.green.border.inner]
+passes = [{shader = "green-overlay.glsl"}]
+[effects.blue.border.inner]
+enabled = false
+[effects.red.border.outer]
+passes = [{shader = "red.glsl"}]
+[effects.green.border.outer]
+passes = [{shader = "green.glsl"}]
+[effects.blue.border.outer]
+passes = [{shader = "blue.glsl"}]
+[effects.rings]
+choose = ["red", "green", "blue"]
 [[window_rule]]
 match.title = "^pool-"
-[window_rule.border_shader]
-pool = "rings"
+effects = ["rings"]
 TOML
 "$UMBRIEL" msg config-reload >/dev/null
 spawn() {
@@ -124,7 +124,7 @@ expect_ring two green
 expect_inward one none
 expect_ring one red
 # A real config change reorders the pool without changing surviving assignments.
-sed -i 's/presets = \["red", "green", "blue"\]/presets = ["blue", "green", "red"]/' "$UMBRIEL_CONFIG"
+sed -i 's/choose = \["red", "green", "blue"\]/choose = ["blue", "green", "red"]/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload >/dev/null
 expect_ring one red
 expect_ring two green
@@ -137,18 +137,18 @@ for _ in $(seq 80); do
 done
 spawn four
 expect_ring four green
-"$UMBRIEL" msg 'shader:border cycle' >/dev/null
+"$UMBRIEL" msg 'effect:window cycle rings --scope border.inner,border.outer' >/dev/null
 expect_ring four red
-"$UMBRIEL" msg 'shader:border toggle' >/dev/null
+"$UMBRIEL" msg 'effect:window toggle --scope border.inner,border.outer' >/dev/null
 expect_inward four none
-"$UMBRIEL" msg 'shader:border toggle' >/dev/null
+"$UMBRIEL" msg 'effect:window toggle --scope border.inner,border.outer' >/dev/null
 expect_ring four red
 # Cycling resumes after a directly selected preset, not the old allocation cursor.
-"$UMBRIEL" msg 'shader:border blue' >/dev/null
+"$UMBRIEL" msg 'effect:window set blue --scope border.inner,border.outer' >/dev/null
 expect_ring four blue
-"$UMBRIEL" msg 'shader:border cycle' >/dev/null
+"$UMBRIEL" msg 'effect:window cycle rings --scope border.inner,border.outer' >/dev/null
 expect_ring four green
-"$UMBRIEL" msg 'shader:border cycle' >/dev/null
+"$UMBRIEL" msg 'effect:window cycle rings --scope border.inner,border.outer' >/dev/null
 expect_ring four red
 # Window cycle uses precisely the configured order and wraps without a default step.
 expect_content() {
@@ -161,18 +161,18 @@ expect_content() {
     echo "expected content $*, got $r $g $b"; exit 1;
   }
 }
-"$UMBRIEL" msg 'shader:window cycle' >/dev/null
+"$UMBRIEL" msg 'effect:window cycle reading --scope content' >/dev/null
 expect_content 223 191 127
-"$UMBRIEL" msg 'shader:window cycle' >/dev/null
+"$UMBRIEL" msg 'effect:window cycle reading --scope content' >/dev/null
 expect_content 62 62 62
-"$UMBRIEL" msg 'shader:window cycle' >/dev/null
+"$UMBRIEL" msg 'effect:window cycle reading --scope content' >/dev/null
 expect_content 223 191 127
-if "$UMBRIEL" msg 'shader:window cycle:missing' >/dev/null 2>&1; then
+if "$UMBRIEL" msg 'effect:window cycle missing --scope content' >/dev/null 2>&1; then
   echo 'unknown pool action unexpectedly succeeded'; exit 1
 fi
 expect_content 223 191 127
 # Removing the active ring entry reallocates to a remaining member.
-sed -i 's/presets = \["blue", "green", "red"\]/presets = ["blue", "green"]/' "$UMBRIEL_CONFIG"
+sed -i 's/choose = \["blue", "green", "red"\]/choose = ["blue", "green"]/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload >/dev/null
 expect_ring four green
 # Existing assigned blue remains stable across the removal.
@@ -180,7 +180,7 @@ expect_ring three blue
 # Make the overlay cover the center so isolated toplevel capture can verify the
 # same composition order and capture policy as the on-screen tree.
 expect_ring four green
-"$UMBRIEL" msg 'shader:border red' >/dev/null
+"$UMBRIEL" msg 'effect:window set red --scope border.inner,border.outer' >/dev/null
 sed -i 's/if (p.y \* umbriel_size.y < 12.0) //' "$UMBRIEL_RUNTIME_DIR/red-overlay.glsl"
 "$UMBRIEL" msg config-reload >/dev/null
 expect_content 239 95 63
@@ -192,7 +192,7 @@ expect_capture() {
   }
 }
 expect_capture 239 95 63
-"$UMBRIEL" msg 'shader:window off' >/dev/null
+"$UMBRIEL" msg 'effect:window off --scope content' >/dev/null
 expect_content 143 32 64
 expect_capture 143 32 64
 sed -i 's/in_capture = true/in_capture = false/' "$UMBRIEL_CONFIG"
@@ -201,14 +201,14 @@ expect_content 32 64 128
 expect_capture 32 64 128
 sed -i 's/in_capture = false/in_capture = true/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload >/dev/null
-"$UMBRIEL" msg 'shader:window on' >/dev/null
-"$UMBRIEL" msg 'shader:border off' >/dev/null
+"$UMBRIEL" msg 'effect:window on --scope content' >/dev/null
+"$UMBRIEL" msg 'effect:window off --scope border.inner,border.outer' >/dev/null
 expect_content 223 191 127
 expect_capture 223 191 127
 # Removing an overlay on reload also removes its scene pass from existing views.
-sed -i '/overlay = "red-overlay"/d' "$UMBRIEL_CONFIG"
+sed -i 's/passes = \[{shader = "red-overlay.glsl"}\]/enabled = false/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload >/dev/null
-"$UMBRIEL" msg 'shader:border on' >/dev/null
+"$UMBRIEL" msg 'effect:window on --scope border.inner,border.outer' >/dev/null
 expect_content 223 191 127
 expect_capture 223 191 127
 echo 'paired ring allocation, focus/reload stability, toggle, release, cycling and layering over window shaders verified'

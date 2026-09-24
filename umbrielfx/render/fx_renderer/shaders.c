@@ -1,3 +1,4 @@
+#include "render/fx_renderer/params.h"
 #include <EGL/egl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@
 #include "common_vert_src.h"
 #include "corner_alpha_frag_src.h"
 #include "decoration_frag_src.h"
+#include "palette_frag_src.h"
 #include "decoration_light_frag_src.h"
 #include "gradient_frag_src.h"
 #include "output_frag_src.h"
@@ -28,7 +30,7 @@
 #include "quad_round_frag_src.h"
 #include "render/fx_renderer/decoration.h"
 #include "tex_frag_src.h"
-#include "wobble_frag_src.h"
+#include "drag_physics_frag_src.h"
 
 GLuint compile_shader(GLuint type, const GLchar *src) {
 	GLuint shader = glCreateShader(type);
@@ -86,6 +88,80 @@ error:
 	return 0;
 }
 
+struct cached_effect_program {
+  struct wl_list link;
+  struct wl_listener destroy;
+  struct fx_renderer* renderer;
+  char* source;
+  GLuint program;
+  unsigned references;
+};
+
+static struct wl_list effect_programs = {&effect_programs, &effect_programs};
+
+static void effect_program_remove(struct cached_effect_program* entry) {
+  wl_list_remove(&entry->destroy.link);
+  wl_list_remove(&entry->link);
+  free(entry->source);
+  free(entry);
+}
+
+static void effect_program_renderer_destroy(struct wl_listener* listener, void* data) {
+  struct cached_effect_program* entry = wl_container_of(listener, entry, destroy);
+  effect_program_remove(entry);
+}
+
+GLuint fx_effect_program_acquire(struct fx_renderer* renderer, const char* source) {
+  struct cached_effect_program* entry;
+  size_t failures = 0;
+  struct cached_effect_program* oldest_failure = NULL;
+  wl_list_for_each(entry, &effect_programs, link) {
+    if (entry->renderer != renderer)
+      continue;
+    if (strcmp(entry->source, source) == 0) {
+      if (entry->program != 0)
+        ++entry->references;
+      return entry->program;
+    }
+    if (entry->program == 0) {
+      ++failures;
+      oldest_failure = entry;
+    }
+  }
+  entry = calloc(1, sizeof(*entry));
+  if (entry == NULL)
+    return 0;
+  entry->source = strdup(source);
+  if (entry->source == NULL) {
+    free(entry);
+    return 0;
+  }
+  entry->renderer = renderer;
+  entry->program = link_program(source);
+  entry->references = entry->program != 0;
+  entry->destroy.notify = effect_program_renderer_destroy;
+  wl_signal_add(&renderer->wlr_renderer.events.destroy, &entry->destroy);
+  wl_list_insert(&effect_programs, &entry->link);
+  if (entry->program == 0 && failures >= 64)
+    effect_program_remove(oldest_failure);
+  return entry->program;
+}
+
+void fx_effect_program_release(struct fx_renderer* renderer, GLuint program) {
+  if (program == 0)
+    return;
+  struct cached_effect_program* entry;
+  wl_list_for_each(entry, &effect_programs, link) {
+    if (entry->renderer == renderer && entry->program == program) {
+      if (--entry->references == 0) {
+        glDeleteProgram(program);
+        effect_program_remove(entry);
+      }
+      return;
+    }
+  }
+}
+
 static void animation_renderer_destroy(struct wl_listener *listener, void *data) {
 	struct fx_animation_shader *shader = wl_container_of(listener, shader, destroy);
 	// Context destruction releases the GL program. Scene and config references
@@ -116,18 +192,37 @@ void fx_animation_shader_unref(struct fx_animation_shader *shader) {
 	if (shader->renderer != NULL) {
 		struct wlr_egl_context previous;
 		if (wlr_egl_make_current(shader->renderer->egl, &previous)) {
-			glDeleteProgram(shader->program);
+			fx_effect_program_release(shader->renderer, shader->program);
 			wlr_egl_restore_context(&previous);
 		}
 		wl_list_remove(&shader->destroy.link);
 	}
+	free(shader->params);
 	free(shader);
+}
+
+bool fx_animation_shader_set_params(
+    struct fx_animation_shader* shader, const struct fx_shader_param* params, size_t count
+) {
+  if (shader == NULL || shader->renderer == NULL)
+    return false;
+  struct wlr_egl_context previous;
+  if (!wlr_egl_make_current(shader->renderer->egl, &previous))
+    return false;
+  struct fx_uniform_values* values = fx_uniform_values_create(shader->program, params, count, false);
+  wlr_egl_restore_context(&previous);
+  if (values == NULL)
+    return false;
+  free(shader->params);
+  shader->params = values;
+  return true;
 }
 
 struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *renderer,
 		const char *source, const char *label) {
 	static const char preamble[] =
 		"precision highp float;\n"
+        "vec4 umbriel_palette_fallback() { return vec4(1.0); }\n"
 		"varying vec2 v_texcoord;\n"
 		"uniform sampler2D umbriel_texture;\n"
 		"uniform mat3 umbriel_sample_matrix;\n"
@@ -138,7 +233,7 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 		"uniform float umbriel_direction;\n"
 		"uniform vec2 umbriel_size;\n"
 		"uniform vec4 umbriel_random_seed;\n"
-		"uniform vec2 umbriel_wobble[16];\n"
+		"uniform vec2 umbriel_deformation[16];\n"
 		"uniform vec2 umbriel_render_padding;\n"
 		"#define umbriel_clamped_progress clamp(umbriel_progress, 0.0, 1.0)\n"
 		"vec4 umbriel_sample(vec2 uv) {\n"
@@ -165,7 +260,7 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 		return NULL;
 	}
 	struct fx_animation_shader *shader = calloc(1, sizeof(*shader));
-	char *fragment = malloc(sizeof(preamble) + sizeof(previous_sample) +
+	char *fragment = malloc(sizeof(preamble) + sizeof(previous_sample) + sizeof(palette_frag_src) +
 		strlen(source) + sizeof(suffix));
 	if (shader == NULL || fragment == NULL) {
 		free(shader);
@@ -173,9 +268,9 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 		wlr_egl_restore_context(&previous);
 		return NULL;
 	}
-	sprintf(fragment, "%s%s%s%s", preamble, previous_sample, source, suffix);
+	sprintf(fragment, "%s%s%s%s%s", preamble, previous_sample, palette_frag_src, source, suffix);
 	wlr_log(WLR_DEBUG, "Compiling animation shader: %s", label);
-	shader->program = link_program(fragment);
+	shader->program = fx_effect_program_acquire(fx, fragment);
 	free(fragment);
 	if (shader->program == 0) {
 		wlr_log(WLR_ERROR, "Animation shader '%s' rejected; using built-in animation", label);
@@ -200,15 +295,17 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 	shader->direction = glGetUniformLocation(shader->program, "umbriel_direction");
 	shader->size = glGetUniformLocation(shader->program, "umbriel_size");
 	shader->random_seed = glGetUniformLocation(shader->program, "umbriel_random_seed");
-	shader->wobble = glGetUniformLocation(shader->program, "umbriel_wobble");
+	shader->deformation = glGetUniformLocation(shader->program, "umbriel_deformation");
 	shader->render_padding = glGetUniformLocation(shader->program, "umbriel_render_padding");
+	shader->palette = glGetUniformLocation(shader->program, "umbriel_palette");
+	shader->palette_count = glGetUniformLocation(shader->program, "umbriel_palette_count");
 	wlr_egl_restore_context(&previous);
 	return shader;
 }
 
 
-struct fx_animation_shader *fx_wobble_shader_create(struct wlr_renderer *renderer) {
-	return fx_animation_shader_create(renderer, wobble_frag_src, "interactive-wobble");
+struct fx_animation_shader *fx_drag_physics_shader_create(struct wlr_renderer *renderer) {
+	return fx_animation_shader_create(renderer, drag_physics_frag_src, "interactive-drag-physics");
 }
 
 bool check_gl_ext(const char *exts, const char *ext) {
@@ -581,13 +678,31 @@ void fx_decoration_shader_unref(struct fx_decoration_shader *shader) {
 	if (shader->renderer != NULL) {
 		struct wlr_egl_context previous;
 		if (wlr_egl_make_current(shader->renderer->egl, &previous)) {
-			glDeleteProgram(shader->program);
-			glDeleteProgram(shader->light_program);
+			fx_effect_program_release(shader->renderer, shader->program);
+			fx_effect_program_release(shader->renderer, shader->light_program);
 			wlr_egl_restore_context(&previous);
 		}
 		wl_list_remove(&shader->destroy.link);
 	}
+	free(shader->params);
 	free(shader);
+}
+
+bool fx_decoration_shader_set_params(
+    struct fx_decoration_shader* shader, const struct fx_shader_param* params, size_t count
+) {
+  if (shader == NULL || shader->renderer == NULL)
+    return false;
+  struct wlr_egl_context previous;
+  if (!wlr_egl_make_current(shader->renderer->egl, &previous))
+    return false;
+  struct fx_uniform_values* values = fx_uniform_values_create(shader->program, params, count, false);
+  wlr_egl_restore_context(&previous);
+  if (values == NULL)
+    return false;
+  free(shader->params);
+  shader->params = values;
+  return true;
 }
 
 struct fx_decoration_shader *fx_decoration_shader_create(struct wlr_renderer *renderer,
@@ -599,19 +714,19 @@ struct fx_decoration_shader *fx_decoration_shader_create(struct wlr_renderer *re
 	if (!wlr_egl_make_current(fx->egl, &previous))
 		return NULL;
 	struct fx_decoration_shader *shader = calloc(1, sizeof(*shader));
-	char *fragment = malloc(sizeof(decoration_frag_src) + strlen(source) + 16);
+	char *fragment = malloc(sizeof(decoration_frag_src) + sizeof(palette_frag_src) + strlen(source) + 16);
 	if (shader == NULL || fragment == NULL) {
 		free(shader);
 		free(fragment);
 		wlr_egl_restore_context(&previous);
 		return NULL;
 	}
-	sprintf(fragment, "%s\n#line 1\n%s", decoration_frag_src, source);
+	sprintf(fragment, "%s\n%s\n#line 1\n%s", decoration_frag_src, palette_frag_src, source);
 	wlr_log(WLR_DEBUG, "Compiling decoration shader: %s", label);
-	shader->program = link_program(fragment);
+	shader->program = fx_effect_program_acquire(fx, fragment);
 	free(fragment);
 	if (shader->program == 0) {
-		wlr_log(WLR_ERROR, "Decoration shader '%s' rejected; using normal border", label);
+		wlr_log(WLR_ERROR, "Decoration shader '%s' rejected", label);
 		free(shader);
 		wlr_egl_restore_context(&previous);
 		return NULL;
@@ -638,13 +753,17 @@ struct fx_decoration_shader *fx_decoration_shader_create(struct wlr_renderer *re
 	shader->emission_bounds = glGetUniformLocation(shader->program, "ring_emission_bounds");
 	shader->palette = glGetUniformLocation(shader->program, "umbriel_palette");
 	shader->palette_count = glGetUniformLocation(shader->program, "umbriel_palette_count");
-	shader->light_program = link_program(decoration_light_frag_src);
+	shader->light_program = fx_effect_program_acquire(fx, decoration_light_frag_src);
 	shader->light_proj = glGetUniformLocation(shader->light_program, "proj");
 	shader->light_tex_proj = glGetUniformLocation(shader->light_program, "tex_proj");
 	shader->light_position = glGetAttribLocation(shader->light_program, "pos");
 	shader->light_tex = glGetUniformLocation(shader->light_program, "tex");
 	shader->light_gain = glGetUniformLocation(shader->light_program, "gain");
 	shader->light_linear = glGetUniformLocation(shader->light_program, "linear");
+    shader->light_emission = glGetUniformLocation(shader->light_program, "emission");
+    shader->light_source_linear = glGetUniformLocation(shader->light_program, "source_linear");
+    shader->light_threshold = glGetUniformLocation(shader->light_program, "threshold");
+    shader->light_source_region = glGetUniformLocation(shader->light_program, "source_region");
 	wlr_egl_restore_context(&previous);
 	return shader;
 }

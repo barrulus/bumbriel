@@ -6,68 +6,90 @@ using namespace umbriel;
 
 UMBRIEL_TEST(leasesRemainStableAndReleasedSlotsAreReused) {
   ShaderPoolAllocator allocator;
-  Config::Shaders::Pool pool{.name = "rings", .scope = "border", .presets = {"fuse", "pulse", "rainbow"}};
+  std::string name = "rings";
+  const std::string policy = "unused_first";
+  std::vector<std::string> candidates{"fuse", "pulse", "rainbow"};
   std::shared_ptr<ShaderPoolLease> first, second, third, fourth;
-  allocator.select(pool, first);
-  allocator.select(pool, first);
-  allocator.select(pool, second);
-  allocator.select(pool, third);
+  allocator.select(name, candidates, policy, first);
+  allocator.select(name, candidates, policy, first);
+  allocator.select(name, candidates, policy, second);
+  allocator.select(name, candidates, policy, third);
   CHECK_EQ(first->preset, std::string("fuse"));
   CHECK_EQ(second->preset, std::string("pulse"));
   CHECK_EQ(third->preset, std::string("rainbow"));
   second.reset();
-  allocator.select(pool, fourth);
+  allocator.select(name, candidates, policy, fourth);
   CHECK_EQ(fourth->preset, std::string("pulse"));
   // Full pool: least-used, breaking ties in rotation order.
-  allocator.select(pool, second);
+  allocator.select(name, candidates, policy, second);
   CHECK_EQ(second->preset, std::string("rainbow"));
-  allocator.select(pool, first, true);
+  allocator.select(name, candidates, policy, first, true);
   CHECK_EQ(first->preset, std::string("pulse"));
 }
 
 UMBRIEL_TEST(reloadKeepsNamesAndReplacesRemovedEntries) {
   ShaderPoolAllocator allocator;
-  Config::Shaders::Pool pool{.name = "rings", .scope = "border", .presets = {"a", "b", "c"}};
+  std::string name = "rings";
+  const std::string policy = "unused_first";
+  std::vector<std::string> candidates{"a", "b", "c"};
   std::shared_ptr<ShaderPoolLease> first, second;
-  allocator.select(pool, first);
-  allocator.select(pool, second);
-  pool.presets = {"c", "b", "a"};
-  allocator.select(pool, first);
+  allocator.select(name, candidates, policy, first);
+  allocator.select(name, candidates, policy, second);
+  candidates = {"c", "b", "a"};
+  allocator.select(name, candidates, policy, first);
   CHECK_EQ(first->preset, std::string("a"));
-  pool.presets = {"c", "b"};
-  allocator.select(pool, first);
+  candidates = {"c", "b"};
+  allocator.select(name, candidates, policy, first);
   CHECK_EQ(first->preset, std::string("c"));
-  allocator.select(pool, second);
+  allocator.select(name, candidates, policy, second);
   CHECK_EQ(second->preset, std::string("b"));
 }
 
 UMBRIEL_TEST(roundRobinWrapsAndPoolsAreIndependent) {
   ShaderPoolAllocator allocator;
-  Config::Shaders::Pool pool{.name = "one", .scope = "border", .allocation = "round-robin", .presets = {"a", "b"}};
+  std::string name = "one";
+  const std::string policy = "round_robin";
+  std::vector<std::string> candidates{"a", "b"};
   std::shared_ptr<ShaderPoolLease> first, second, third;
-  allocator.select(pool, first);
-  allocator.select(pool, second);
-  allocator.select(pool, third);
+  allocator.select(name, candidates, policy, first);
+  allocator.select(name, candidates, policy, second);
+  allocator.select(name, candidates, policy, third);
   CHECK_EQ(third->preset, std::string("a"));
-  pool.name = "two";
-  allocator.select(pool, third);
+  name = "two";
+  allocator.select(name, candidates, policy, third);
   CHECK_EQ(third->preset, std::string("a"));
-  pool.presets = {"only"};
-  allocator.select(pool, third, true);
-  allocator.select(pool, third, true);
+  candidates = {"only"};
+  allocator.select(name, candidates, policy, third, true);
+  allocator.select(name, candidates, policy, third, true);
   CHECK_EQ(third->preset, std::string("only"));
-  pool.presets.clear();
-  allocator.select(pool, third);
+  candidates.clear();
+  allocator.select(name, candidates, policy, third);
   CHECK(!third);
 }
 
 UMBRIEL_TEST(cyclingStartsAfterAnExplicitPreset) {
   ShaderPoolAllocator allocator;
-  Config::Shaders::Pool pool{.name = "rings", .scope = "border", .presets = {"a", "b", "c"}};
+  std::string name = "rings";
+  const std::string policy = "unused_first";
+  std::vector<std::string> candidates{"a", "b", "c"};
   std::shared_ptr<ShaderPoolLease> lease;
-  allocator.select(pool, lease);
-  allocator.select(pool, lease, true, "c");
+  allocator.select(name, candidates, policy, lease);
+  allocator.select(name, candidates, policy, lease, true, "c");
   CHECK_EQ(lease->preset, std::string("a"));
+}
+
+UMBRIEL_TEST(effectRandomCyclingExcludesCurrentAndRetainsLeasesOnReload) {
+  ShaderPoolAllocator allocator;
+  const std::vector<std::string> candidates{"a", "b", "c"};
+  std::shared_ptr<ShaderPoolLease> lease;
+  allocator.select("choice/window", candidates, "random", lease);
+  for (int i = 0; i < 100; ++i) {
+    const auto previous = lease->preset;
+    allocator.select("choice/window", candidates, "random", lease);
+    CHECK_EQ(lease->preset, previous);
+    allocator.select("choice/window", candidates, "random", lease, true);
+    CHECK(lease->preset != previous);
+  }
 }
 
 int main() { return RUN_TESTS(); }

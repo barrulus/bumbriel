@@ -3,6 +3,7 @@
 // Keybind vocabulary and the pure text-to-struct parsers over it. Split out of
 // config.h so the parsing can be exercised without loading a config file.
 
+#include "config/effects.h"
 #include "layout/layout.h"
 
 #include <cstddef>
@@ -76,7 +77,7 @@ namespace umbriel {
     WindowMoveToWorkspaceNext,
     WindowMoveToWorkspacePrevious,
     ConfigReload,
-    Shader,
+    Effect,
     KeyboardLayoutNext,
     ShortcutsInhibitToggle,
     LayoutScrollDrag,
@@ -167,10 +168,6 @@ namespace umbriel {
     std::string name;
     bool operator==(const SubmapArg&) const = default;
   };
-  struct ShaderArg {
-    std::string scope, operation, target;
-    bool operator==(const ShaderArg&) const = default;
-  };
 
   [[nodiscard]] inline bool validSubmapName(std::string_view name) {
     return !name.empty() && name != "disable" && !name.contains(']');
@@ -217,7 +214,7 @@ namespace umbriel {
 
   using KeybindPayload = std::variant<
       std::monostate, SpawnArg, SubmapArg, FractionArg, WorkspaceArg, OutputArg, ScratchpadArg, WindowIdArg,
-      LayoutModeArg, QuitArg, ShaderArg>;
+      LayoutModeArg, QuitArg, EffectAction>;
 
   struct Keybind {
     // What triggers the bind.
@@ -267,7 +264,7 @@ namespace umbriel {
   enum class ActionArgKind : uint8_t {
     None,
     Command,
-    Shader,
+    Effect,
     Fraction,
     Workspace,
     OptionalOutput,

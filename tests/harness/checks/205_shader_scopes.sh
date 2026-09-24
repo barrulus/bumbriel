@@ -12,38 +12,39 @@ cat >> "$UMBRIEL_CONFIG" <<'TOML'
 [animation]
 enabled = false
 [appearance]
+effects = ["swap"]
 corner_radius = 0
 [appearance.shadow]
 enabled = false
-[shaders]
+[render.effects]
 in_capture = true
-global = "swap"
-[[shaders.preset.half.passes]]
-shader = "half.glsl"
-[shaders.preset.half]
-scope = "output"
-[[shaders.preset.swap.passes]]
-shader = "swap.glsl"
-[shaders.preset.swap]
-scope = "global"
-[[shaders.preset."cursor.swap".passes]]
-shader = "swap.glsl"
-[[shaders.preset."screen.half".passes]]
-shader = "half.glsl"
-[[shaders.region]]
+[effects.half.screen]
+passes = [{shader = "half.glsl"}]
+[effects.swap.overlay]
+passes = [{shader = "swap.glsl"}]
+[effects.invert.content]
+passes = [{builtin = "invert"}]
+[effects.invert.screen]
+passes = [{builtin = "invert"}]
+[effects.screens]
+choose = ["half"]
+[effects.cursors]
+choose = ["swap"]
+[[effect_region]]
+name = "test-region"
 output = "HEADLESS-1"
-preset = "half"
+effects = ["half"]
 x = 0
 y = 0
 width = 3000
 height = 3000
 [output."HEADLESS-1"]
 position = [0, 0]
-shader = "invert"
+effects = ["invert"]
 [[window_rule]]
 match.title = "scope-window"
 default_output = "HEADLESS-1"
-shader = "invert"
+effects = ["invert"]
 TOML
 "$UMBRIEL" msg config-reload >/dev/null
 FILL_COLOR=0xFF204080 "$UMBRIEL_UNMAP_CLIENT" scope-window 500 400 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
@@ -69,30 +70,35 @@ expect() {
   exit 1
 }
 expect 191 159 143
-"$UMBRIEL" msg 'shader:global off' >/dev/null
+"$UMBRIEL" msg 'effect:global off --scope overlay' >/dev/null
 expect 143 159 191
-"$UMBRIEL" msg 'shader:output off HEADLESS-1' >/dev/null
+"$UMBRIEL" msg 'effect:output off --target HEADLESS-1 --scope screen' >/dev/null
 expect 112 96 64
-"$UMBRIEL" msg 'shader:window off' >/dev/null
+"$UMBRIEL" msg 'effect:window off --scope content' >/dev/null
 expect 16 32 64
-"$UMBRIEL" msg 'shader:window toggle' >/dev/null
+"$UMBRIEL" msg 'effect:window toggle --scope content' >/dev/null
 expect 112 96 64
-"$UMBRIEL" msg 'shader:output invert HEADLESS-2' >/dev/null
+"$UMBRIEL" msg 'effect:output set invert --target HEADLESS-2 --scope screen' >/dev/null
 grim -o HEADLESS-2 "$IMAGE"
 red=$(magick "$IMAGE" -crop 2x2+20+20 -format '%[fx:round(mean.r*255)]' info:)
 (( red > 245 )) || { echo "targeted output action failed: $red"; exit 1; }
 expect 112 96 64
-"$UMBRIEL" msg 'shader:global cycle' >/dev/null
+"$UMBRIEL" msg 'effect:global cycle cursors --scope overlay' >/dev/null
 expect 64 96 112
-# A broken pass drops the chain until the watcher reloads it.
+# An invalid generation retains the selected pipelines.
+generation=$("$UMBRIEL" effects --json | jq .generation)
 printf '%s\n' 'broken shader' > "$UMBRIEL_RUNTIME_DIR/half.glsl"
-expect 127 191 223
+"$UMBRIEL" msg config-reload >/dev/null
+[[ $("$UMBRIEL" effects --json | jq .generation) == "$generation" ]]
+expect 64 96 112
 cat > "$UMBRIEL_RUNTIME_DIR/half.glsl" <<'GLSL'
 vec4 postprocess(vec3 p) { vec4 c=tex2D_screen(p.xy); return vec4(c.rgb*0.5,c.a); }
 GLSL
 expect 64 96 112
-"$UMBRIEL" msg 'shader:screen cycle' >/dev/null
+"$UMBRIEL" msg 'effect:output cycle screens --target HEADLESS-1 --scope screen' >/dev/null
+expect 32 48 56
+"$UMBRIEL" msg 'effect:global cycle cursors --scope overlay' >/dev/null
+expect 32 48 56
+"$UMBRIEL" msg 'effect:global off --scope overlay' >/dev/null
 expect 56 48 32
-"$UMBRIEL" msg 'shader:cursor cycle' >/dev/null
-expect 64 96 112
 echo "window/region/output/global ordering, target isolation, runtime selection and source reload verified"

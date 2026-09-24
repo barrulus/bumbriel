@@ -16,13 +16,14 @@ style = "fade"
 duration_ms = 1000
 curve = "linear"
 [appearance]
+effects = ["fixture"]
 border_width = 6
 outer_border_width = 0
 corner_radius = 0
 [appearance.shadow]
 enabled = false
-[appearance.border_shader]
-shader = "ring.glsl"
+[effects.fixture.border.outer]
+passes = [{shader = "ring.glsl"}]
 animated = false
 palette = true
 [colors]
@@ -30,6 +31,8 @@ accent_primary = "#FF00FFFF"
 accent_secondary = "#FF00FFFF"
 warning = "#FF00FFFF"
 error = "#FF00FFFF"
+[render.effects]
+in_capture = true
 TOML
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" clock-freeze > /dev/null

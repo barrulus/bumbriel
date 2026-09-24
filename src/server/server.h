@@ -6,6 +6,7 @@
 #include "input/surface_layouts.h"
 #include "scene/animation_shader.h"
 #include "scene/border_rect.h"
+#include "scene/effects.h"
 #include "scene/surface_shadow.h"
 #include "server/focus.h"
 #include "view/registry.h"
@@ -377,6 +378,7 @@ namespace umbriel {
       std::string style = "fade";
       double scale = 0.8;
       AnimationEvent event = AnimationEvent::WindowsOut;
+      ResolvedEffect effect;
     };
     // `content` is the subtree holding the copied buffers (pass `tree` when there is no separate content tree). A
     // positive `box` clips that subtree to the captured content extent. Returns kInvalidCloseSnapshot when the snapshot
@@ -619,7 +621,7 @@ namespace umbriel {
       CloseSnapshot(
           Server& server, CloseSnapshotId id, Output* output, wlr_scene_tree* tree, wlr_scene_tree* content,
           std::vector<BorderSnapshot> borders, const wlr_box& box, int durationMs, const AnimationCurve& curve,
-          std::string_view style, double scale, AnimationEvent event, ShadowSnapshot shadow
+          std::string_view style, double scale, AnimationEvent event, ShadowSnapshot shadow, ResolvedEffect effect
       );
       ~CloseSnapshot() override;
 
@@ -644,6 +646,8 @@ namespace umbriel {
       Output* m_output = nullptr;
       AnimatedValue m_alpha;
       AnimationEvent m_event = AnimationEvent::WindowsOut;
+      ResolvedEffect m_effect;
+      EffectEvent m_effectEvent;
       // Slide style: vertical offset of the whole snapshot, 0 to 80.
       AnimatedValue m_slide;
       wlr_box m_captured{};

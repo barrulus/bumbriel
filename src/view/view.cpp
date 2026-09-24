@@ -13,6 +13,7 @@
 #include "overview/overview.h"
 #include "scene/animation_shader.h"
 #include "scene/color.h"
+#include "scene/effects.h"
 #include "scene/surface_blur.h"
 #include "server/server.h"
 
@@ -1190,14 +1191,10 @@ namespace umbriel {
 
     const auto& animation = config().animation;
     const auto open = selectedWindowsIn();
-    m_customFade = animation.enabled
-        && open.enabled
-        && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) != nullptr;
+    m_customFade = animation.enabled && open.enabled && customEffect(EffectScope::Open);
     m_openingScale = 1.0;
     m_openingSlide = 0;
-    if (!animation.enabled
-        || !open.enabled
-        || (open.style == "none" && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) == nullptr)) {
+    if (!animation.enabled || !open.enabled || (open.style == "none" && !customEffect(EffectScope::Open))) {
       m_fade.snap(1.0);
       setFadeAlpha(1.0F);
     } else {
@@ -1213,7 +1210,9 @@ namespace umbriel {
     syncAnimationShaders();
   }
 
-  void View::beginLayoutMotion(float direction) {
+  void View::beginLayoutMotion(float direction, const wlr_box& from, const wlr_box& to) {
+    m_layoutMoves = from.x != to.x || from.y != to.y;
+    m_layoutResizes = from.width != to.width || from.height != to.height;
     // The motion owns the presented size from here; a size tween still running would overwrite it on its next tick.
     m_presentation.snapTo(m_presentation.width(), m_presentation.height());
     m_layoutPresentationHeld = false;
@@ -1284,7 +1283,7 @@ namespace umbriel {
   }
 
   void View::animateFadeTo(float toAlpha, int durationMs, const AnimationCurve& curve) {
-    m_customFade = m_inScratchpad && animationShader(m_server->renderer(), AnimationEvent::Scratchpad) != nullptr;
+    m_customFade = m_inScratchpad && customEffect(EffectScope::Scratchpad);
     m_fade.snap(m_fadeAlpha);
     m_fade.retarget(toAlpha, durationMs, curve);
     scheduleFrame();
@@ -1294,53 +1293,119 @@ namespace umbriel {
     const int dx = x - m_sceneTree->node.x;
     const int dy = y - m_sceneTree->node.y;
     setScenePosition(x, y);
-    movePointerWobble(dx, dy);
+    movePointerPhysics(dx, dy);
   }
 
-  void View::beginPointerWobble(double x, double y) {
+  bool View::customEffect(EffectScope scope) {
+    return effectsEnabled()
+        && nativeEffectEnabled(scope)
+        && !(m_effectState.disabled() & effectBit(scope))
+        && preparedEffect(resolvedEffects()[static_cast<size_t>(scope)], scope) != nullptr;
+  }
+
+  Config::Animation::WindowsIn View::selectedWindowsIn() {
+    auto result = config().animation.windowsIn;
+    if (customEffect(EffectScope::Open)) {
+      const auto& pipeline = *resolvedEffects()[static_cast<size_t>(EffectScope::Open)].pipeline;
+      result.durationMs = pipeline.durationMs.value_or(result.durationMs);
+      result.curve = effectCurve(pipeline, config(), result.curve);
+    }
+    return result;
+  }
+
+  Config::Animation::WindowsOut View::selectedWindowsOut() {
+    auto result = config().animation.windowsOut;
+    if (customEffect(EffectScope::Close)) {
+      const auto& pipeline = *resolvedEffects()[static_cast<size_t>(EffectScope::Close)].pipeline;
+      result.durationMs = pipeline.durationMs.value_or(result.durationMs);
+      result.curve = effectCurve(pipeline, config(), result.curve);
+    }
+    return result;
+  }
+
+  void View::refreshEffects() {
+    m_effectGeneration = 0;
+    applyDynamicRules();
+    refreshWindowShader();
+    syncAnimationShaders();
+    scheduleFrame();
+  }
+
+  const ResolvedEffects& View::resolvedEffects() {
+    const auto& cfg = config();
+    std::vector<EffectInput> inputs;
+    if (cfg.appearance.effects)
+      inputs.push_back({*cfg.appearance.effects, kWindowEffects});
+    globalEffectState().appendOverrides(inputs);
+    if (const auto* output = currentOutput())
+      output->appendEffectInputs(inputs);
+    for (const auto& selector : resolvedRules().effects)
+      inputs.push_back({selector, kWindowEffects});
+    if (m_mapped && (m_effectGeneration != configStore().generation() || inputs != m_effectInputs)) {
+      m_effectState.resolve(cfg.effects, inputs, effectAllocator(), kWindowEffects);
+      m_effectInputs = std::move(inputs);
+      m_effectGeneration = configStore().generation();
+    }
+    return m_effectState.resolved();
+  }
+
+  std::optional<fx_drag_physics_parameters> View::pointerPhysicsParameters() {
     const auto& animation = config().animation;
-    m_wobble = {};
-    if (!m_mapped
-        || m_contentTree == nullptr
-        || !animation.enabled
-        || !animation.windowsMove.enabled
-        || !animation.windowsMove.wobble)
+    if (!animation.enabled || !animation.windowsMove.enabled)
+      return std::nullopt;
+    if (config().effects.empty())
+      return animation.windowsMove.dragPhysics ? std::optional(fx_drag_physics_default_parameters()) : std::nullopt;
+    const auto& leaf = resolvedEffects()[static_cast<size_t>(EffectScope::Drag)];
+    if (effectsEnabled()
+        && !(m_effectState.disabled() & effectBit(EffectScope::Drag))
+        && leaf.pipeline
+        && leaf.pipeline->enabled
+        && leaf.pipeline->drag)
+      return leaf.pipeline->drag->parameters;
+    if (animation.windowsMove.dragPhysics)
+      return fx_drag_physics_default_parameters();
+    return std::nullopt;
+  }
+
+  void View::beginPointerPhysics(double x, double y) {
+    const auto parameters = pointerPhysicsParameters();
+    m_dragPhysics = {};
+    if (!m_mapped || m_contentTree == nullptr || !parameters)
       return;
     wlr_box bounds{};
     if (!wlr_scene_node_animation_bounds(&m_contentTree->node, &bounds))
       return;
     int lx = 0, ly = 0;
     wlr_scene_node_coords(&m_contentTree->node, &lx, &ly);
-    fx_wobble_begin(
-        &m_wobble, bounds.width, bounds.height, static_cast<float>((x - lx - bounds.x) / bounds.width),
+    fx_drag_physics_begin(
+        &m_dragPhysics, bounds.width, bounds.height, static_cast<float>((x - lx - bounds.x) / bounds.width),
         static_cast<float>((y - ly - bounds.y) / bounds.height)
     );
-    m_wobbleLastMsec = m_server->animationClockMsec();
+    fx_drag_physics_set_parameters(&m_dragPhysics, &*parameters);
+    m_dragPhysicsLastMsec = m_server->animationClockMsec();
   }
 
-  void View::tickPointerWobble(uint64_t nowMsec) {
-    const auto& animation = config().animation;
-    if (!m_mapped
-        || m_server->sessionLocked()
-        || !animation.enabled
-        || !animation.windowsMove.enabled
-        || !animation.windowsMove.wobble) {
-      m_wobble = {};
-    } else if (nowMsec > m_wobbleLastMsec) {
-      fx_wobble_tick(&m_wobble, static_cast<double>(nowMsec - m_wobbleLastMsec) / 1000.0);
+  void View::tickPointerPhysics(uint64_t nowMsec) {
+    const auto parameters = pointerPhysicsParameters();
+    if (!m_mapped || m_server->sessionLocked() || !parameters) {
+      m_dragPhysics = {};
+    } else {
+      fx_drag_physics_set_parameters(&m_dragPhysics, &*parameters);
+      if (nowMsec > m_dragPhysicsLastMsec)
+        fx_drag_physics_tick(&m_dragPhysics, static_cast<double>(nowMsec - m_dragPhysicsLastMsec) / 1000.0);
     }
-    m_wobbleLastMsec = nowMsec;
+    m_dragPhysicsLastMsec = nowMsec;
   }
 
-  void View::movePointerWobble(double dx, double dy) {
-    tickPointerWobble(m_server->animationClockMsec());
-    fx_wobble_move(&m_wobble, static_cast<float>(dx), static_cast<float>(dy));
+  void View::movePointerPhysics(double dx, double dy) {
+    tickPointerPhysics(m_server->animationClockMsec());
+    fx_drag_physics_move(&m_dragPhysics, static_cast<float>(dx), static_cast<float>(dy));
     syncAnimationShaders();
   }
 
-  void View::endPointerWobble() {
-    tickPointerWobble(m_server->animationClockMsec());
-    fx_wobble_release(&m_wobble);
+  void View::endPointerPhysics() {
+    tickPointerPhysics(m_server->animationClockMsec());
+    fx_drag_physics_release(&m_dragPhysics);
     syncAnimationShaders();
   }
 
@@ -1392,53 +1457,84 @@ namespace umbriel {
       return;
     }
     auto* renderer = m_server->renderer();
-    const auto& animation = config().animation;
-    if (!animation.enabled || !animation.windowsMove.enabled || !animation.windowsMove.wobble)
-      m_wobble = {};
-    fx_animation_parameters wobble{};
-    wobble.transition_id = m_wobble.transition_id;
-    if (m_wobble.active) {
-      for (int i = 0; i < FX_WOBBLE_POINTS; ++i) {
-        wobble.wobble[i][0] = m_wobble.displacement[i][0] / m_wobble.width;
-        wobble.wobble[i][1] = m_wobble.displacement[i][1] / m_wobble.height;
-        wobble.padding = std::max(
-            wobble.padding,
-            std::max(std::abs(m_wobble.displacement[i][0]), std::abs(m_wobble.displacement[i][1])) + 2.0F
+    if (!pointerPhysicsParameters())
+      m_dragPhysics = {};
+    fx_animation_parameters physics{};
+    physics.transition_id = m_dragPhysics.transition_id;
+    if (m_dragPhysics.active) {
+      for (int i = 0; i < FX_DRAG_PHYSICS_POINTS; ++i) {
+        physics.deformation[i][0] = m_dragPhysics.displacement[i][0] / m_dragPhysics.width;
+        physics.deformation[i][1] = m_dragPhysics.displacement[i][1] / m_dragPhysics.height;
+        physics.padding = std::max(
+            physics.padding,
+            std::max(std::abs(m_dragPhysics.displacement[i][0]), std::abs(m_dragPhysics.displacement[i][1])) + 2.0F
         );
       }
     }
     wlr_scene_node_set_animation(
         &target->node, static_cast<unsigned>(AnimationEvent::InteractiveMove),
-        m_wobble.active ? interactiveWobbleShader(renderer) : nullptr, &wobble
+        m_dragPhysics.active ? interactivePhysicsShader(renderer) : nullptr, &physics
     );
-    if (m_posX.animating() || m_posY.animating() || m_presentation.animating()) {
-      const auto& movement = m_posX.animating() ? m_posX : (m_posY.animating() ? m_posY : m_presentation.animation());
-      updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, movement);
-    } else if (
-        const AnimatedValue* motion =
-            m_layoutMotion && m_workspace != nullptr ? m_workspace->layoutMotionValue() : nullptr;
-        motion != nullptr
-    ) {
-      updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, *motion, m_layoutMotionDirection);
-    } else {
-      updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, m_presentation.animation());
+    const auto& effects = resolvedEffects();
+    const auto update = [&](wlr_scene_node* node, EffectScope scope, AnimationEvent event, const auto& value,
+                            float direction = 0.0F) {
+      const auto index = static_cast<size_t>(scope);
+      const bool enabled =
+          effectsEnabled() && nativeEffectEnabled(scope) && !(m_effectState.disabled() & effectBit(scope));
+      m_effectEvents[index].update(
+          node, static_cast<unsigned>(event), effects[index], scope, animationParameters(value, direction),
+          value.animating(), enabled, lifecycleShader(renderer, event)
+      );
+    };
+    const AnimatedValue* motion = &m_presentation.animation();
+    float direction = 0;
+    bool moves = m_posX.animating() || m_posY.animating();
+    bool resizes = m_presentation.animating();
+    if (moves || resizes)
+      motion = m_posX.animating() ? &m_posX : (m_posY.animating() ? &m_posY : &m_presentation.animation());
+    else if (m_layoutMotion && m_workspace != nullptr) {
+      if (const auto* layout = m_workspace->layoutMotionValue()) {
+        motion = layout;
+        direction = m_layoutMotionDirection;
+        moves = m_layoutMoves;
+        resizes = m_layoutResizes;
+      }
     }
-    updateAnimationShader(&target->node, renderer, AnimationEvent::DimUnfocused, m_focusDim);
-    updateAnimationShader(
-        &target->node, renderer, m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn, m_fade
+    const auto& move = effects[static_cast<size_t>(EffectScope::Move)].pipeline;
+    const auto& resize = effects[static_cast<size_t>(EffectScope::Resize)].pipeline;
+    if (m_geometryEffectTransition != motion->transitionId()) {
+      m_geometryEffectTransition = motion->transitionId();
+      m_combinedGeometryEffect = moves && resizes && move && resize && sameEffectPipeline(*move, *resize);
+    }
+    const bool combined = moves && resizes && m_combinedGeometryEffect;
+    const auto geometry = [&](EffectScope scope, AnimationEvent event, bool active) {
+      if (active)
+        update(&target->node, scope, event, *motion, direction);
+      else {
+        m_effectEvents[static_cast<size_t>(scope)].reset();
+        wlr_scene_node_set_animation(&target->node, static_cast<unsigned>(event), nullptr, nullptr);
+      }
+    };
+    geometry(EffectScope::Resize, AnimationEvent::WindowsResize, resizes && !combined);
+    geometry(EffectScope::Move, AnimationEvent::WindowsMove, moves);
+    update(&target->node, EffectScope::Focus, AnimationEvent::DimUnfocused, m_focusDim);
+    update(
+        &target->node, m_inScratchpad ? EffectScope::Scratchpad : EffectScope::Open,
+        m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn, m_fade
     );
+    m_effectEvents[static_cast<size_t>(m_inScratchpad ? EffectScope::Open : EffectScope::Scratchpad)].reset();
     wlr_scene_node_set_animation(
         &target->node, static_cast<unsigned>(m_inScratchpad ? AnimationEvent::WindowsIn : AnimationEvent::Scratchpad),
         nullptr, nullptr
     );
-    updateAnimationShader(
-        border, renderer, AnimationEvent::Border, m_borderColorAnim, m_borderFocusedState ? 1.0F : -1.0F
+    update(
+        border, EffectScope::BorderFocus, AnimationEvent::Border, m_borderColorAnim, m_borderFocusedState ? 1.0F : -1.0F
     );
   }
 
   bool View::tickAnimations(uint64_t nowMsec) {
     bool active = false;
-    tickPointerWobble(nowMsec);
+    tickPointerPhysics(nowMsec);
 
     // Disable sibling size animations during a tiled resize, so they do not
     // trail the pointer while clients acknowledge successive configures.
@@ -1479,14 +1575,12 @@ namespace umbriel {
     if (m_fade.tick(nowMsec)) {
       m_customFade = m_customFade
           && m_fade.animating()
-          && animationShader(
-                 m_server->renderer(), m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn
-             ) != nullptr;
+          && effectsEnabled()
+          && nativeEffectEnabled(m_inScratchpad ? EffectScope::Scratchpad : EffectScope::Open)
+          && !(m_effectState.disabled() & effectBit(m_inScratchpad ? EffectScope::Scratchpad : EffectScope::Open));
       const float rawAlpha = std::clamp(static_cast<float>(m_fade.current()), 0.0F, 1.0F);
-      const bool builtInSlide = !m_inScratchpad
-          && !m_customFade
-          && selectedWindowsIn().style == "slide"
-          && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) == nullptr;
+      const bool builtInSlide =
+          !m_inScratchpad && !m_customFade && selectedWindowsIn().style == "slide" && !customEffect(EffectScope::Open);
       // Keep the window visible through more of its travel so slide is clearly distinct from fade.
       setFadeAlpha(builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);
       if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
@@ -1536,12 +1630,12 @@ namespace umbriel {
       active = active || m_borderColorAnim.animating();
     }
     syncAnimationShaders();
-    return active || m_wobble.active;
+    return active || m_dragPhysics.active;
   }
 
   bool View::animatesOn(const Output* output) const {
     // A grabbed window can span outputs before its workspace ownership changes.
-    if (m_wobble.active)
+    if (m_dragPhysics.active)
       return true;
     const Workspace* workspace = m_workspace;
     if (workspace != nullptr && workspace->group() != nullptr) {
@@ -1559,7 +1653,7 @@ namespace umbriel {
         || m_borderColorAnim.animating()
         || m_focusDim.animating()
         || m_resizeCrossfade.active()
-        || m_wobble.active;
+        || m_dragPhysics.active;
   }
 
   bool View::layoutFullscreen() const { return m_toplevel->scheduled.fullscreen; }
@@ -2313,91 +2407,64 @@ namespace umbriel {
       wlr_scene_rect_set_size(m_borderOverlayRect, contentWidth, contentHeight);
   }
 
-  namespace {
-    ShaderPoolAllocator borderPools;
-  }
-
   DecorationShaderConfig View::borderShaderSettings() {
-    auto settings = resolvedRules().borderShader.value_or(config().appearance.borderShader);
-    const bool ruleEnabled = settings.enabled;
-    const auto poolName = m_borderPool.value_or(settings.pool);
-    if (m_borderSelection.preset) {
-      if (const auto* preset = borderPreset(*m_borderSelection.preset))
-        settings = *preset;
-      else
-        m_borderSelection.preset.reset();
-    }
-    if (!m_borderSelection.preset && m_mapped) {
-      if (const auto* pool = shaderPool(poolName, "border")) {
-        borderPools.select(*pool, m_borderLease);
-        if (m_borderLease)
-          if (const auto* preset = borderPreset(m_borderLease->preset))
-            settings = *preset;
-      } else if (m_borderLease && !shaderPool(m_borderLease->pool, "border"))
-        m_borderLease.reset();
-    }
-    settings.enabled &= ruleEnabled && m_borderSelection.enabled;
+    DecorationShaderConfig settings;
+    settings.enabled = false;
+    const auto& leaf = resolvedEffects()[static_cast<size_t>(EffectScope::BorderOuter)];
+    if (!effectsEnabled() || !leaf.pipeline || !leaf.pipeline->enabled)
+      return settings;
+    const auto& pipeline = *leaf.pipeline;
+    settings.enabled = !(m_effectState.disabled() & effectBit(EffectScope::BorderOuter));
+    settings.effect = leaf.source.effect;
+    settings.focusedOnly = pipeline.focusedOnly;
+    settings.animated = pipeline.animated;
+    settings.palette = pipeline.palette;
+    settings.speed = pipeline.speed;
+    settings.padding = pipeline.padding;
+    settings.light = {
+        pipeline.light.enabled, pipeline.light.spread, pipeline.light.intensity, pipeline.light.threshold
+    };
     return settings;
   }
 
-  bool View::selectBorderShader(std::string_view operation) {
-    if (operation == "toggle")
-      m_borderSelection.enabled = !m_borderSelection.enabled;
-    else if (operation == "off" || operation == "on")
-      m_borderSelection.enabled = operation == "on";
-    else if (operation == "default") {
-      m_borderSelection = {};
-      m_borderPool.reset();
-    } else if (operation == "cycle" || operation.starts_with("cycle:")) {
-      const auto settings = resolvedRules().borderShader.value_or(config().appearance.borderShader);
-      const std::string poolName =
-          operation == "cycle" ? m_borderPool.value_or(settings.pool) : std::string(operation.substr(6));
-      const auto* pool = shaderPool(poolName, "border");
-      if (!pool)
-        return false;
-      // Synchronise a rule-assigned pool before advancing its current entry.
-      borderShaderSettings();
-      borderPools.select(*pool, m_borderLease, true, m_borderSelection.preset.value_or(""));
-      m_borderPool = poolName;
-      m_borderSelection = {};
-    } else if (borderPreset(operation)) {
-      m_borderLease.reset();
-      m_borderSelection.preset = operation;
-      m_borderSelection.enabled = true;
-    } else
-      return false;
-    applyDynamicRules();
-    updateBorderGeometry();
-    return true;
-  }
-
   std::string_view View::windowShaderName() {
-    const auto& rule = resolvedRules();
-    return selectedShader(m_shaderSelection, rule.shader ? *rule.shader : config().shaders.window);
+    return resolvedEffects()[static_cast<size_t>(EffectScope::Content)].source.effect;
   }
 
-  fx_postprocess_chain* View::windowShader() { return postprocessShader(windowShaderName()); }
+  fx_postprocess_chain* View::windowShader() {
+    if (!effectsEnabled() || (m_effectState.disabled() & effectBit(EffectScope::Content)))
+      return nullptr;
+    const auto program =
+        preparedEffect(resolvedEffects()[static_cast<size_t>(EffectScope::Content)], EffectScope::Content);
+    return program ? program->postprocess.get() : nullptr;
+  }
 
   void View::refreshWindowShader() {
     if (m_contentTree == nullptr)
       return;
-    const auto settings = borderShaderSettings();
-    auto* overlay = m_borderFocusedState && !m_urgent && decorated() && settings.enabled
-        ? postprocessShader(settings.overlay)
-        : nullptr;
+    const auto& effects = resolvedEffects();
     const auto geometry = committedContentBox();
-    const auto update = [&](wlr_scene_tree* parent, wlr_scene_rect*& rect, fx_postprocess_chain* chain,
-                            std::string_view presetName, bool capture) {
+    const auto update = [&](wlr_scene_tree* parent, wlr_scene_rect*& rect, EffectScope scope, bool capture) {
       if (parent == nullptr)
         return;
-      if (capture && !config().shaders.inCapture)
-        chain = nullptr;
-      if (rect == nullptr && chain != nullptr)
+      const auto& leaf = effects[static_cast<size_t>(scope)];
+      const auto program = preparedEffect(leaf, scope);
+      bool enabled = effectsEnabled()
+          && !(m_effectState.disabled() & effectBit(scope))
+          && program
+          && program->postprocess
+          && (!capture || config().effectPolicy.inCapture);
+      if (scope == EffectScope::BorderInner)
+        enabled &= decorated() && leaf.pipeline && (!leaf.pipeline->focusedOnly || (m_borderFocusedState && !m_urgent));
+      if (rect == nullptr && enabled)
         rect = wlr_scene_rect_create(parent, 0, 0, kTransparent.data());
       if (rect == nullptr)
         return;
-      applyPostprocessShader(rect, chain, presetName);
-      wlr_scene_node_set_enabled(&rect->node, chain != nullptr && (capture || !m_fade.animating()));
+      if (enabled)
+        applyEffect(rect, leaf, scope);
+      else
+        wlr_scene_rect_set_postprocess(rect, nullptr);
+      wlr_scene_node_set_enabled(&rect->node, enabled);
       wlr_scene_rect_set_size(rect, geometry.width, geometry.height);
       wlr_scene_rect_set_corner_radius(rect, surfaceRadius());
       if (!capture && m_decoration.borderTree() != nullptr)
@@ -2405,15 +2472,11 @@ namespace umbriel {
       else
         wlr_scene_node_raise_to_top(&rect->node);
     };
-    // Each pass samples the result below it: content filter, inward ring, then
-    // the external border. Keep the same order in isolated window captures.
-    const auto windowName = windowShaderName();
-    auto* chain = postprocessShader(windowName);
-    update(m_contentTree, m_shaderRect, chain, windowName, false);
-    update(m_contentTree, m_borderOverlayRect, overlay, settings.overlay, false);
+    update(m_contentTree, m_shaderRect, EffectScope::Content, false);
+    update(m_contentTree, m_borderOverlayRect, EffectScope::BorderInner, false);
     auto* captureTree = m_captureScene != nullptr ? &m_captureScene->tree : nullptr;
-    update(captureTree, m_captureShaderRect, chain, windowName, true);
-    update(captureTree, m_captureBorderOverlayRect, overlay, settings.overlay, true);
+    update(captureTree, m_captureShaderRect, EffectScope::Content, true);
+    update(captureTree, m_captureBorderOverlayRect, EffectScope::BorderInner, true);
   }
 
   void View::refreshConfigChrome() {
@@ -2509,13 +2572,21 @@ namespace umbriel {
       return kInvalidCloseSnapshot;
     }
 
+    wlr_scene_rect_snapshot_postprocess(content, m_shaderRect);
+    wlr_scene_rect_snapshot_postprocess(content, m_borderOverlayRect);
     wlr_scene_node_copy_animations_for_snapshot(&snap->node, &m_contentTree->node);
-    // A close snapshot owns its windows_out lifecycle. Keep a possible interrupted windows_in effect, but do not
-    // freeze windows_move into the snapshot.
-    wlr_scene_node_set_animation(&snap->node, static_cast<unsigned>(AnimationEvent::WindowsMove), nullptr, nullptr);
     const auto shadow = m_decoration.snapshotShadow(output->viewRoot(), &snap->node, m_decoration.shadowPooled());
+    const auto close = selectedWindowsOut();
+    Server::CloseSnapshotOverrides overrides{
+        .durationMs = close.durationMs,
+        .curve = close.curve,
+        .style = close.style,
+        .scale = close.scale,
+        .effect = customEffect(EffectScope::Close) ? resolvedEffects()[static_cast<size_t>(EffectScope::Close)]
+                                                   : ResolvedEffect{}
+    };
     const CloseSnapshotId id = m_server->animateCloseSnapshot(
-        output, snap, content, std::move(snapBorders), m_presentedBox, std::nullopt, shadow
+        output, snap, content, std::move(snapBorders), m_presentedBox, std::move(overrides), shadow
     );
     wlr_output_schedule_frame(output->wlr());
     return id;
@@ -3120,7 +3191,7 @@ namespace umbriel {
     if (m_onActiveWorkspace) {
       const auto& animation = config().animation;
       const auto open = selectedWindowsIn();
-      const bool customShader = animationShader(m_server->renderer(), AnimationEvent::WindowsIn) != nullptr;
+      const bool customShader = customEffect(EffectScope::Open);
       m_customFade = animation.enabled && open.enabled && customShader;
       const bool animates = animation.enabled && open.enabled && (open.style != "none" || customShader);
       const bool tiledMember =
@@ -3292,10 +3363,13 @@ namespace umbriel {
       setSceneParent(m_workspace ? m_workspace->viewLayer(m_tiled) : m_server->xdgTree());
     }
     m_mapped = false;
-    m_wobble = {};
-    m_borderLease.reset();
-    m_borderPool.reset();
-    m_borderSelection = {};
+    m_dragPhysics = {};
+    m_effectState.release();
+    for (auto& event : m_effectEvents)
+      event.reset();
+    m_geometryEffectTransition = 0;
+    m_combinedGeometryEffect = false;
+    m_effectGeneration = 0;
     m_openingParentRequested = false;
     m_acceptClientMaximizeRequests = false;
     m_consumeRestoredMaximizeRequest = false;

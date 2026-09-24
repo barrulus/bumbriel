@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.crt"]
-scope = "window"
-
-[[shaders.preset."window.crt".passes]]
-shader = "crt.glsl"
+[effects."window.crt".content]
+passes = [{ shader = "crt.glsl" }]

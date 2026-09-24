@@ -1,9 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."cursor.comet-glow"]
-scope = "global"
-
-[[shaders.preset."cursor.comet-glow".passes]]
-shader = "comet-glow-0.glsl"
-
-[[shaders.preset."cursor.comet-glow".passes]]
-shader = "comet-glow-1.glsl"
+[effects."cursor.comet-glow".overlay]
+passes = [{ shader = "comet-glow-0.glsl" }, { shader = "comet-glow-1.glsl" }]

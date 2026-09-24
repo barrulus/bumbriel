@@ -1035,6 +1035,15 @@ namespace umbriel {
       return std::nullopt;
     }
 
+    void rejectRemoved(Section& section, std::initializer_list<std::string_view> keys) {
+      for (const auto key : keys)
+        if (const auto* node = section.take(key))
+          configStore().addDiagnostic(makeDiagnostic(
+              ConfigDiagnostic::Severity::Error, node->source(),
+              "removed shader key '" + std::string(key) + "'; define and select named effects instead"
+          ));
+    }
+
     void parseAnimationSection(Section& s, Config::Animation& animation) {
       s.boolean("enabled", animation.enabled);
 
@@ -1096,7 +1105,7 @@ namespace umbriel {
         }
       }
 
-      const auto readShader = [](Section& section, auto& event) { event.shader = readShaderSource(section); };
+      const auto readShader = [](Section& section, auto&) { rejectRemoved(section, {"shader"}); };
       const auto readCurveKey = [&](Section& section, std::string_view key, std::string_view context,
                                     AnimationCurve& target) {
         if (const toml::node* node = section.take(key)) {
@@ -1140,41 +1149,7 @@ namespace umbriel {
         warnAt(node->source(), R"(invalid animation style "{}")", parsed);
       };
 
-      s.text("preset", animation.preset);
-      s.sub("pair", [&](Section& pairs) {
-        pairs.freeform();
-        for (const auto& [name, node] : pairs.table()) {
-          if (!node.is_table()) {
-            warnAt(node.source(), "animation pair must be a table");
-            continue;
-          }
-          Config::Animation::Pair pair;
-          pair.open.durationMs = 400;
-          pair.close.durationMs = 500;
-          pair.open.curve.easing = Easing::Linear;
-          pair.close.curve.easing = Easing::Linear;
-          pair.open.style = "none";
-          Section entry(
-              *node.as_table(), "animation.pair." + std::string(name.str()), configStore().mutableDiagnostics()
-          );
-          entry.sub("open", [&](Section& keys) {
-            readShader(keys, pair.open);
-            keys.integer("duration_ms", 1, 10000, pair.open.durationMs);
-            readCurve(keys, "animation.pair.open", pair.open.curve);
-          });
-          entry.sub("close", [&](Section& keys) {
-            readShader(keys, pair.close);
-            keys.integer("duration_ms", 1, 10000, pair.close.durationMs);
-            readCurve(keys, "animation.pair.close", pair.close.curve);
-          });
-          if (!pair.open.shader || !pair.close.shader) {
-            warnAt(node.source(), "animation pair requires both open and close shaders");
-            pair.open.shader.reset();
-            pair.close.shader.reset();
-          }
-          animation.pairs.insert_or_assign(std::string(name.str()), std::move(pair));
-        }
-      });
+      rejectRemoved(s, {"preset", "pair"});
 
       s.sub("windows_in", [&](Section& section) {
         readShader(section, animation.windowsIn);
@@ -1190,7 +1165,18 @@ namespace umbriel {
       });
       s.sub("windows_move", [&](Section& section) {
         readShader(section, animation.windowsMove);
-        section.boolean("enabled", animation.windowsMove.enabled).boolean("wobble", animation.windowsMove.wobble);
+        section.boolean("enabled", animation.windowsMove.enabled)
+            .boolean("drag_physics", animation.windowsMove.dragPhysics);
+        if (const auto* node = section.take("wobble"))
+          configStore().addDiagnostic(makeDiagnostic(
+              ConfigDiagnostic::Severity::Error, node->source(),
+              "animation.windows_move.wobble was removed; use drag_physics or select a named effects.NAME.drag preset"
+          ));
+        if (const auto* node = section.take("wobble_style"))
+          configStore().addDiagnostic(makeDiagnostic(
+              ConfigDiagnostic::Severity::Error, node->source(),
+              "animation.windows_move.wobble_style was removed; select a named effects.NAME.drag preset"
+          ));
         readTimeline(section, "animation.windows_move", animation.windowsMove.durationMs, animation.windowsMove.curve);
       });
       s.sub("workspaces", [&](Section& section) {
@@ -1254,11 +1240,63 @@ namespace umbriel {
       root.sub("animation", [&](Section& section) { parseAnimationSection(section, loaded.animation); });
     }
 
+    void readEffects(Section& root, Config& loaded) {
+      auto& diagnostics = configStore().mutableDiagnostics();
+      std::vector<std::filesystem::path> watches;
+      loaded.effects = readEffectLibrary(root.take("effects"), diagnostics, watches);
+      for (auto& path : watches)
+        configStore().addWatchPath(std::move(path));
+      loaded.effectRegions = readEffectRegions(root.take("effect_region"), diagnostics);
+      if (const auto* node = root.take("render")) {
+        if (const auto* table = node->as_table()) {
+          Section render(*table, "render", diagnostics, ConfigDiagnostic::Severity::Error);
+          render.sub("effects", [&](Section& policy) { readEffectPolicy(policy, loaded.effectPolicy, diagnostics); });
+        } else
+          diagnostics.push_back(
+              makeDiagnostic(ConfigDiagnostic::Severity::Error, node->source(), "render must be a table")
+          );
+      }
+      const auto validate = [&](const std::optional<EffectSelector>& selector, EffectOwner owner) {
+        if (selector) {
+          validateEffectSelector(loaded.effects, *selector, owner, diagnostics);
+          validateEffectTiming(loaded, *selector, owner, diagnostics);
+        }
+      };
+      validate(loaded.appearance.effects, EffectOwner::Global);
+      for (const auto& output : loaded.outputs)
+        validate(output.effects, EffectOwner::Output);
+      for (const auto& rule : loaded.windowRules)
+        validate(rule.effects, EffectOwner::Window);
+      for (const auto& rule : loaded.layerRules)
+        validate(rule.effects, EffectOwner::Layer);
+      for (const auto& region : loaded.effectRegions)
+        validateEffectSelector(loaded.effects, region.effects, EffectOwner::Region, diagnostics);
+      for (const auto& [name, definition] : loaded.effects) {
+        for (const auto scope : {EffectScope::Open, EffectScope::Close}) {
+          const auto& pipeline = definition.scopes[static_cast<size_t>(scope)];
+          if (!pipeline || !pipeline->enabled || !pipeline->curve)
+            continue;
+          const auto curve = parseAnimationCurve(*pipeline->curve, loaded.animation.beziers, loaded.animation.springs);
+          std::string message;
+          if (!curve)
+            message = "invalid effect curve: " + *pipeline->curve;
+          else if (pipeline->durationMs && curve->easing == Easing::Spring)
+            message =
+                "effect duration_ms is unused with a spring curve; choose a duration-based curve or omit duration_ms";
+          if (!message.empty())
+            diagnostics.push_back(
+                {ConfigDiagnostic::Severity::Error, std::move(message), pipeline->origin.file, pipeline->origin.line,
+                 pipeline->origin.column}
+            );
+        }
+      }
+    }
+
     void readAppearance(Section& root, Config& loaded) {
       auto& appearance = loaded.appearance;
       root.sub("appearance", [&](Section& s) {
-        s.sub("border_shader", [&](Section& shader) { readDecorationShader(shader, appearance.borderShader); });
-        s.integer("shader_fps", 0, 240, appearance.shaderFps);
+        appearance.effects = readEffectSelector(s, configStore().mutableDiagnostics());
+        rejectRemoved(s, {"border_shader", "shader_fps"});
         s.integer("border_width", 0, 100, appearance.borderWidth)
             .integer("outer_border_width", 0, 100, appearance.outerBorderWidth)
             .integer("corner_radius", 0, 100, appearance.cornerRadius)
@@ -1728,8 +1766,9 @@ namespace umbriel {
           std::erase_if(loaded.outputs, [&](const OutputRule& rule) { return outputNamesEqual(rule.name, name); });
         }
         OutputRule rule;
+        rule.effects = readEffectSelector(keys, configStore().mutableDiagnostics());
         rule.name = name;
-        keys.text("shader", rule.shader);
+        rejectRemoved(keys, {"shader"});
         keys.boolean("enabled", rule.enabled)
             .boolean("tearing", rule.allowTearing)
             .boolean("direct_scanout", rule.directScanout);
@@ -2031,6 +2070,7 @@ namespace umbriel {
         Section keys(*section, "window_rule", configStore().mutableDiagnostics());
 
         WindowRule rule;
+        rule.effects = readEffectSelector(keys, configStore().mutableDiagnostics());
         bool valid = true;
 
         if (const toml::node* matchNode = keys.take("match")) {
@@ -2143,12 +2183,7 @@ namespace umbriel {
           }
         }
 
-        keys.sub("border_shader", [&](Section& shader) {
-          rule.borderShader.emplace();
-          readDecorationShader(shader, *rule.borderShader);
-        });
-        if (const auto* shader = keys.take("shader"))
-          rule.shader = shader->value<std::string>();
+        rejectRemoved(keys, {"shader", "border_shader"});
         keys.boolean("default_floating", rule.defaultFloating)
             .boolean("default_fullscreen", rule.defaultFullscreen)
             .boolean("default_maximize_to_edges", rule.defaultMaximizeToEdges)
@@ -2341,6 +2376,7 @@ namespace umbriel {
         Section keys(*section, "layer_rule", configStore().mutableDiagnostics());
 
         LayerRule rule;
+        rule.effects = readEffectSelector(keys, configStore().mutableDiagnostics());
 
         if (const toml::node* matchNode = keys.take("match")) {
           if (const auto* match = matchNode->as_table()) {
@@ -2531,28 +2567,11 @@ namespace umbriel {
           readWorkspaceSettings(root, loaded);
           readInput(root, loaded);
           readOutputs(root, loaded);
-          readShaders(root, loaded);
+          rejectRemoved(root, {"shaders"});
           readKeybinds(root, loaded);
           readWindowRules(root, loaded);
-          const auto validateBorderShader = [&](const DecorationShaderConfig& shader) {
-            if (!shader.pool.empty() && !std::ranges::any_of(loaded.shaders.pools, [&](const auto& pool) {
-                  return pool.name == shader.pool && pool.scope == "border";
-                }))
-              warnAt(root.table().source(), "unknown border shader pool: {}", shader.pool);
-            if (!shader.overlay.empty()
-                && !std::ranges::contains(kBuiltinShaders, std::string_view(shader.overlay))
-                && !std::ranges::any_of(loaded.shaders.presets, [&](const auto& preset) {
-                     return preset.name == shader.overlay;
-                   }))
-              warnAt(root.table().source(), "unknown border shader overlay: {}", shader.overlay);
-          };
-          validateBorderShader(loaded.appearance.borderShader);
-          for (const auto& preset : loaded.shaders.borders)
-            validateBorderShader(preset.settings);
-          for (const auto& rule : loaded.windowRules)
-            if (rule.borderShader)
-              validateBorderShader(*rule.borderShader);
           readLayerRules(root, loaded);
+          readEffects(root, loaded);
           readSecurityContextRules(root, loaded);
           readWorkspaces(root, loaded);
           warnScrollButtonBinds(loaded);
@@ -2587,7 +2606,54 @@ namespace umbriel {
     return store;
   }
 
+  void validateEffectTiming(
+      const Config& cfg, const EffectSelector& selector, EffectOwner owner, std::vector<ConfigDiagnostic>& diagnostics,
+      EffectMask mask
+  ) {
+    if (owner == EffectOwner::Region)
+      return;
+    for (const auto& name : selector.names) {
+      const auto found = cfg.effects.find(name);
+      if (found == cfg.effects.end())
+        continue;
+      const auto check = [&](const EffectDefinition& definition) {
+        for (const auto scope : {EffectScope::Open, EffectScope::Close}) {
+          if (!(mask & effectBit(scope)))
+            continue;
+          const auto& leaf = definition.scopes[static_cast<size_t>(scope)];
+          if (!leaf || !leaf->enabled || !leaf->durationMs || leaf->curve)
+            continue;
+          const auto& window =
+              scope == EffectScope::Open ? cfg.animation.windowsIn.curve : cfg.animation.windowsOut.curve;
+          const bool spring = (owner != EffectOwner::Layer && window.easing == Easing::Spring)
+              || (owner != EffectOwner::Window && cfg.animation.layers.curve.easing == Easing::Spring);
+          if (spring)
+            diagnostics.push_back(
+                {ConfigDiagnostic::Severity::Error,
+                 "effect '"
+                     + name
+                     + "' duration_ms is unused with an inherited spring curve; choose a duration-based curve or omit "
+                       "duration_ms",
+                 leaf->origin.file, leaf->origin.line, leaf->origin.column}
+            );
+        }
+      };
+      if (found->second.choose) {
+        for (const auto& candidate : *found->second.choose)
+          if (const auto concrete = cfg.effects.find(candidate); concrete != cfg.effects.end())
+            check(concrete->second);
+      } else
+        check(found->second);
+    }
+  }
+
   const Config& config() { return configStore().config(); }
+
+  AnimationCurve effectCurve(const EffectPipeline& pipeline, const Config& cfg, const AnimationCurve& fallback) {
+    return pipeline.curve
+        ? parseAnimationCurve(*pipeline.curve, cfg.animation.beziers, cfg.animation.springs).value_or(fallback)
+        : fallback;
+  }
 
   const std::vector<ConfigDiagnostic>& configDiagnostics() { return configStore().diagnostics(); }
 
@@ -2627,8 +2693,7 @@ namespace umbriel {
     if (outcome == ConfigParseOutcome::Fatal || (missing && m_explicitPath)) {
       return false;
     }
-    (void)commit(std::move(loaded), selection.root, missing);
-    return true;
+    return commit(std::move(loaded), selection.root, missing).success;
   }
 
   ConfigReloadResult ConfigStore::reload() {

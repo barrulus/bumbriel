@@ -40,6 +40,7 @@ GLSL
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 corner_radius = 0
 [appearance.shadow]
@@ -51,11 +52,9 @@ duration_ms = 7000
 curve = "linear"
 [animation.windows_in]
 style = "none"
-shader = "feedback.glsl"
 [animation.windows_out]
 duration_ms = 1200
 style = "fade"
-shader = "feedback-passthrough.glsl"
 [animation.windows_move]
 enabled = false
 
@@ -68,6 +67,12 @@ default_position = { x = 80, y = 80, anchor = "top_left" }
 match.title = "^feedback-large$"
 default_floating = true
 default_position = { x = 700, y = 80, anchor = "top_left" }
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "feedback.glsl"}]
+[effects.fixture.close]
+passes = [{shader = "feedback-passthrough.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

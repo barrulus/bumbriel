@@ -302,11 +302,8 @@ namespace umbriel {
       if (rule.hdr) {
         resolved.hdr = rule.hdr;
       }
-      if (rule.borderShader) {
-        resolved.borderShader = rule.borderShader;
-      }
-      if (rule.shader)
-        resolved.shader = rule.shader;
+      if (rule.effects)
+        resolved.effects.push_back(*rule.effects);
       if (rule.opacity) {
         resolved.opacity = rule.opacity;
       }
@@ -332,6 +329,8 @@ namespace umbriel {
       if (!patternMatches(rule.namespacePattern, rule.namespaceRegex, layerNamespace)) {
         continue;
       }
+      if (rule.effects)
+        resolved.effects.push_back(*rule.effects);
       if (rule.blur) {
         resolved.blur = rule.blur;
       }

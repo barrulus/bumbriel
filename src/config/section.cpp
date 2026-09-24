@@ -24,8 +24,11 @@ namespace umbriel {
 
   } // namespace
 
-  Section::Section(const toml::table& table, std::string name, std::vector<ConfigDiagnostic>& diagnostics)
-      : m_table(table), m_name(std::move(name)), m_diagnostics(diagnostics) {}
+  Section::Section(
+      const toml::table& table, std::string name, std::vector<ConfigDiagnostic>& diagnostics,
+      ConfigDiagnostic::Severity severity
+  )
+      : m_table(table), m_name(std::move(name)), m_diagnostics(diagnostics), m_severity(severity) {}
 
   Section::~Section() {
     if (m_freeform) {
@@ -61,7 +64,7 @@ namespace umbriel {
 
   void Section::warn(const toml::node& node, std::string message) {
     ConfigDiagnostic diag;
-    diag.severity = ConfigDiagnostic::Severity::Warning;
+    diag.severity = m_severity;
     diag.message = std::move(message);
     const auto& src = node.source();
     diag.line = src.begin.line;
@@ -94,7 +97,7 @@ namespace umbriel {
       return *this;
     }
     const auto value = node->value<std::int64_t>();
-    if (!value) {
+    if (!value || (m_severity == ConfigDiagnostic::Severity::Error && !node->is_integer())) {
       warn(*node, std::format("ignoring {} (expected integer)", qualified(key)));
       return *this;
     }

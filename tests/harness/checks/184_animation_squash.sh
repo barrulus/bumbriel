@@ -11,10 +11,10 @@ duration_ms = 2400
 curve = "linear"
 [animation.windows_in]
 style = "none"
-shader = "$SHADER"
 [animation.windows_move]
 enabled = false
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -25,6 +25,10 @@ enabled = true
 softness = 24
 offset_x = 0
 offset_y = 0
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "$SHADER"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 # Animation time only moves by clock-advance: the middle sample lands at 1000 ms of the 2400 ms timeline.

@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.rainbow-waves"]
-scope = "window"
-
-[[shaders.preset."window.rainbow-waves".passes]]
-shader = "rainbow-waves.glsl"
+[effects."window.rainbow-waves".content]
+passes = [{ shader = "rainbow-waves.glsl" }]

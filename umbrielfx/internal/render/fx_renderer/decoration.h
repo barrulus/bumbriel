@@ -5,6 +5,7 @@
 #include <wayland-server-core.h>
 
 struct fx_decoration_shader {
+  struct fx_uniform_values* params;
   struct fx_renderer* renderer;
   unsigned references;
   struct wl_listener destroy;
@@ -14,9 +15,12 @@ struct fx_decoration_shader {
   GLint emission, threshold, emission_bounds, palette, palette_count;
   GLuint light_program;
   GLint light_proj, light_tex_proj, light_position, light_tex, light_gain, light_linear;
+  GLint light_emission, light_source_linear, light_threshold, light_source_region;
 };
 
 struct fx_decoration_light;
+struct fx_decoration_pipeline;
+void fx_decoration_pipeline_destroy(struct fx_decoration_pipeline* pipeline);
 struct fx_gles_render_pass;
 struct fx_render_border_options;
 struct wlr_box;

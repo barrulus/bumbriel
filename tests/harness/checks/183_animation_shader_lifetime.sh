@@ -18,15 +18,24 @@ duration_ms = 2400
 curve = "linear"
 [animation.windows_in]
 style = "none"
-shader = "lifetime.glsl"
 [animation.windows_move]
-shader = "$EXAMPLES/squash.glsl"
 [animation.windows_out]
-shader = "fixture-1.glsl"
 # Centre sampling right after map assumes the window is already at full size; a tiled window grows into its slot.
 [[window_rule]]
 match.title = "^shader-(example|retained|new-program)$"
 default_floating = true
+[appearance]
+effects = ["fixture"]
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "lifetime.glsl"}]
+[effects.fixture.move]
+passes = [{shader = "$EXAMPLES/squash.glsl"}]
+[effects.fixture.resize]
+passes = [{shader = "$EXAMPLES/squash.glsl"}]
+[effects.fixture.close]
+passes = [{shader = "fixture-1.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

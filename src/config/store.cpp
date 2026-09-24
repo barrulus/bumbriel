@@ -34,6 +34,10 @@ namespace umbriel {
   ConfigReloadResult ConfigStore::commit(Config&& config, std::filesystem::path rootPath, bool fileMissing) {
     // Computed before the move, and only after the first load: everything is new
     // the first time through.
+    if (m_effectValidator && !m_effectValidator(config)) {
+      sortDiagnostics();
+      return {};
+    }
     ConfigReloadResult result{
         .success = true,
         .change = m_generation == 0 ? ConfigChange::everything() : ConfigChange::between(m_config, config),

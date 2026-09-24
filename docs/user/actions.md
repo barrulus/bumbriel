@@ -195,7 +195,7 @@ are described in [Overview](workspaces-overview.md).
 | `cheatsheet-open` | Show the keybind cheatsheet |
 | `cheatsheet-toggle` | Show or hide the keybind cheatsheet |
 | `config-reload` | Reload the configuration file |
-| `shader:<scope> <preset-or-operation> [<target>]` | Select, toggle or cycle a persistent shader |
+| `effect:<kind> <operation> [<name> ...] [--target <id>] [--scope <leaf>[,<leaf>...]]` | Select, toggle or cycle named effects |
 | `dpms-off:[<output>]` | Power off one output, or every output when bare |
 | `dpms-on:[<output>]` | Power on one output, or every output when bare |
 | `keyboard-layout-next` | Switch one keyboard to its next configured layout |

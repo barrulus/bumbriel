@@ -22,19 +22,22 @@ gap = 40
 [animation]
 enabled = false
 [appearance]
+effects = ["fixture"]
 border_width = 6
 outer_border_width = 0
 corner_radius = 24
 [appearance.shadow]
 enabled = false
-[appearance.border_shader]
-shader = "quadrants.glsl"
+[effects.fixture.border.outer]
+passes = [{shader = "quadrants.glsl"}]
 padding = 48
 [colors.border]
 focused = "#FFFFFFFF"
 [[window_rule]]
 match.title = "ring-coordinates"
 default_output = "HEADLESS-1"
+[render.effects]
+in_capture = true
 TOML
 "$UMBRIEL" msg config-reload >/dev/null
 "$UMBRIEL_UNMAP_CLIENT" ring-coordinates 300 300 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &

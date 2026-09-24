@@ -1,6 +1,7 @@
 #pragma once
 #include "config/animation_shader.h"
 #include "config/config_diag.h"
+#include "config/effects.h"
 #include "config/keybind_parse.h"
 #include "config/value_parse.h"
 #include "core/animation.h"
@@ -204,8 +205,8 @@ namespace umbriel {
     return outputAllowed && windowOverride.value_or(clientHintAsync);
   }
   struct DecorationShaderConfig {
-    std::string pool;
-    std::string overlay;
+    std::string effect;
+    bool focusedOnly = true;
     bool enabled = true;
     bool animated = true;
     bool palette = false;
@@ -218,12 +219,11 @@ namespace umbriel {
       double threshold = 0.5;
       bool operator==(const Light&) const = default;
     } light;
-    std::optional<AnimationShaderSource> shader;
     bool operator==(const DecorationShaderConfig&) const = default;
   };
 
   struct OutputRule {
-    std::string shader;
+    std::optional<EffectSelector> effects;
     std::string name;
     // False powers the monitor off, removes it from the layout, and hides its
     // workspaces from the desktop. Content is preserved while disabled.
@@ -314,6 +314,7 @@ namespace umbriel {
   };
 
   struct WindowRule {
+    std::optional<EffectSelector> effects;
     std::string appIdPattern;
     std::string titlePattern;
     std::string xdgTagPattern;
@@ -351,8 +352,6 @@ namespace umbriel {
     // true forces async preference, and false vetoes it.
     std::optional<bool> allowTearing;
     std::optional<HdrMode> hdr;
-    std::optional<DecorationShaderConfig> borderShader;
-    std::optional<std::string> shader;
     std::optional<double> opacity; // 0.0-1.0
     std::optional<bool> blur;
     std::optional<bool> blurPopups;
@@ -362,7 +361,8 @@ namespace umbriel {
     // The compiled regexes are derived from the app ID, title, and XDG tag patterns and
     // are not comparable, so equality is decided by the patterns themselves.
     [[nodiscard]] bool operator==(const WindowRule& other) const {
-      return appIdPattern == other.appIdPattern
+      return effects == other.effects
+          && appIdPattern == other.appIdPattern
           && titlePattern == other.titlePattern
           && xdgTagPattern == other.xdgTagPattern
           && matchContentType == other.matchContentType
@@ -394,8 +394,6 @@ namespace umbriel {
           && vrr == other.vrr
           && allowTearing == other.allowTearing
           && hdr == other.hdr
-          && borderShader == other.borderShader
-          && shader == other.shader
           && opacity == other.opacity
           && blur == other.blur
           && blurPopups == other.blurPopups
@@ -406,6 +404,7 @@ namespace umbriel {
 
   // Resolved result: merge of all matching rules (last writer wins per field).
   struct ResolvedWindowRule {
+    std::vector<EffectSelector> effects;
     std::optional<std::string> defaultOutput;
     std::optional<bool> defaultFloating;
     std::optional<int> defaultFloatingWidthPx;
@@ -428,8 +427,6 @@ namespace umbriel {
     std::optional<VrrMode> vrr;
     std::optional<bool> allowTearing;
     std::optional<HdrMode> hdr;
-    std::optional<DecorationShaderConfig> borderShader;
-    std::optional<std::string> shader;
     std::optional<double> opacity;
     std::optional<bool> blur;
     std::optional<bool> blurPopups;
@@ -439,6 +436,7 @@ namespace umbriel {
   };
 
   struct LayerRule {
+    std::optional<EffectSelector> effects;
     std::string namespacePattern;
     std::regex namespaceRegex;
     std::optional<bool> blur;
@@ -448,7 +446,8 @@ namespace umbriel {
 
     // See WindowRule: the regex is derived from the pattern.
     [[nodiscard]] bool operator==(const LayerRule& other) const {
-      return namespacePattern == other.namespacePattern
+      return effects == other.effects
+          && namespacePattern == other.namespacePattern
           && blur == other.blur
           && blurPopups == other.blurPopups
           && ignoreAlpha == other.ignoreAlpha
@@ -457,6 +456,7 @@ namespace umbriel {
   };
 
   struct ResolvedLayerRule {
+    std::vector<EffectSelector> effects;
     std::optional<bool> blur;
     std::optional<bool> blurPopups;
     std::optional<double> ignoreAlpha;
@@ -482,49 +482,9 @@ namespace umbriel {
   };
 
   struct Config {
-    struct Shaders {
-      struct Pass {
-        std::optional<AnimationShaderSource> source;
-        bool buffer = false;
-        bool operator==(const Pass&) const = default;
-      };
-      struct Preset {
-        std::string name;
-        std::string scope = "global";
-        bool palette = false;
-        int cursorRadius = 0;
-        std::vector<Pass> passes;
-        bool operator==(const Preset&) const = default;
-      };
-      struct Region {
-        std::string output, preset;
-        int x = 0, y = 0, width = 0, height = 0;
-        bool operator==(const Region&) const = default;
-      };
-      struct Pool {
-        std::string name;
-        std::string scope = "window";
-        std::string allocation = "unused-first";
-        std::vector<std::string> presets;
-        bool operator==(const Pool&) const = default;
-      };
-      struct BorderPreset {
-        std::string name;
-        DecorationShaderConfig settings;
-        bool operator==(const BorderPreset&) const = default;
-      };
-      std::vector<Pool> pools;
-      std::vector<BorderPreset> borders;
-      std::string windowPool;
-      std::vector<Preset> presets;
-      std::vector<Region> regions;
-      std::string window, output, global;
-      std::string redraw = "auto";
-      bool enabled = true;
-      bool inCapture = false;
-      bool readsCursor = false;
-      bool operator==(const Shaders&) const = default;
-    } shaders;
+    EffectLibrary effects;
+    EffectPolicy effectPolicy;
+    std::vector<EffectRegion> effectRegions;
     // Every color Umbriel draws, each an independent literal. `background`
     // through `error` are the palette Umbriel's own panels paint with: the
     // cheatsheet, the diagnostics banner, the quit confirmation, and overview
@@ -566,8 +526,7 @@ namespace umbriel {
     } colors;
 
     struct Appearance {
-      DecorationShaderConfig borderShader;
-      int shaderFps = 0;
+      std::optional<EffectSelector> effects;
       int borderWidth = 2;
       int outerBorderWidth = 0;
       int cornerRadius = 10;
@@ -607,7 +566,6 @@ namespace umbriel {
       std::map<std::string, SpringConfig> springs;
 
       struct WindowsIn {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
         // Springs derive their own length; duration_ms stays at the shared value for a duration-based curve.
         int durationMs = 250;
@@ -618,7 +576,6 @@ namespace umbriel {
       } windowsIn;
 
       struct WindowsOut {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 1400.0}};
@@ -627,25 +584,15 @@ namespace umbriel {
         bool operator==(const WindowsOut&) const = default;
       } windowsOut;
 
-      struct Pair {
-        WindowsIn open;
-        WindowsOut close;
-        bool operator==(const Pair&) const = default;
-      };
-      std::map<std::string, Pair> pairs;
-      std::string preset;
-
       struct WindowsMove {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
-        bool wobble = false;
+        bool dragPhysics = false;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 900.0}};
         bool operator==(const WindowsMove&) const = default;
       } windowsMove;
 
       struct Workspaces {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 800.0}};
@@ -653,7 +600,6 @@ namespace umbriel {
       } workspaces;
 
       struct Overview {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 800.0}};
@@ -665,7 +611,6 @@ namespace umbriel {
       } overview;
 
       struct Scratchpad {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 800.0}};
@@ -678,7 +623,6 @@ namespace umbriel {
       } scratchpad;
 
       struct Border {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 900.0}};
@@ -686,7 +630,6 @@ namespace umbriel {
       } border;
 
       struct DimUnfocused {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = false;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::EaseOutCubic};
@@ -695,7 +638,6 @@ namespace umbriel {
       } dimUnfocused;
 
       struct Layers {
-        std::optional<AnimationShaderSource> shader;
         bool enabled = false;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::EaseOutCubic};
@@ -959,6 +901,11 @@ namespace umbriel {
   };
 
   [[nodiscard]] const Config& config();
+  AnimationCurve effectCurve(const EffectPipeline& pipeline, const Config& config, const AnimationCurve& fallback);
+  void validateEffectTiming(
+      const Config& config, const EffectSelector& selector, EffectOwner owner,
+      std::vector<ConfigDiagnostic>& diagnostics, EffectMask mask = kAllEffects
+  );
   [[nodiscard]] bool loadConfig(const char* explicitPath);
   [[nodiscard]] ConfigReloadResult reloadConfig();
   [[nodiscard]] const std::vector<std::filesystem::path>& configWatchPaths();

@@ -1,8 +1,10 @@
 #pragma once
 
+#include "config/effect_state.h"
 #include "core/dirty.h"
 #include "output/frame_schedule.h"
-#include "scene/postprocess.h"
+#include "scene/animation_shader.h"
+#include "scene/effects.h"
 
 #include <cstdint>
 #include <memory>
@@ -68,7 +70,15 @@ namespace umbriel {
     void onGammaChanged(wlr_gamma_control_v1* control);
     void applyOutputState();
     void applyPostprocessConfig();
-    ShaderSelection& shaderSelection() { return m_shaderSelection; }
+    const ResolvedEffects& resolvedEffects();
+    EffectState& effectState() { return m_effectState; }
+    const EffectState& effectState() const { return m_effectState; }
+    const EffectEvent* activeEffect(EffectScope scope) const { return &m_effectEvents[static_cast<size_t>(scope)]; }
+    auto& regionEffects() { return m_regionEffects; }
+    void appendEffectInputs(std::vector<EffectInput>& inputs) const;
+    void updateEffect(
+        wlr_scene_node* node, EffectScope scope, AnimationEvent event, const AnimatedValue& value, float direction = 0
+    );
     // Adopt a successfully committed wlr-output-management state in two
     // phases. Logical state changes first so callbacks cannot revive a
     // disabled output, then layout membership changes after transient UI has
@@ -148,7 +158,9 @@ namespace umbriel {
     wlr_output* m_output = nullptr;
     float m_defaultScale = 1.0F;
     wlr_scene_output* m_sceneOutput = nullptr;
-    ShaderSelection m_shaderSelection;
+    std::array<EffectEvent, kEffectScopeCount> m_effectEvents;
+    EffectState m_effectState{EffectOwner::Output};
+    std::map<std::string, EffectState, std::less<>> m_regionEffects;
     wlr_scene_tree* m_layerTrees[kLayerCount]{};
     wlr_scene_tree* m_popupTree = nullptr;
     wlr_scene_tree* m_viewRoot = nullptr;

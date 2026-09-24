@@ -48,6 +48,7 @@ namespace {
     const auto& diags = umbriel::configDiagnostics();
     if (diags.empty()) {
       std::println("config: ok ({})", umbriel::configRootPath().string());
+      std::println("GLSL compilation and uniform binding were not checked (offline validation).");
       return EXIT_SUCCESS;
     }
     for (const auto& d : diags) {
@@ -267,13 +268,13 @@ int main(int argc, char** argv) {
         }
       }
 
-      if (args.empty()) {
+      if (args.empty() && spec->name != "effects") {
         printHelp(stderr);
         return EXIT_FAILURE;
       }
 
       std::string actionString;
-      if (std::strcmp(args[0], "spawn") == 0 && args.size() > 1) {
+      if (args.size() > 1 && std::strcmp(args[0], "spawn") == 0) {
         actionString = "spawn:";
         for (size_t i = 1; i < args.size(); ++i) {
           if (i > 1) {

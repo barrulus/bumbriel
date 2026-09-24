@@ -11,7 +11,7 @@ enabled = false
 [animation.windows_out]
 enabled = false
 [animation.windows_move]
-wobble = true
+drag_physics = true
 [appearance]
 border_width = 0
 outer_border_width = 0
@@ -19,13 +19,13 @@ corner_radius = 0
 [appearance.shadow]
 enabled = false
 [[window_rule]]
-match.title = "^pointer-wobble$"
+match.title = "^pointer-physics$"
 default_floating = true
 default_floating_size_px = { width = 480, height = 300 }
 default_position = { x = 200, y = 150, anchor = "top_left" }
 TOML
 "$UMBRIEL" msg config-reload > /dev/null
-FILL_COLOR=0xFFFF0000 "$UMBRIEL_UNMAP_CLIENT" pointer-wobble 480 300 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
+FILL_COLOR=0xFFFF0000 "$UMBRIEL_UNMAP_CLIENT" pointer-physics 480 300 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
 for _ in $(seq 100); do
   [[ $("$UMBRIEL" windows --json | jq 'length') == 1 ]] && break
   sleep 0.025
@@ -60,14 +60,14 @@ for _ in $(seq 50); do "$UMBRIEL" clock-advance 100 > /dev/null; done
 
 # Reloading the opt-out during a held grab must restore the ordinary rectangle.
 pointer_hold 1280 720 move 200 210 mod logo press 272 move 260 210 -- release 272 mod none
-sed -i 's/wobble = true/wobble = false/' "$UMBRIEL_CONFIG"
+sed -i 's/drag_physics = true/drag_physics = false/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" clock-advance 16 > /dev/null
 [[ $(capture disabled) == '200 150 480 300' ]]
 pointer_release
 
 # Closing the owner while it is grabbed must release the simulation and input.
-sed -i 's/wobble = false/wobble = true/' "$UMBRIEL_CONFIG"
+sed -i 's/drag_physics = false/drag_physics = true/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 pointer_hold 1280 720 move 260 210 mod logo press 272 move 300 210 -- release 272 mod none
 "$UMBRIEL" msg window-close > /dev/null
@@ -75,4 +75,4 @@ pointer_release
 "$UMBRIEL" clock-advance 100 > /dev/null
 "$UMBRIEL" settle
 [[ $("$UMBRIEL" windows --json | jq 'length') == 0 ]]
-echo "pointer wobble followed direction, rendered outside the window box, settled, disabled and unmapped cleanly"
+echo "drag physics followed direction, rendered outside the window box, settled, disabled and unmapped cleanly"

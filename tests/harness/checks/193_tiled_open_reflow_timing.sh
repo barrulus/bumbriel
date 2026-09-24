@@ -24,6 +24,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -39,7 +40,6 @@ enabled = true
 duration_ms = 1600
 curve = "linear"
 style = "none"
-shader = "open-marker.glsl"
 
 [animation.windows_out]
 enabled = false
@@ -52,6 +52,10 @@ curve = "linear"
 [[window_rule]]
 match.title = "^tiled-maximized-opener$"
 default_maximize = true
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "open-marker.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

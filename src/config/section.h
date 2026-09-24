@@ -20,7 +20,10 @@ namespace umbriel {
   // caller-supplied vector rather than to a global, which is also what lets this be tested without a compositor.
   class Section {
   public:
-    Section(const toml::table& table, std::string name, std::vector<ConfigDiagnostic>& diagnostics);
+    Section(
+        const toml::table& table, std::string name, std::vector<ConfigDiagnostic>& diagnostics,
+        ConfigDiagnostic::Severity severity = ConfigDiagnostic::Severity::Warning
+    );
     ~Section();
 
     Section(const Section&) = delete;
@@ -46,7 +49,7 @@ namespace umbriel {
     template <typename F> Section& sub(std::string_view key, F&& fn) {
       const toml::table* nested = nestedTable(key);
       if (nested != nullptr) {
-        Section child(*nested, qualified(key), m_diagnostics);
+        Section child(*nested, qualified(key), m_diagnostics, m_severity);
         fn(child);
       }
       return *this;
@@ -83,6 +86,7 @@ namespace umbriel {
     std::vector<ConfigDiagnostic>& m_diagnostics;
     std::vector<std::string> m_seen;
     bool m_freeform = false;
+    ConfigDiagnostic::Severity m_severity;
   };
 
   // Read `name` from `table` if present. Warns and skips when the key exists but is not a table. Returns whether `fn`

@@ -503,6 +503,9 @@ pure_sources = files(
   'src/config/value_parse.cpp',
   'src/config/section.cpp',
   'src/config/animation_shader.cpp',
+  'src/config/shader_builtin.cpp',
+  'src/config/effects.cpp',
+  'src/config/effect_state.cpp',
   'src/input/modifier_tap.cpp',
   'src/input/swipe_tracker.cpp',
   'src/input/keyboard_layout.cpp',
@@ -553,7 +556,7 @@ core_sources = files(
   'src/core/application_scope.cpp',
   'src/scene/animation_shader.cpp',
   'src/scene/decoration_shader.cpp',
-  'src/scene/postprocess.cpp',
+  'src/scene/effects.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',
@@ -603,6 +606,7 @@ core_sources = files(
   'src/cli/ipc_client.cpp',
   'src/server/ipc.cpp',
   'src/server/ipc_commands.cpp',
+  'src/server/effect_inspection.cpp',
 )
 
 umbriel_core_deps = [
@@ -712,6 +716,8 @@ install_data(
   'examples/config.toml',
   install_dir: get_option('datadir') / 'umbriel',
 )
+install_subdir('examples/effects', install_dir: get_option('datadir') / 'umbriel')
+
 install_subdir(
   'examples/shaders/barrulus',
   install_dir: get_option('datadir') / 'umbriel' / 'shaders',

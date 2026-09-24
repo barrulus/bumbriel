@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."cursor.spotlight"]
-scope = "global"
-
-[[shaders.preset."cursor.spotlight".passes]]
-shader = "spotlight.glsl"
+[effects."cursor.spotlight".overlay]
+passes = [{ shader = "spotlight.glsl" }]

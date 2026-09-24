@@ -4,6 +4,7 @@
 #include "core/toml.h"
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@ namespace umbriel::configmerge {
 
   struct MergeResult {
     toml::table merged;
+    std::map<std::string, toml::source_region> effectOwners;
     std::vector<std::filesystem::path> loadedFiles;
     std::vector<ConfigDiagnostic> diagnostics;
     bool hadError = false;

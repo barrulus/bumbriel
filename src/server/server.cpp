@@ -4,6 +4,7 @@
 #include "config/config_diag.h"
 #include "config/config_watcher.h"
 #include "config/resolve.h"
+#include "config/store.h"
 #include "core/application_scope.h"
 #include "core/fdlimit.h"
 #include "core/log.h"
@@ -22,8 +23,8 @@
 #include "scene/color.h"
 #include "scene/config_banner.h"
 #include "scene/decoration_shader.h"
+#include "scene/effects.h"
 #include "scene/hint_rect.h"
-#include "scene/postprocess.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
 #include "server/ipc.h"
@@ -335,9 +336,15 @@ namespace umbriel {
       throw std::runtime_error("renderer or allocator opened an excluded GPU");
     }
 
+    configStore().setEffectValidator([this](const Config& candidate) {
+      return prepareEffects(m_renderer, candidate, configStore().mutableDiagnostics());
+    });
+    if (!prepareEffects(m_renderer, config(), configStore().mutableDiagnostics())) {
+      Config native;
+      native.keybinds = defaultKeybinds();
+      (void)configStore().commit(std::move(native), configRootPath(), configFileMissing());
+    }
     prepareAnimationShaders(m_renderer);
-    prepareDecorationShaders(m_renderer);
-    preparePostprocessShaders(m_renderer);
     m_compositor = wlr_compositor_create(m_display, 5, m_renderer);
     wlr_subcompositor_create(m_display);
     wlr_data_device_manager_create(m_display);
@@ -652,9 +659,9 @@ namespace umbriel {
     m_scratchpadManager.reset();
     wlr_scene_node_destroy(&m_scene->tree.node);
     wlr_allocator_destroy(m_allocator);
+    configStore().setEffectValidator({});
+    clearEffects();
     clearAnimationShaderCache();
-    clearDecorationShaderCache();
-    clearPostprocessShaders();
     wlr_renderer_destroy(m_renderer);
     m_backendManager.reset();
     m_backend = nullptr;
@@ -1030,12 +1037,13 @@ namespace umbriel {
   Server::CloseSnapshot::CloseSnapshot(
       Server& server, CloseSnapshotId id, Output* output, wlr_scene_tree* tree, wlr_scene_tree* content,
       std::vector<BorderSnapshot> borders, const wlr_box& box, int durationMs, const AnimationCurve& curve,
-      std::string_view style, double scale, AnimationEvent event, ShadowSnapshot shadow
+      std::string_view style, double scale, AnimationEvent event, ShadowSnapshot shadow, ResolvedEffect effect
   )
       : m_server(&server), m_id(id), m_tree(tree), m_content(content != nullptr ? content : tree), m_output(output),
         m_captured(box), m_canvasX(tree->node.x), m_canvasY(tree->node.y), m_borders(std::move(borders)),
         m_shadow(shadow) {
     m_event = event;
+    m_effect = std::move(effect);
     if (m_shadow.node != nullptr) {
       m_shadowWidth = m_shadow.node->width;
       m_shadowHeight = m_shadow.node->height;
@@ -1074,7 +1082,11 @@ namespace umbriel {
     m_alpha.snap(1.0);
     m_alpha.retarget(0.0, durationMs, curve);
 
-    if (animationShader(server.renderer(), event) == nullptr) {
+    m_effectEvent.update(
+        &m_tree->node, static_cast<unsigned>(event), m_effect, EffectScope::Close, animationParameters(m_alpha, -1.0F),
+        true, effectsEnabled(), lifecycleShader(server.renderer(), event)
+    );
+    if (!m_effectEvent.custom()) {
       if (style == "slide") {
         m_slide.snap(0.0);
         m_slide.retarget(80.0, durationMs, curve);
@@ -1203,7 +1215,12 @@ namespace umbriel {
   bool Server::CloseSnapshot::tickAnimations(uint64_t nowMsec) {
     const bool movedAlpha = m_alpha.tick(nowMsec);
     const bool movedSlide = m_slide.tick(nowMsec);
-    updateAnimationShader(&m_tree->node, m_server->renderer(), m_event, m_alpha, -1.0F);
+    const bool enabled = effectsEnabled() && nativeEffectEnabled(EffectScope::Close, m_event == AnimationEvent::Layers);
+    m_effectEvent.update(
+        &m_tree->node, static_cast<unsigned>(m_event), m_effect, EffectScope::Close,
+        animationParameters(m_alpha, -1.0F), m_alpha.animating(), enabled,
+        lifecycleShader(m_server->renderer(), m_event)
+    );
 
     if (!movedAlpha && !movedSlide) {
       return false;
@@ -1211,7 +1228,7 @@ namespace umbriel {
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
     const float rawAlpha = std::clamp(static_cast<float>(m_alpha.current()), 0.0F, 1.0F);
     // A lifecycle shader fades the whole snapshot at once, so its buffers and borders stay opaque under it.
-    const bool composited = lifecycleShader(m_server->renderer(), m_event) != nullptr;
+    const bool composited = m_effectEvent.custom() || lifecycleShader(m_server->renderer(), m_event) != nullptr;
     const bool builtInSlide = !composited && m_slide.target() != m_slide.from();
     // Keep the moving snapshot visible long enough for slide to read as motion. Fade keeps the configured timeline.
     const float alpha = composited ? 1.0F : (builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);
@@ -1400,7 +1417,7 @@ namespace umbriel {
       scale = overrides->scale;
     } else {
       const auto& animation = config().animation;
-      const auto close = selectedWindowsOut();
+      const auto& close = config().animation.windowsOut;
       if (!animation.enabled || !close.enabled) {
         if (shadow.tree != nullptr) {
           wlr_scene_node_destroy(&shadow.tree->node);
@@ -1424,7 +1441,8 @@ namespace umbriel {
     const CloseSnapshotId id = m_nextCloseSnapshotId++;
     auto snapshot = std::make_unique<CloseSnapshot>(
         *this, id, output, tree, content, std::move(borders), box, durationMs, curve, style, scale,
-        overrides ? overrides->event : AnimationEvent::WindowsOut, shadow
+        overrides ? overrides->event : AnimationEvent::WindowsOut, shadow,
+        overrides ? overrides->effect : ResolvedEffect{}
     );
     registerAnimatable(snapshot.get());
     m_closeSnapshots.push_back(std::move(snapshot));

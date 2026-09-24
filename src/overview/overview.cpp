@@ -3,6 +3,7 @@
 #include "overview/preview_geometry.h"
 #include "scene/animation_shader.h"
 #include "scene/decoration_shader.h"
+#include "scene/effects.h"
 
 #include <umbrielfx/render/decoration.h>
 #include <umbrielfx/render/postprocess.h>
@@ -285,27 +286,42 @@ namespace umbriel {
     const int surfaceRadius = nestedRadius(outerRadius, innerWidth + outerWidth);
     const bool borderVisible = decorated && innerWidth + outerWidth > 0;
     if (card.shader != nullptr) {
-      applyPostprocessShader(card.shader, view->windowShader(), view->windowShaderName());
+      if (view->windowShader())
+        applyEffect(
+            card.shader, view->resolvedEffects()[static_cast<size_t>(EffectScope::Content)], EffectScope::Content
+        );
+      else
+        wlr_scene_rect_set_postprocess(card.shader, nullptr);
       wlr_scene_rect_set_size(card.shader, contentW, contentH);
       wlr_scene_rect_set_corner_radius(card.shader, surfaceRadius);
       wlr_scene_node_place_below(&card.shader->node, &card.border->node);
     }
     const auto settings = view->borderShaderSettings();
     if (card.borderOverlay != nullptr) {
-      auto* overlay =
-          borderVisible && view == liveTarget && settings.enabled ? postprocessShader(settings.overlay) : nullptr;
-      applyPostprocessShader(card.borderOverlay, overlay, settings.overlay);
-      wlr_scene_node_set_enabled(&card.borderOverlay->node, overlay != nullptr);
+      const auto& inner = view->resolvedEffects()[static_cast<size_t>(EffectScope::BorderInner)];
+      const bool enabled = effectsEnabled()
+          && borderVisible
+          && inner.pipeline
+          && inner.pipeline->enabled
+          && !(view->effectState().disabled() & effectBit(EffectScope::BorderInner))
+          && (!inner.pipeline->focusedOnly || view == liveTarget);
+      if (enabled)
+        applyEffect(card.borderOverlay, inner, EffectScope::BorderInner);
+      else
+        wlr_scene_rect_set_postprocess(card.borderOverlay, nullptr);
+      wlr_scene_node_set_enabled(&card.borderOverlay->node, enabled);
       wlr_scene_rect_set_size(card.borderOverlay, contentW, contentH);
       wlr_scene_rect_set_corner_radius(card.borderOverlay, surfaceRadius);
       wlr_scene_node_place_below(&card.borderOverlay->node, &card.border->node);
     }
     wlr_scene_node_set_enabled(&card.border->node, borderVisible);
     if (borderVisible) {
-      auto* shader = view == liveTarget ? decorationShader(settings) : nullptr;
+      auto* shader = !settings.focusedOnly || view == liveTarget ? decorationShader(settings) : nullptr;
       const int padding = shader != nullptr ? static_cast<int>(std::ceil(settings.padding * z)) : 0;
       const auto parameters = decorationParameters(settings, static_cast<float>(padding), static_cast<float>(z), false);
       wlr_scene_border_set_shader(card.border, shader, &parameters);
+      const auto program = shader ? preparedEffect(settings.effect, EffectScope::BorderOuter) : nullptr;
+      wlr_scene_border_set_postprocess(card.border, program ? program->postprocess.get() : nullptr);
       if (shader != nullptr && settings.palette) {
         const auto palette = shaderPalette(config().colors);
         wlr_scene_border_set_palette(card.border, palette.data(), kShaderPaletteCount);
@@ -1111,6 +1127,13 @@ namespace umbriel {
       ++buffersCopied;
     }
 
+    for (auto* marker : {card.shader, card.borderOverlay}) {
+      if (auto* copy = wlr_scene_rect_snapshot_postprocess(snapshot, marker))
+        wlr_scene_node_set_position(
+            &copy->node, card.tree->node.x + marker->node.x, card.tree->node.y + marker->node.y
+        );
+    }
+
     std::vector<BorderSnapshot> borders;
     if (card.border != nullptr && card.border->node.enabled) {
       wlr_scene_border* copy = wlr_scene_border_create(snapshot, card.border->inner_color, card.border->outer_color);
@@ -1143,10 +1166,19 @@ namespace umbriel {
       return;
     }
     wlr_scene_node_copy_animations_for_snapshot(&snapshot->node, &card.tree->node);
-    // The frozen card owns its captured geometry and windows_out lifecycle. Retain an interrupted windows_in effect,
-    // but do not carry the live card's windows_move effect into the close snapshot.
-    wlr_scene_node_set_animation(&snapshot->node, static_cast<unsigned>(AnimationEvent::WindowsMove), nullptr, nullptr);
-    (void)m_server->animateCloseSnapshot(card.owner->output, snapshot, snapshot, std::move(borders), {});
+    const auto close = card.view->selectedWindowsOut();
+    Server::CloseSnapshotOverrides overrides{
+        .durationMs = nativeEffectEnabled(EffectScope::Close) ? close.durationMs : 0,
+        .curve = close.curve,
+        .style = close.style,
+        .scale = close.scale,
+        .effect = card.view->customEffect(EffectScope::Close)
+            ? card.view->resolvedEffects()[static_cast<size_t>(EffectScope::Close)]
+            : ResolvedEffect{}
+    };
+    (void)m_server->animateCloseSnapshot(
+        card.owner->output, snapshot, snapshot, std::move(borders), {}, std::move(overrides)
+    );
     wlr_output_schedule_frame(card.owner->output->wlr());
   }
 
@@ -1775,8 +1807,8 @@ namespace umbriel {
     }
     m_cardPresentationDirty = false;
     for (const auto& state : m_outputs) {
-      updateAnimationShader(
-          &state->tree->node, m_server->renderer(), AnimationEvent::Overview,
+      state->output->updateEffect(
+          &state->tree->node, EffectScope::Overview, AnimationEvent::Overview,
           m_zoomAnim.animating() ? m_zoomAnim : state->rowScroll, m_closing ? -1.0F : 1.0F
       );
     }

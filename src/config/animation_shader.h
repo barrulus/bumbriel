@@ -29,7 +29,9 @@ namespace umbriel {
 
   // Reads the shader file path. Relative file paths
   // belong to the TOML value's source file, including when tables were merged.
-  [[nodiscard]] AnimationShaderReadResult
-  readAnimationShader(Section& section, std::vector<ConfigDiagnostic>& diagnostics);
+  [[nodiscard]] AnimationShaderReadResult readAnimationShader(
+      Section& section, std::vector<ConfigDiagnostic>& diagnostics,
+      ConfigDiagnostic::Severity severity = ConfigDiagnostic::Severity::Warning
+  );
 
 } // namespace umbriel

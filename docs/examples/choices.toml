@@ -1,0 +1,11 @@
+[effects.desktop]
+choose = ["flowering-vine"]
+selection = "unused_first"
+
+[effects.favourites]
+choose = ["window.crt", "window.parchment-dark", "window.fire-tendrils", "window.autumn-leaves", "window.mercury-sheen", "window.prairie-wind", "window.rainbow-radial", "window.rainbow-smoke", "window.rainbow-waves", "window.ripple-drops", "window.rolling-clouds", "window.rorschach2", "window.sentient-circuit-v2", "window.snowfall", "window.flap-board", "window.liquid-glass"]
+selection = "round_robin"
+
+[effects.terminals]
+choose = ["fuse", "lightning", "rainbow", "pulse", "neon-bleed", "portal-lava", "flowering-vine", "sentient-runner", "sentient-spark", "flowing-water", "faerie-magic"]
+selection = "unused_first"

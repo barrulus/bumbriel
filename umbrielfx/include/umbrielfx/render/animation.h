@@ -2,8 +2,10 @@
 #define UMBRIELFX_ANIMATION_H
 
 #include <stdbool.h>
+#include <umbrielfx/render/params.h>
+#include <umbrielfx/render/postprocess.h>
 #include <stdint.h>
-#include <umbrielfx/render/wobble.h>
+#include <umbrielfx/render/drag_physics.h>
 #include <wlr/util/box.h>
 
 struct wlr_renderer;
@@ -11,8 +13,11 @@ struct wlr_scene_node;
 struct wlr_scene_shadow;
 struct fx_animation_shader;
 
-#define FX_ANIMATION_SLOTS 10
-#define FX_ANIMATION_INTERACTIVE_SLOT 9
+#define FX_ANIMATION_SLOTS 11
+#define FX_ANIMATION_MAX_PASSES 16
+#define FX_ANIMATION_INTERACTIVE_SLOT 10
+#define FX_ANIMATION_OPEN_SLOT 4
+#define FX_ANIMATION_CLOSE_SLOT 5
 #define FX_ANIMATION_DEPTH 24
 
 struct fx_animation_parameters {
@@ -24,18 +29,23 @@ struct fx_animation_parameters {
   // Stable values in [0, 1) for the lifetime of transition_id.
   float random_seed[4];
   // Normalized elastic-sheet displacements; used only by the interactive slot.
-  float wobble[FX_WOBBLE_POINTS][2];
+  float deformation[FX_DRAG_PHYSICS_POINTS][2];
   // Extra logical space for the final composite, without enlarging the source.
   float padding;
+  float palette[FX_PALETTE_MAX * 4];
+  int palette_count;
 };
 
 // Compilation happens with the renderer's context current. Sources provide
 // vec4 animation(vec2 uv), not a main function or version declaration.
 struct fx_animation_shader*
 fx_animation_shader_create(struct wlr_renderer* renderer, const char* source, const char* label);
-struct fx_animation_shader* fx_wobble_shader_create(struct wlr_renderer* renderer);
+struct fx_animation_shader* fx_drag_physics_shader_create(struct wlr_renderer* renderer);
 // Bounds in node-local coordinates, including its decorated descendants.
 bool wlr_scene_node_animation_bounds(struct wlr_scene_node* node, struct wlr_box* box);
+bool fx_animation_shader_set_params(
+    struct fx_animation_shader* shader, const struct fx_shader_param* params, size_t count
+);
 struct fx_animation_shader* fx_animation_shader_ref(struct fx_animation_shader* shader);
 void fx_animation_shader_unref(struct fx_animation_shader* shader);
 // A shape-preserving shader only scales its input's alpha uniformly. Shadows
@@ -46,6 +56,10 @@ void fx_animation_shader_set_shape_preserving(struct fx_animation_shader* shader
 // A NULL shader removes a slot. Nodes hold their own reference to the program.
 void wlr_scene_node_set_animation(
     struct wlr_scene_node* node, unsigned slot, struct fx_animation_shader* shader,
+    const struct fx_animation_parameters* parameters
+);
+void wlr_scene_node_set_animation_pipeline(
+    struct wlr_scene_node* node, unsigned slot, struct fx_animation_shader* const* shaders, size_t count,
     const struct fx_animation_parameters* parameters
 );
 void wlr_scene_node_clear_animations(struct wlr_scene_node* node);

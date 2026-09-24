@@ -24,9 +24,15 @@ duration_ms = 1600
 curve = "linear"
 [animation.windows_in]
 style = "fade"
-shader = "animation.glsl"
 [animation.windows_out]
-shader = "fixture-1.glsl"
+[appearance]
+effects = ["fixture"]
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "animation.glsl"}]
+[effects.fixture.close]
+passes = [{shader = "fixture-1.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

@@ -10,18 +10,21 @@ gap = 40
 [animation]
 enabled = false
 [appearance]
+effects = ["fixture"]
 border_width = 6
 outer_border_width = 0
 corner_radius = 0
-shader_fps = 20
 [appearance.shadow]
 enabled = false
-[appearance.border_shader]
-shader = "ring.glsl"
+[effects.fixture.border.outer]
+passes = [{shader = "ring.glsl"}]
 padding = 24
 [colors.border]
 focused = "#FF0000FF"
 unfocused = "#00FF00FF"
+[render.effects]
+in_capture = true
+fps = 20
 TOML
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL_UNMAP_CLIENT" persistent-ring 700 500 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
@@ -35,6 +38,9 @@ x=$(jq -r '.x + (.w / 2 | floor)' <<< "$window")
 y=$(jq -r '.y - 3' <<< "$window")
 inside=$(jq -r '.y + 12' <<< "$window")
 read_ring() {
+  window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "persistent-ring")')
+  x=$(jq -r '.x - 3' <<< "$window")
+  y=$(jq -r '.y + (.h / 2 | floor)' <<< "$window")
   grim "$IMAGE"
   magick "$IMAGE" -crop "1x1+$x+$y" -format '%[fx:round(mean.r*255)] %[fx:round(mean.g*255)] %[fx:round(mean.b*255)]\n' info:
 }
@@ -54,14 +60,12 @@ done
 # Content shows through the hole.
 blue=$(magick "$IMAGE" -crop "1x1+$x+$inside" -format '%[fx:round(mean.b*255)]' info:)
 (( blue > 100 ))
-# An invalid edit falls back to the plain border; the next valid edit recovers.
+generation=$("$UMBRIEL" effects --json | jq .generation)
 printf '%s\n' 'deliberately invalid GLSL' > "$UMBRIEL_RUNTIME_DIR/ring.glsl"
-for _ in $(seq 60); do
-  read -r red green blue < <(read_ring)
-  (( red > 220 && green < 20 && blue < 20 )) && break
-  sleep 0.05
-done
-(( red > 220 && green < 20 && blue < 20 )) || { echo "invalid ring did not restore native styling"; exit 1; }
+"$UMBRIEL" msg config-reload >/dev/null
+[[ $("$UMBRIEL" effects --json | jq .generation) == "$generation" ]]
+read -r red green blue < <(read_ring)
+(( blue > 35 && green > 25 && red < 90 )) || { echo "invalid edit replaced the working ring: $red $green $blue at $x,$y"; exit 1; }
 cp "$SOURCE/pulse.glsl" "$UMBRIEL_RUNTIME_DIR/ring.glsl"
 for _ in $(seq 60); do
   read -r red green blue < <(read_ring)

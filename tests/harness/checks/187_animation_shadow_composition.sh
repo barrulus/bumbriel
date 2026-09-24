@@ -21,6 +21,7 @@ configure() {
 [colors]
 shadow = "#00FF00FF"
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -34,13 +35,11 @@ duration_ms = 4000
 curve = "linear"
 [animation.windows_in]
 enabled = $1
-shader = "half.glsl"
 [animation.windows_out]
 enabled = false
 [animation.windows_move]
 enabled = false
 [animation.workspaces]
-shader = "outer.glsl"
 [[window_rule]]
 match.title = "^occluder$"
 default_floating = true
@@ -49,6 +48,12 @@ default_position = { x = 510, y = 220, anchor = "top_left" }
 match.title = "^caster$"
 default_floating = true
 default_position = { x = 200, y = 120, anchor = "top_left" }
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "half.glsl"}]
+[effects.fixture.workspace]
+passes = [{shader = "outer.glsl"}]
 EOF
   "$UMBRIEL" msg config-reload > /dev/null
 }

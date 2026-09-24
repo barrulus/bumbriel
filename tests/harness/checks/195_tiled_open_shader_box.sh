@@ -21,6 +21,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 backdrop = "#000000FF"
 
 [appearance]
+effects = ["fixture"]
 border_width = 0
 outer_border_width = 0
 corner_radius = 0
@@ -36,7 +37,6 @@ enabled = true
 duration_ms = 1000
 curve = "linear"
 style = "none"
-shader = "open.glsl"
 
 [animation.windows_out]
 enabled = false
@@ -45,7 +45,14 @@ enabled = false
 enabled = true
 duration_ms = 1000
 curve = "linear"
-shader = "move.glsl"
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "open.glsl"}]
+[effects.fixture.move]
+passes = [{shader = "move.glsl"}]
+[effects.fixture.resize]
+passes = [{shader = "move.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

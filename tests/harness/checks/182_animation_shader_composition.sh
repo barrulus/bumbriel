@@ -27,9 +27,15 @@ transform = "90"
 duration_ms = 4000
 curve = "linear"
 [animation.windows_in]
-shader = "fixture-1.glsl"
 [animation.overview]
-shader = "fixture-2.glsl"
+[appearance]
+effects = ["fixture"]
+[render.effects]
+in_capture = true
+[effects.fixture.open]
+passes = [{shader = "fixture-1.glsl"}]
+[effects.fixture.overview]
+passes = [{shader = "fixture-2.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL_UNMAP_CLIENT" shader-composition 700 700 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
@@ -88,7 +94,8 @@ cat "$BASE" > "$UMBRIEL_CONFIG"
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [animation.windows_in]
-shader = "fixture-3.glsl"
+[effects.fixture.open]
+passes = [{shader = "fixture-3.glsl"}]
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 if ! grep -q "Animation shader .*rejected; using built-in animation" "$UMBRIEL_LOG"; then

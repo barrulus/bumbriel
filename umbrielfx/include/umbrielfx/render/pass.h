@@ -13,7 +13,10 @@
 #include <wlr/render/pass.h>
 #include <wlr/render/swapchain.h>
 
+struct fx_decoration_pipeline;
+struct fx_postprocess_chain;
 struct fx_gles_render_pass {
+    uint64_t sequence;
 	struct wlr_render_pass base;
 	struct fx_framebuffer *buffer;
 	struct fx_framebuffer *output_buffer;
@@ -111,6 +114,8 @@ struct fx_render_rounded_rect_options {
 };
 
 struct fx_render_border_options {
+    struct fx_postprocess_chain* postprocess;
+    struct fx_decoration_pipeline** pipeline;
 	struct fx_decoration_shader *shader;
 	float shader_time, shader_padding, shader_scale, shader_coordinate_scale;
 	enum wl_output_transform shader_transform;

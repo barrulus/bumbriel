@@ -2,6 +2,7 @@
 #define UMBRIELFX_POSTPROCESS_H
 
 #include <stdbool.h>
+#include <umbrielfx/render/params.h>
 #include <stddef.h>
 #include <wlr/util/box.h>
 
@@ -13,6 +14,7 @@ struct wlr_renderer;
 struct fx_postprocess_chain;
 struct wlr_scene;
 struct wlr_scene_rect;
+struct wlr_scene_tree;
 struct wlr_scene_output;
 
 #define FX_POSTPROCESS_MAX_PASSES 16
@@ -29,6 +31,8 @@ struct fx_scene_postprocess {
   // Output-local logical box; empty means the whole output.
   struct wlr_box region;
   float cursor_radius;
+  float speed;
+  bool frozen;
   // Stored by value so a copied effect carries its own colours; count 0 leaves shaders on theirs.
   float palette[FX_PALETTE_MAX * 4];
   int palette_count;
@@ -39,6 +43,8 @@ struct fx_postprocess_source {
   const char* code;
   const char* label;
   bool buffer;
+  const struct fx_shader_param* params;
+  size_t param_count;
 };
 
 struct fx_postprocess_chain*
@@ -56,6 +62,8 @@ void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postp
  * their own colours. Counts above FX_PALETTE_MAX are truncated. Set after the
  * chain, which clears any previous palette.
  */
+struct wlr_scene_rect* wlr_scene_rect_snapshot_postprocess(struct wlr_scene_tree* parent, struct wlr_scene_rect* source);
+void wlr_scene_rect_set_postprocess_time(struct wlr_scene_rect* rect, bool animated, float speed);
 void wlr_scene_rect_set_palette(struct wlr_scene_rect* rect, const float* colors, int count);
 // Regions in order, then the global preset, whose chain may be NULL.
 void wlr_scene_output_set_postprocess(

@@ -606,8 +606,8 @@ UMBRIEL_TEST(payloadAlternativeMatchesTheDeclaredArgKind) {
     case ActionArgKind::OptionalWindowId:
     case ActionArgKind::SkipConfirmation:
       break;
-    case ActionArgKind::Shader:
-      input += ":global cycle";
+    case ActionArgKind::Effect:
+      input += ":global cycle favorites";
       break;
     case ActionArgKind::Command:
       input += ":value";
@@ -634,8 +634,8 @@ UMBRIEL_TEST(payloadAlternativeMatchesTheDeclaredArgKind) {
     case ActionArgKind::None:
       CHECK(std::holds_alternative<std::monostate>(bind.payload));
       break;
-    case ActionArgKind::Shader:
-      CHECK(umbriel::payloadIf<umbriel::ShaderArg>(bind) != nullptr);
+    case ActionArgKind::Effect:
+      CHECK(umbriel::payloadIf<umbriel::EffectAction>(bind) != nullptr);
       break;
     case ActionArgKind::Command:
       CHECK(
@@ -697,8 +697,8 @@ UMBRIEL_TEST(everyActionSpecRoundTripsThroughParseAction) {
     case ActionArgKind::OptionalWindowId:
     case ActionArgKind::SkipConfirmation:
       break;
-    case ActionArgKind::Shader:
-      input += ":global cycle";
+    case ActionArgKind::Effect:
+      input += ":global cycle favorites";
       break;
     case ActionArgKind::Command:
       input += ":true";
@@ -820,8 +820,8 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
     switch (kind) {
     case ActionArgKind::None:
       return {};
-    case ActionArgKind::Shader:
-      return ":output toggle DP-1";
+    case ActionArgKind::Effect:
+      return ":output toggle --target DP-1";
     case ActionArgKind::Command:
       return ":true";
     case ActionArgKind::Fraction:
@@ -849,8 +849,8 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
     switch (kind) {
     case ActionArgKind::None:
       return "";
-    case ActionArgKind::Shader:
-      return "<scope> <preset-or-operation> [<target>]";
+    case ActionArgKind::Effect:
+      return "<kind> <operation> [<name> ...] [--target <id>] [--scope <leaf>[,<leaf>...]]";
     case ActionArgKind::Command:
       return "<cmd>";
     case ActionArgKind::Fraction:
@@ -900,29 +900,22 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
   CHECK(swept > 100);
 }
 
-UMBRIEL_TEST(shaderSelectorsKeepTargetAndCategorySemantics) {
+UMBRIEL_TEST(effectActionsPreserveTargetsAndExactScopeMasks) {
   Keybind bind;
-  CHECK(parseAction("shader:cursor cycle", bind));
-  CHECK_EQ(umbriel::payloadIf<umbriel::ShaderArg>(bind)->scope, std::string("cursor"));
-  CHECK(parseAction("shader:screen cycle", bind));
-  CHECK(parseAction("shader:animation whirlpool", bind));
-  CHECK(parseAction("shader:window off window-id", bind));
-  CHECK(parseAction("shader:output invert HDMI-A-1", bind));
-  CHECK_EQ(umbriel::payloadIf<umbriel::ShaderArg>(bind)->target, std::string("HDMI-A-1"));
-  CHECK(!parseAction("shader:cursor cycle HDMI-A-1", bind));
-  CHECK(!parseAction("shader:animation melt window-id", bind));
-  CHECK(!parseAction("shader:unknown off", bind));
-  CHECK(!parseAction("shader:window", bind));
-}
-
-UMBRIEL_TEST(borderPoolActionsAcceptWindowTargets) {
-  umbriel::Keybind bind;
-  CHECK(umbriel::parseAction("shader:border cycle:rings window-id", bind));
-  const auto& arg = std::get<umbriel::ShaderArg>(bind.payload);
-  CHECK_EQ(arg.scope, std::string("border"));
-  CHECK_EQ(arg.operation, std::string("cycle:rings"));
-  CHECK_EQ(arg.target, std::string("window-id"));
-  CHECK(umbriel::parseAction("shader:window cycle:reading", bind));
+  CHECK(parseAction("effect:output set warm --target HDMI-A-1 --scope screen", bind));
+  const auto& action = std::get<umbriel::EffectAction>(bind.payload);
+  CHECK_EQ(action.target, std::string("HDMI-A-1"));
+  CHECK_EQ(action.mask, umbriel::effectBit(umbriel::EffectScope::Screen));
+  CHECK(parseAction("effect:window cycle borders --scope border.inner,border.outer --target window-id", bind));
+  CHECK(parseAction("effect:system toggle", bind));
+  CHECK(!parseAction("shader:window off", bind));
+  for (const auto invalid :
+       {"effect:global off --target DP-1", "effect:system set neon", "effect:system off --scope content",
+        "effect:layer off", "effect:region off", "effect:window off --scope screen", "effect:window set",
+        "effect:window cycle a b", "effect:window set a --target x --target y",
+        "effect:window off --scope content,content", "effect:window off --scope content,", "effect:window off --bogus",
+        "effect:window off extra"})
+    CHECK(!parseAction(invalid, bind));
 }
 
 int main() { return RUN_TESTS(); }

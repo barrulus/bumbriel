@@ -11,11 +11,13 @@
 
 namespace umbriel {
 
-  AnimationShaderReadResult readAnimationShader(Section& section, std::vector<ConfigDiagnostic>& diagnostics) {
+  AnimationShaderReadResult readAnimationShader(
+      Section& section, std::vector<ConfigDiagnostic>& diagnostics, ConfigDiagnostic::Severity severity
+  ) {
     AnimationShaderReadResult result;
     const toml::node* node = section.take("shader");
     const auto warn = [&](const toml::node& node, std::string message) {
-      diagnostics.push_back(makeDiagnostic(ConfigDiagnostic::Severity::Warning, node.source(), std::move(message)));
+      diagnostics.push_back(makeDiagnostic(severity, node.source(), std::move(message)));
     };
     if (node == nullptr) {
       return result;

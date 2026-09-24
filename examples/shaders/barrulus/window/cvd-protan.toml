@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.cvd-protan"]
-scope = "window"
-
-[[shaders.preset."window.cvd-protan".passes]]
-shader = "cvd-protan.glsl"
+[effects."window.cvd-protan".content]
+passes = [{ shader = "cvd-protan.glsl" }]

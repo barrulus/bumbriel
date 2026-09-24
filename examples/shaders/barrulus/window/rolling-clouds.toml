@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.rolling-clouds"]
-scope = "window"
-
-[[shaders.preset."window.rolling-clouds".passes]]
-shader = "rolling-clouds.glsl"
+[effects."window.rolling-clouds".content]
+passes = [{ shader = "rolling-clouds.glsl" }]

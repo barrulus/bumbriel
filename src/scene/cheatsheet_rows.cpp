@@ -175,14 +175,9 @@ namespace {
       switch (spec.argKind) {
       case umbriel::ActionArgKind::None:
         return name;
-      case umbriel::ActionArgKind::Shader:
-        if (const auto* arg = umbriel::payloadIf<umbriel::ShaderArg>(bind))
-          return std::string(spec.name)
-              + ":"
-              + arg->scope
-              + " "
-              + arg->operation
-              + (arg->target.empty() ? "" : " " + arg->target);
+      case umbriel::ActionArgKind::Effect:
+        if (const auto* arg = umbriel::payloadIf<umbriel::EffectAction>(bind))
+          return std::string(spec.name) + ":" + umbriel::formatEffectAction(*arg);
         break;
       case umbriel::ActionArgKind::Command:
         if (const auto* spawn = umbriel::payloadIf<umbriel::SpawnArg>(bind)) {
@@ -410,7 +405,7 @@ namespace {
     case A::OverviewClose:
       return Group::Overview;
     case A::ConfigReload:
-    case A::Shader:
+    case A::Effect:
     case A::DpmsOff:
     case A::DpmsOn:
     case A::SessionQuit:

@@ -7,22 +7,22 @@ effects and their definitions here as the collection grows. The packaged
 [Barrulus presets](../../examples/shaders/barrulus/README.md) remain a separate
 collection; this directory is a complete working configuration.
 
-**Effects define appearance. Pools group effects. The config assigns pools.**
+**Effects define appearance. Choices group effects. The config selects effects.**
 
 | File | Purpose |
 | --- | --- |
-| [config.toml](config.toml) | Entry point: includes, application rules, pool assignments and shortcuts |
+| [config.toml](config.toml) | Entry point: includes, application rules, effect assignments and shortcuts |
 | [defaults.toml](defaults.toml) | Local snapshot of the baseline desktop configuration |
 | [effects.toml](effects.toml) | Named outer rings, paired inner overlays and independent window effects |
-| [pools.toml](pools.toml) | Ordered lists of border and window effects |
-| [wobbly.toml](wobbly.toml) | Elastic opening, closing, animated movement and resize settings |
+| [choices.toml](choices.toml) | Ordered lists of border and window effects |
+| [elastic.toml](elastic.toml) | Elastic opening, closing, animated movement and resize settings |
 | [SHADER-USAGE.md](SHADER-USAGE.md) | Inventory of every GLSL file and its current configuration references |
 | [shaders/](shaders/) | GLSL sources and the Python generators for paired effects |
 | [screengrab.py](screengrab.py), [screen-record.py](screen-record.py) | Optional capture helpers used by the keyboard shortcuts |
 
 ## Try the configuration
 
-Use this fork's Umbriel build with shader pools and paired border overlays.
+Use this fork's Umbriel build with named effects and paired border overlays.
 From the repository root, validate and start a nested compositor:
 
 ```sh
@@ -49,30 +49,18 @@ use `notify-send` when available.
 
 ## Outer rings, inner overlays and window effects
 
-An **outer ring** is a decoration shader from `shaders/rings/`, selected by a
-`[shaders.border.NAME]` definition. Its padding provides space outside the
-window for the effect. Optional lighting adds illumination around the window.
-
-An **inner overlay** carries the same pattern into the client area. Its border
-definition names a second preset with `overlay`; that preset has
-`scope = "border"` and uses an adapter from `shaders/window/`. The directory
-name does not determine the scope. This layer is clipped to the rounded client
-box and draws after any independent window-content effect.
-
-For example, these two definitions select neon's outer and inner halves together:
+An **outer ring** uses `effects.NAME.border.outer` and a `ring_color` pass.
+Padding reserves drawing space and optional light illuminates nearby pixels.
+An **inner overlay** uses `effects.NAME.border.inner`, clipped to the rounded
+client box above the independent content effect. Both leaves share one name:
 
 ```toml
-[shaders.border.neon-bleed]
-enabled = true
-animated = true
-speed = 1
+[effects.neon-bleed.border.outer]
 padding = 14
-shader = "shaders/rings/neon-bleed.glsl"
-overlay = "ring.neon-bleed"
+passes = [{shader = "shaders/rings/neon-bleed.glsl"}]
 
-[shaders.preset."ring.neon-bleed"]
-scope = "border"
-passes = [{ shader = "shaders/window/neon-bleed-overlay.glsl" }]
+[effects.neon-bleed.border.inner]
+passes = [{shader = "shaders/window/neon-bleed-overlay.glsl"}]
 ```
 
 | Border preset | Outer shader in `shaders/rings/` | Inner shader in `shaders/window/` |
@@ -83,23 +71,17 @@ passes = [{ shader = "shaders/window/neon-bleed-overlay.glsl" }]
 | `portal-lava` | `portal-lava.glsl` | `portal-lava-overlay.glsl` |
 | `faerie-magic` | `faerie-magic.glsl` | `faerie-magic-overlay.glsl` |
 
-Both halves follow border selection, focus and border toggling. Selecting a
-ring without an overlay removes the previous inner layer. The inner layer
-follows `shaders.in_capture` and is suppressed during lifecycle fades. Border
-`speed`, `animated` and `light` settings control the outer shader; the inner
-adapter has its own GLSL timing.
+Both halves follow focus by default and can be selected or toggled together.
+External-only border definitions explicitly disable their inner leaf. Each leaf
+has independent `animated`, `speed` and `palette` settings. Inner effects follow
+`render.effects.in_capture` and remain inside opening and closing captures.
+Content effects occupy `effects.NAME.content` and cycle independently.
 
-An **independent window effect**, such as CRT or parchment, has
-`scope = "window"`. It processes window content underneath the inner overlay.
-Cycling it leaves the chosen border pair in place. See the
-[shader reference](../user/barrulus-shaders.md) for the host APIs and behavior.
+## Choices and shortcuts
 
-## Pools and shortcuts
-
-The `desktop` border pool assigns flowering-vine by default. The `terminals`
-pool assigns eleven ring choices to Foot, Ghostty and Kitty, using
-`allocation = "unused-first"` to spread choices across windows. The
-`favourites` pool contains sixteen independent window effects.
+The `desktop` choice assigns flowering-vine by default. `terminals` allocates
+eleven paired borders across Foot, Ghostty and Kitty with `unused_first`.
+`favourites` supplies sixteen content effects for explicit `round_robin` cycling.
 
 | Shortcut | Action |
 | --- | --- |
@@ -112,11 +94,10 @@ pool assigns eleven ring choices to Foot, Ghostty and Kitty, using
 | Print / Ctrl+Print | Capture a region / the active window in Satty |
 | Mod+Print / Mod+Shift+Print | Start / stop a portal recording |
 
-Edit the `presets` arrays in `pools.toml` to add, remove or reorder choices.
-Define each effect in `effects.toml` first, then assign pools in `config.toml`.
-Keep paired inner presets at `scope = "border"` so they stay out of window
-effect cycles. Several extra GLSL files are retained as library material but
-are not registered; [the inventory](SHADER-USAGE.md) identifies them.
+Edit `choose` arrays in `choices.toml` to add, remove or reorder candidates.
+Definitions live in `effects.toml`; selectors and bindings live in `config.toml`.
+Each border candidate defines both leaves so changing it clears its predecessor's
+complete contribution. [The inventory](SHADER-USAGE.md) identifies unused sources.
 
 ## Flap board
 
@@ -129,9 +110,9 @@ draw above it.
 With this configuration loaded, select it on the focused window:
 
 ```sh
-umbriel msg 'shader:window window.flap-board'
+umbriel msg 'effect:window set window.flap-board --scope content'
 # Restore the unfiltered window:
-umbriel msg 'shader:window off'
+umbriel msg 'effect:window off --scope content'
 ```
 
 It is also in the Mod+S cycle. Adjust `FLAP_SIZE`, `FLAP_DURATION`,
@@ -139,37 +120,37 @@ It is also in the Mod+S cycle. Adjust `FLAP_SIZE`, `FLAP_DURATION`,
 [flap-board.glsl](shaders/window/flap-board.glsl). Sizes are in logical pixels;
 the default is 38 × 26, with a 1.15-second turn every 5.5 seconds per tile.
 
-## Wobbly movement and lifecycle animations
+## Elastic movement and lifecycle animations
 
-[wobbly.toml](wobbly.toml) is included after the defaults. It selects an elastic
+[elastic.toml](elastic.toml) is included after the defaults. It defines an elastic
 sheet deformation for opening, closing, animated movement and resize, including
 layout changes, maximize and restore. Opening grows and bends into place;
 closing reverses that motion. Movement settles back to the unchanged window.
 The shaders use event progress, so idle windows do not wobble continuously.
 
-The open/close pair is also selectable at runtime:
+The named effect is also selectable at runtime:
 
 ```sh
-umbriel msg 'shader:animation wobbly'
+umbriel msg 'effect:window set elastic --scope open,close,move,resize'
 ```
 
 `WOBBLE_STRENGTH` in each file under `shaders/animations/` controls the bend.
-Durations are in `wobbly.toml`: 620 ms opening, 460 ms closing, and 650 ms for
-movement. Remove the `wobbly.toml` include to return to the baseline settings;
-if you explicitly selected the pair, also run `umbriel msg 'shader:animation default'`.
+Durations are in `elastic.toml`: 620 ms opening, 460 ms closing, and 650 ms for
+movement. Remove the `elastic.toml` include to return to the baseline settings;
+remove `elastic` from the appearance selector and, if selected at runtime, run `umbriel msg 'effect:window default --scope open,close,move,resize'`.
 
-With a build supporting `animation.windows_move.wobble`, this profile also
-enables pointer-driven jelly motion. The grabbed point follows the pointer while
-a spring grid bends behind it; reversing direction or shaking the mouse excites
-the sheet, which continues settling after release. Grab near a corner for a
-stronger asymmetric bend. Set `wobble = false` to disable this part while keeping
-the timeline shaders. This requires a compositor rebuild and session restart;
-it cannot be added to an older running compositor by reloading GLSL alone.
+Drag physics uses a CPU spring simulation and an inverse-sampling deformation shader.
+`animation.windows_move.drag_physics = true` enables native Jelly. Selecting a named
+`[effects.NAME.drag]` preset enables it directly, without that switch. The grab point
+stays pinned, drawing bounds expand with deformation, and the window settles back
+to its original rectangle after release.
 
-Pointer wobble runs through the built-in `umbrielfx` shader and expands its draw
-area to accommodate the bend. It applies to window moves; direct mouse resizing
-and overview-card dragging keep their existing behavior. Input geometry remains
-rectangular. The separate timeline shaders reserve room inside their bounds.
+### Taffy pointer stretch
+
+[`taffy.toml`](taffy.toml) selects a named drag preset with weaker lower springs,
+greater pointer lag, reduced damping, and movement-driven downward pull. Edit its
+coefficients and reload the configuration to change the simulation without restarting.
+The old `wobble` and temporary `wobble_style` settings are rejected.
 
 ## Liquid glass
 
@@ -181,9 +162,9 @@ the shader receives the combined window image. It preserves captured alpha and
 works beneath paired inner border overlays.
 
 ```sh
-umbriel msg 'shader:window window.liquid-glass'
+umbriel msg 'effect:window set window.liquid-glass --scope content'
 # Restore the unfiltered window:
-umbriel msg 'shader:window off'
+umbriel msg 'effect:window off --scope content'
 ```
 
 It is also in the Mod+S cycle. Tune `GLASS_BEVEL`, `GLASS_REFRACTION`,

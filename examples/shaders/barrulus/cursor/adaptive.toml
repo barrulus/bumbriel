@@ -1,7 +1,3 @@
-# Barrulus shader collection.
-[shaders.preset."cursor.adaptive"]
-scope = "global"
+[effects."cursor.adaptive".overlay]
 cursor_radius = 130
-
-[[shaders.preset."cursor.adaptive".passes]]
-shader = "adaptive.glsl"
+passes = [{ shader = "adaptive.glsl" }]

@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."screen.warmtint"]
-scope = "global"
-
-[[shaders.preset."screen.warmtint".passes]]
-shader = "warmtint.glsl"
+[effects."screen.warmtint".screen]
+passes = [{ shader = "warmtint.glsl" }]

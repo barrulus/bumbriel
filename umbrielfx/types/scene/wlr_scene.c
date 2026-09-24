@@ -130,14 +130,19 @@ struct highlight_region {
 
 // Addons preserve the wlroots node/tree ABI. The registry is only used while
 // custom effects exist, to suspend occlusion across sampling boundaries.
+struct scene_animation_slot {
+  size_t count;
+  struct fx_animation_shader** shaders;
+  struct fx_animation_history* histories;
+  struct fx_animation_parameters parameters;
+};
+
 struct scene_animation {
   struct wlr_addon addon;
   struct wl_list link;
   struct wlr_scene_node* node;
   struct wlr_scene* scene;
-  struct fx_animation_shader* shaders[FX_ANIMATION_SLOTS];
-  struct fx_animation_parameters parameters[FX_ANIMATION_SLOTS];
-  struct fx_animation_history histories[FX_ANIMATION_SLOTS];
+  struct scene_animation_slot slots[FX_ANIMATION_SLOTS];
   bool output_clip_enabled;
   struct wlr_box output_clip;
 };
@@ -207,11 +212,20 @@ void wlr_scene_shadow_set_animation_source(
   wlr_addon_init(&shadow->addon, &node->node.addons, &animation_shadow_impl, &animation_shadow_impl);
 }
 
+static void scene_animation_slot_finish(struct scene_animation_slot* slot) {
+  for (size_t i = 0; i < slot->count; ++i) {
+    fx_animation_shader_unref(slot->shaders[i]);
+    fx_animation_history_finish(&slot->histories[i]);
+  }
+  free(slot->shaders);
+  free(slot->histories);
+  *slot = (struct scene_animation_slot){0};
+}
+
 static void scene_animation_destroy(struct wlr_addon* addon) {
   struct scene_animation* animation = wl_container_of(addon, animation, addon);
   for (unsigned i = 0; i < FX_ANIMATION_SLOTS; i++) {
-    fx_animation_shader_unref(animation->shaders[i]);
-    fx_animation_history_finish(&animation->histories[i]);
+    scene_animation_slot_finish(&animation->slots[i]);
   }
   wl_list_remove(&animation->link);
   wlr_addon_finish(addon);
@@ -1115,67 +1129,75 @@ void wlr_scene_node_set_animation(
     struct wlr_scene_node* node, unsigned slot, struct fx_animation_shader* shader,
     const struct fx_animation_parameters* parameters
 ) {
-  assert(slot < FX_ANIMATION_SLOTS);
+  wlr_scene_node_set_animation_pipeline(node, slot, &shader, shader != NULL ? 1 : 0, parameters);
+}
+
+void wlr_scene_node_set_animation_pipeline(
+    struct wlr_scene_node* node, unsigned slot, struct fx_animation_shader* const* shaders, size_t count,
+    const struct fx_animation_parameters* parameters
+) {
+  assert(slot < FX_ANIMATION_SLOTS && count <= FX_ANIMATION_MAX_PASSES);
+  for (size_t i = 0; i < count; ++i)
+    if (shaders[i] == NULL)
+      return;
   struct scene_animation* animation = scene_animation_get(node);
-  if (animation == NULL && shader == NULL) {
+  if (animation == NULL && count == 0)
     return;
-  }
+  const bool created = animation == NULL;
   if (animation == NULL) {
     animation = calloc(1, sizeof(*animation));
-    if (animation == NULL) {
+    if (animation == NULL)
       return;
-    }
     animation->node = node;
     animation->scene = scene_node_get_root(node);
-    for (unsigned i = 0; i < FX_ANIMATION_SLOTS; i++) {
-      fx_animation_history_init(&animation->histories[i]);
-    }
     wlr_addon_init(&animation->addon, &node->addons, &scene_animation_impl, &scene_animation_impl);
     wl_list_insert(&scene_animations, &animation->link);
   }
-  struct fx_animation_shader* previous = animation->shaders[slot];
-  const bool same_transition = previous != NULL
-      && shader != NULL
-      && parameters != NULL
-      && parameters->transition_id == animation->parameters[slot].transition_id;
-  const bool restarted = previous != NULL && shader != NULL && !same_transition;
-  if (previous != NULL
-      && shader != NULL
-      && parameters != NULL
-      && same_transition
-      && previous->renderer == shader->renderer) {
-    shader = previous;
-  }
-  struct fx_animation_parameters next = parameters != NULL ? *parameters : animation->parameters[slot];
-  const bool parameters_equal = next.progress == animation->parameters[slot].progress
-      && next.linear_progress == animation->parameters[slot].linear_progress
-      && next.direction == animation->parameters[slot].direction
-      && next.transition_id == animation->parameters[slot].transition_id
-      && next.padding == animation->parameters[slot].padding
-      && memcmp(next.wobble, animation->parameters[slot].wobble, sizeof(next.wobble)) == 0
-      && memcmp(next.random_seed, animation->parameters[slot].random_seed, sizeof(next.random_seed)) == 0;
-  if (previous == shader && !restarted && parameters_equal) {
+  struct scene_animation_slot* entry = &animation->slots[slot];
+  if (count == 0 && entry->count == 0)
     return;
+  struct fx_animation_parameters next = parameters != NULL ? *parameters : entry->parameters;
+  const bool retain = count != 0 && entry->count != 0 && parameters != NULL
+      && next.transition_id == entry->parameters.transition_id
+      && entry->shaders[0]->renderer == shaders[0]->renderer;
+  const bool equal = next.progress == entry->parameters.progress
+      && next.linear_progress == entry->parameters.linear_progress
+      && next.direction == entry->parameters.direction
+      && next.transition_id == entry->parameters.transition_id
+      && next.padding == entry->parameters.padding
+      && next.palette_count == entry->parameters.palette_count
+      && memcmp(next.palette, entry->parameters.palette, sizeof(next.palette)) == 0
+      && memcmp(next.deformation, entry->parameters.deformation, sizeof(next.deformation)) == 0
+      && memcmp(next.random_seed, entry->parameters.random_seed, sizeof(next.random_seed)) == 0;
+  if (retain && equal)
+    return;
+  if (!retain) {
+    struct scene_animation_slot replacement = {.count = count};
+    if (count != 0) {
+      replacement.shaders = calloc(count, sizeof(*replacement.shaders));
+      replacement.histories = calloc(count, sizeof(*replacement.histories));
+      if (replacement.shaders == NULL || replacement.histories == NULL) {
+        free(replacement.shaders);
+        free(replacement.histories);
+        if (created)
+          scene_animation_destroy(&animation->addon);
+        return;
+      }
+      for (size_t i = 0; i < count; ++i) {
+        replacement.shaders[i] = fx_animation_shader_ref(shaders[i]);
+        fx_animation_history_init(&replacement.histories[i]);
+      }
+    }
+    scene_animation_slot_finish(entry);
+    *entry = replacement;
   }
-  if (previous != shader || restarted) {
-    fx_animation_history_reset(&animation->histories[slot]);
-  }
-  animation->shaders[slot] = fx_animation_shader_ref(shader);
-  fx_animation_shader_unref(previous);
-  if (parameters != NULL || shader != NULL) {
-    animation->parameters[slot] = next;
-  }
+  entry->parameters = next;
   bool populated = false;
-  for (unsigned i = 0; i < FX_ANIMATION_SLOTS; i++) {
-    populated |= animation->shaders[i] != NULL;
-  }
-  struct wlr_scene* scene = scene_node_get_root(node);
-  if (!populated) {
+  for (unsigned i = 0; i < FX_ANIMATION_SLOTS; ++i)
+    populated |= animation->slots[i].count != 0;
+  if (!populated)
     scene_animation_destroy(&animation->addon);
-  }
-  // Rebuild coverage on both activation and removal. Progress can change
-  // arbitrary texels, so damage the complete scene while custom effects run.
-  scene_node_update(&scene->tree.node, NULL);
+  scene_node_update(&scene_node_get_root(node)->tree.node, NULL);
 }
 
 void wlr_scene_node_clear_animations(struct wlr_scene_node* node) {
@@ -1212,22 +1234,20 @@ bool wlr_scene_node_set_animation_output_clip(struct wlr_scene_node* node, const
 
 void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destination, struct wlr_scene_node* source) {
   struct scene_animation* animation = scene_animation_get(source);
-  if (animation == NULL) {
+  if (animation == NULL)
     return;
-  }
-  for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
-    if (animation->shaders[slot] != NULL) {
-      // The elastic sheet must not overwrite a snapshot's opening effect.
-      const unsigned destination_slot = slot == FX_ANIMATION_INTERACTIVE_SLOT ? slot : (slot >= 4 ? 3 : slot);
-      wlr_scene_node_set_animation(
-          destination, destination_slot, animation->shaders[slot], &animation->parameters[slot]
-      );
-      struct scene_animation* copy = scene_animation_get(destination);
-      if (copy != NULL) {
-        copy->parameters[destination_slot] = animation->parameters[slot];
-        fx_animation_history_move(&copy->histories[destination_slot], &animation->histories[slot]);
-      }
-    }
+  for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; ++slot) {
+    struct scene_animation_slot* entry = &animation->slots[slot];
+    if (entry->count == 0)
+      continue;
+    const unsigned destination_slot = slot == FX_ANIMATION_INTERACTIVE_SLOT ? slot : (slot >= FX_ANIMATION_CLOSE_SLOT ? FX_ANIMATION_OPEN_SLOT : slot);
+    wlr_scene_node_set_animation_pipeline(destination, destination_slot, entry->shaders, entry->count, &entry->parameters);
+    struct scene_animation* copy = scene_animation_get(destination);
+    if (copy == NULL || copy->slots[destination_slot].count != entry->count)
+      continue;
+    copy->slots[destination_slot].parameters = entry->parameters;
+    for (size_t i = 0; i < entry->count; ++i)
+      fx_animation_history_move(&copy->slots[destination_slot].histories[i], &entry->histories[i]);
   }
 }
 
@@ -1309,6 +1329,10 @@ struct scene_postprocess_history {
   struct fx_postprocess_state* state;
 };
 struct scene_postprocess {
+  float time;
+  bool captured;
+  float speed;
+  bool frozen;
   struct wlr_addon addon;
   struct wl_list link, histories;
   struct wlr_scene_rect* rect;
@@ -1330,7 +1354,7 @@ struct scene_output_postprocess {
   double origin, time, pointer_x, pointer_y;
 };
 static struct wl_list scene_postprocesses = {&scene_postprocesses, &scene_postprocesses};
-static double postprocess_clock_origin = -1;
+static double shader_clock_origin = -1;
 
 static void postprocess_history_destroy(struct wl_listener* listener, void* data) {
   struct scene_postprocess_history* history = wl_container_of(listener, history, destroy);
@@ -1366,8 +1390,31 @@ static int postprocess_palette_copy(float* dst, const float* colors, int count) 
     memcpy(dst, colors, (size_t)clamped * 4 * sizeof(float));
   return clamped;
 }
+struct wlr_scene_rect* wlr_scene_rect_snapshot_postprocess(struct wlr_scene_tree* parent, struct wlr_scene_rect* source) {
+  if (source == NULL || !source->node.enabled)
+    return NULL;
+  struct scene_postprocess* effect = scene_postprocess_get(&source->node);
+  if (effect == NULL)
+    return NULL;
+  struct wlr_scene_rect* rect = wlr_scene_rect_create(parent, source->width, source->height, source->color);
+  if (rect == NULL)
+    return NULL;
+  rect->corners = source->corners;
+  wlr_scene_node_set_position(&rect->node, source->node.x, source->node.y);
+  wlr_scene_rect_set_postprocess(rect, effect->chain);
+  wlr_scene_rect_set_palette(rect, effect->palette, effect->palette_count);
+  struct scene_postprocess* copy = scene_postprocess_get(&rect->node);
+  if (copy != NULL) {
+    copy->time = effect->time;
+    copy->captured = true;
+    if (!wl_list_empty(&effect->histories))
+      wl_list_insert_list(&copy->histories, &effect->histories);
+    wl_list_init(&effect->histories);
+  }
+  return rect;
+}
 static bool postprocess_palette_equal(const struct fx_scene_postprocess* a, const struct fx_scene_postprocess* b) {
-  return a->palette_count == b->palette_count
+  return a->speed == b->speed && a->frozen == b->frozen && a->palette_count == b->palette_count
       && (a->palette_count == 0 || memcmp(a->palette, b->palette, (size_t)a->palette_count * 4 * sizeof(float)) == 0);
 }
 void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postprocess_chain* chain) {
@@ -1385,11 +1432,23 @@ void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postp
   if (effect == NULL)
     return;
   effect->rect = rect;
+  effect->speed = 1;
   effect->chain = fx_postprocess_chain_ref(chain);
   wl_list_init(&effect->histories);
   wl_list_insert(&scene_postprocesses, &effect->link);
   wlr_addon_init(&effect->addon, &rect->node.addons, &scene_postprocess_impl, &scene_postprocess_impl);
   wlr_scene_rect_set_color(rect, (float[4]){0, 0, 0, 0.5});
+  scene_node_update(&rect->node, NULL);
+}
+void wlr_scene_rect_set_postprocess_time(struct wlr_scene_rect* rect, bool animated, float speed) {
+  struct scene_postprocess* effect = scene_postprocess_get(&rect->node);
+  if (effect == NULL)
+    return;
+  const bool frozen = !animated || speed == 0;
+  if (effect->frozen == frozen && effect->speed == speed)
+    return;
+  effect->frozen = frozen;
+  effect->speed = speed;
   scene_node_update(&rect->node, NULL);
 }
 void wlr_scene_rect_set_palette(struct wlr_scene_rect* rect, const float* colors, int count) {
@@ -1585,8 +1644,8 @@ bool wlr_scene_output_tick_postprocess(struct wlr_scene_output* output, double s
   struct scene_output_postprocess* settings = output_postprocess_get(output, true);
   if (settings == NULL)
     return false;
-  if (postprocess_clock_origin < 0)
-    postprocess_clock_origin = seconds;
+  if (shader_clock_origin < 0)
+    shader_clock_origin = seconds;
   if (settings->suspended != suspended) {
     settings->suspended = suspended;
     settings->origin = -1;
@@ -1618,14 +1677,15 @@ bool wlr_scene_output_tick_postprocess(struct wlr_scene_output* output, double s
   bool animated = false;
   struct scene_postprocess* effect;
   wl_list_for_each(effect, &scene_postprocesses, link) animated |=
-      fx_postprocess_chain_animated(effect->chain) && postprocess_window_visible(effect, output);
+      !effect->captured && !effect->frozen && fx_postprocess_chain_animated(effect->chain) && postprocess_window_visible(effect, output);
   if (settings->redraw != FX_POSTPROCESS_ON_DAMAGE) {
-    if (output_postprocess_chain_visible(settings, &settings->global))
+    if (!settings->global.frozen && output_postprocess_chain_visible(settings, &settings->global))
       animated |=
           settings->redraw == FX_POSTPROCESS_CONTINUOUS || fx_postprocess_chain_animated(settings->global.chain);
     for (size_t i = 0; i < settings->count; ++i)
-      if (output_postprocess_chain_visible(settings, &settings->effects[i]))
-        animated |= fx_postprocess_chain_animated(settings->effects[i].chain);
+      if (!settings->effects[i].frozen && output_postprocess_chain_visible(settings, &settings->effects[i]))
+        animated |= settings->redraw == FX_POSTPROCESS_CONTINUOUS
+            || fx_postprocess_chain_animated(settings->effects[i].chain);
   }
   if (animated)
     postprocess_damage_current_frame(output);
@@ -1659,12 +1719,29 @@ void wlr_scene_postprocess_pointer(struct wlr_scene* scene, double x, double y, 
   }
 }
 
+struct scene_decoration_output {
+  struct wl_list link;
+  struct wl_listener destroy;
+  struct wlr_scene_output* output;
+  struct fx_decoration_pipeline* pipeline;
+};
+
+static void decoration_output_destroy(struct wl_listener* listener, void* data) {
+  struct scene_decoration_output* state = wl_container_of(listener, state, destroy);
+  fx_decoration_pipeline_destroy(state->pipeline);
+  wl_list_remove(&state->destroy.link);
+  wl_list_remove(&state->link);
+  free(state);
+}
+
 struct scene_decoration {
   struct wlr_addon addon;
   struct wl_list link;
   struct wlr_scene_border* border;
   struct fx_decoration_shader* shader;
   struct fx_decoration_parameters parameters;
+  struct fx_postprocess_chain* postprocess;
+  struct wl_list outputs;
   float time;
   bool frozen;
   struct wlr_scene_rect* light_node;
@@ -1672,8 +1749,24 @@ struct scene_decoration {
   struct fx_decoration_light* light_cache;
   float light_inputs[20];
 };
+static struct fx_decoration_pipeline** decoration_output_pipeline(struct scene_decoration* effect, struct wlr_scene_output* output) {
+  if (effect == NULL || effect->postprocess == NULL)
+    return NULL;
+  struct scene_decoration_output* state;
+  wl_list_for_each(state, &effect->outputs, link)
+    if (state->output == output)
+      return &state->pipeline;
+  state = calloc(1, sizeof(*state));
+  if (state == NULL)
+    return NULL;
+  state->output = output;
+  state->destroy.notify = decoration_output_destroy;
+  wl_signal_add(&output->events.destroy, &state->destroy);
+  wl_list_insert(&effect->outputs, &state->link);
+  return &state->pipeline;
+}
+
 static struct wl_list scene_decorations = {&scene_decorations, &scene_decorations};
-static double decoration_clock_origin = -1;
 
 struct scene_decoration_layer {
   struct wlr_addon addon;
@@ -1807,6 +1900,10 @@ static void scene_decoration_destroy(struct wlr_addon* addon) {
   if (effect->light_node != NULL)
     wlr_scene_node_destroy(&effect->light_node->node);
   fx_decoration_shader_unref(effect->shader);
+  fx_postprocess_chain_unref(effect->postprocess);
+  struct scene_decoration_output *state, *temporary;
+  wl_list_for_each_safe(state, temporary, &effect->outputs, link)
+    decoration_output_destroy(&state->destroy, NULL);
   wl_list_remove(&effect->link);
   wlr_addon_finish(addon);
   free(effect);
@@ -1840,6 +1937,7 @@ void wlr_scene_border_set_shader(
     if (effect == NULL)
       return;
     effect->border = border;
+    wl_list_init(&effect->outputs);
     wlr_addon_init(&effect->addon, &border->node.addons, &scene_decoration_impl, &scene_decoration_impl);
     wl_list_insert(&scene_decorations, &effect->link);
   }
@@ -1866,22 +1964,41 @@ void wlr_scene_border_set_shader(
     effect->time = 0;
   scene_node_update(&border->node, NULL);
 }
+void wlr_scene_border_set_postprocess(struct wlr_scene_border* border, struct fx_postprocess_chain* chain) {
+  struct scene_decoration* effect = scene_decoration_get(border);
+  if (effect == NULL || effect->postprocess == chain)
+    return;
+  fx_postprocess_chain_ref(chain);
+  fx_postprocess_chain_unref(effect->postprocess);
+  effect->postprocess = chain;
+  struct scene_decoration_output *state, *temporary;
+  wl_list_for_each_safe(state, temporary, &effect->outputs, link)
+    decoration_output_destroy(&state->destroy, NULL);
+  fx_decoration_light_destroy(effect->light_cache);
+  effect->light_cache = NULL;
+  scene_node_update(&border->node, NULL);
+}
 void wlr_scene_border_copy_shader(struct wlr_scene_border* destination, struct wlr_scene_border* source) {
   struct scene_decoration* effect = scene_decoration_get(source);
   if (effect == NULL)
     return;
   wlr_scene_border_set_shader(destination, effect->shader, &effect->parameters);
+  wlr_scene_border_set_postprocess(destination, effect->postprocess);
   wlr_scene_border_set_palette(destination, source->palette, source->palette_count);
   struct scene_decoration* copy = scene_decoration_get(destination);
   if (copy != NULL) {
     copy->time = effect->time;
     copy->frozen = true;
     copy->parameters.light.enabled = false;
+    if (!wl_list_empty(&effect->outputs)) {
+      wl_list_insert_list(&copy->outputs, &effect->outputs);
+      wl_list_init(&effect->outputs);
+    }
   }
 }
 bool wlr_scene_output_tick_decoration_shaders(struct wlr_scene_output* output, double seconds) {
-  if (decoration_clock_origin < 0)
-    decoration_clock_origin = seconds;
+  if (shader_clock_origin < 0)
+    shader_clock_origin = seconds;
   bool active = false;
   struct scene_decoration* effect;
   struct wlr_box output_box = {.x = output->x, .y = output->y};
@@ -1894,7 +2011,7 @@ bool wlr_scene_output_tick_decoration_shaders(struct wlr_scene_output* output, d
     if (effect->frozen
         || !effect->parameters.animated
         || effect->parameters.speed == 0
-        || effect->shader->time < 0
+        || (effect->shader->time < 0 && !fx_postprocess_chain_animated(effect->postprocess))
         || effect->shader->renderer == NULL
         || &effect->shader->renderer->wlr_renderer != output->output->renderer
         || scene_node_get_root(&border->node) != output->scene
@@ -1908,7 +2025,7 @@ bool wlr_scene_output_tick_decoration_shaders(struct wlr_scene_output* output, d
       continue;
     if (!pixman_region32_not_empty(&damage_node->visible))
       continue;
-    effect->time = (seconds - decoration_clock_origin) * effect->parameters.speed;
+    effect->time = (seconds - shader_clock_origin) * effect->parameters.speed;
     active = true;
     pixman_region32_t damage;
     pixman_region32_init_rect(
@@ -3071,8 +3188,10 @@ static void render_window_postprocess(
   wl_signal_add(&data->output->events.destroy, &history->destroy);
   wl_list_insert(&effect->histories, &history->link);
 found:;
+  if (!effect->captured)
+    effect->time = effect->frozen ? 0 : (settings->time + settings->origin - shader_clock_origin) * effect->speed;
   struct fx_postprocess_parameters parameters = {
-      .time = settings->time + settings->origin - postprocess_clock_origin,
+      .time = effect->time,
       .scale = data->scale,
       .palette = effect->palette_count > 0 ? effect->palette : NULL,
       .palette_count = effect->palette_count,
@@ -3110,7 +3229,8 @@ static void render_output_postprocess(
         .height = ceil(effect->cursor_radius * 2)
     };
   struct fx_postprocess_parameters parameters = {
-      .time = settings->time,
+      .time = effect->frozen ? 0 : (settings->time + settings->origin - shader_clock_origin)
+          * (effect->speed > 0 ? effect->speed : 1),
       .scale = data->scale,
       .palette = effect->palette_count > 0 ? effect->palette : NULL,
       .palette_count = effect->palette_count,
@@ -3202,6 +3322,8 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
       struct wlr_scene_border* border = light->border;
       const struct fx_render_border_options ring = {
           .shader = light->shader,
+          .postprocess = light->postprocess,
+          .pipeline = decoration_output_pipeline(light, data->output),
           .shader_time = light->time,
           .shader_padding = light->parameters.padding,
           .shader_scale = data->scale,
@@ -3291,6 +3413,8 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
             .box = dst_box,
             .clip = &render_region,
             .shader = decoration != NULL ? decoration->shader : NULL,
+            .postprocess = decoration != NULL ? decoration->postprocess : NULL,
+            .pipeline = decoration_output_pipeline(decoration, data->output),
             .shader_time = decoration != NULL ? decoration->time : 0,
             .shader_padding = decoration != NULL ? decoration->parameters.padding : 0,
             .shader_scale = data->scale,
@@ -3650,7 +3774,7 @@ outer_animation(struct wlr_scene_node* node, struct wlr_scene_node* stop, struct
       continue;
     }
     for (unsigned i = 0; i < FX_ANIMATION_SLOTS; i++) {
-      if (animation->shaders[i] != NULL && animation->shaders[i]->renderer == renderer) {
+      if (animation->slots[i].count != 0 && animation->slots[i].shaders[0]->renderer == renderer) {
         outer = animation;
         break;
       }
@@ -3683,8 +3807,10 @@ static bool render_animation_shadow(struct render_list_entry* entry, const struc
       continue;
     }
     for (unsigned i = 0; i < FX_ANIMATION_SLOTS && !animated; i++) {
-      const struct fx_animation_shader* shader = effect->shaders[i];
-      animated = shader != NULL && shader->renderer == pass->buffer->renderer && !shader->shape_preserving;
+      for (size_t j = 0; j < effect->slots[i].count && !animated; ++j) {
+        const struct fx_animation_shader* shader = effect->slots[i].shaders[j];
+        animated = shader->renderer == pass->buffer->renderer && !shader->shape_preserving;
+      }
     }
     if (animated) {
       break;
@@ -3764,8 +3890,8 @@ static void render_animated_range(
     bool captured[FX_ANIMATION_SLOTS] = {0};
     bool captured_any = false;
     for (int slot = FX_ANIMATION_SLOTS - 1; slot >= 0; slot--) {
-      struct fx_animation_shader* shader = animation->shaders[slot];
-      if (shader != NULL && shader->renderer == pass->buffer->renderer) {
+      struct scene_animation_slot* entry = &animation->slots[slot];
+      if (entry->count != 0 && entry->shaders[0]->renderer == pass->buffer->renderer) {
         captured[slot] = fx_render_pass_begin_animation(pass);
         captured_any |= captured[slot];
       }
@@ -3843,9 +3969,10 @@ static void render_animated_range(
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
       if (captured[slot]) {
         const pixman_region32_t* composite_clip = has_output_clip && (int)slot == final_slot ? &output_clip : &clip;
-        fx_render_pass_end_animation_with_history(
-            pass, animation->shaders[slot], &animation->parameters[slot], &box, &logical_box, data->transform, &clip,
-            composite_clip, &animation->histories[slot], data->output->output,
+        struct scene_animation_slot* entry = &animation->slots[slot];
+        fx_render_pass_end_animation_pipeline(
+            pass, entry->shaders, entry->count, &entry->parameters, &box, &logical_box, data->transform, &clip,
+            composite_clip, entry->histories, data->output->output,
             !data->shadow_capture && !data->postprocess_capture
         );
       }

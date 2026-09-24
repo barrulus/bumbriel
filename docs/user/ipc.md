@@ -23,6 +23,8 @@ Replies use `{"ok": ...}` or `{"err": "..."}`.
 | `{"cmd":"workspaces"}` | `umbriel workspaces --json` |
 | `{"cmd":"submap"}` | `umbriel submap --json` |
 | `{"cmd":"layers"}` | `umbriel layers --json` |
+| `{"cmd":"effects"}` | `umbriel effects --json` |
+| `{"cmd":"effects","arg":"--window ID"}` | `umbriel effects --window ID --json` |
 | `{"cmd":"msg","arg":"<action>"}` | `umbriel msg <action>` |
 
 Window entries include IDs, application identity, process ID, geometry,
@@ -33,6 +35,12 @@ Workspace entries include a stable ID, display name, index, output, layout,
 occupancy, and active and focused states. Use the `named` boolean instead of
 guessing from the display name; an explicitly named workspace may still be
 called `"2"`.
+
+Effect inspection includes the named library, resolved scopes, provenance,
+choice assignments, suppression reasons, and retained event generations.
+Filters accept `--window ID`, `--output ID`, `--layer ID`, or `--region NAME`.
+Inspection does not allocate choices or change selections. See
+[Effects](barrulus-shaders.md) for configuration and runtime controls.
 
 ## Event stream
 

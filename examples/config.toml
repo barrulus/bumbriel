@@ -185,14 +185,15 @@ blur_optimized = false
 
 # ==============================================================================
 # Overview
-# Shader presets and pools: shaders/barrulus/README.md
+# Named effects and choices: shaders/barrulus/README.md
 # Built-in overview and animation values are used. The top-left hot corner opens
 # the overview after a short delay.
 # Overview: https://docs.noctalia.dev/umbriel/workspaces-overview/
 # Animation: https://docs.noctalia.dev/umbriel/animation/
 # For pointer-driven elastic movement, enable this optional effect:
 # [animation.windows_move]
-# wobble = true
+# drag_physics = true
+# Named drag presets use effects.NAME.drag; see effects/drag.toml.
 
 [hot_corners.top_left]
 enabled = true

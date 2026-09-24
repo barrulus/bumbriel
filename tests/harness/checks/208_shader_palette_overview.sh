@@ -11,14 +11,17 @@ files = ["$PALETTE"]
 [animation]
 enabled = false
 [appearance]
+effects = ["fixture"]
 border_width = 8
 outer_border_width = 0
 [appearance.shadow]
 enabled = false
-[appearance.border_shader]
-shader = "ring.glsl"
+[effects.fixture.border.outer]
+passes = [{shader = "ring.glsl"}]
 animated = false
 palette = true
+[render.effects]
+in_capture = true
 TOML
 
 set_palette() {

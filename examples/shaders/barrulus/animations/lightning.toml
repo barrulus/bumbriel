@@ -1,21 +1,9 @@
-[animation.windows_in]
-enabled = true
+[effects.lightning-melt.open]
 duration_ms = 400
 curve = "linear"
-shader = "lightning-open.glsl"
+passes = [{ shader = "lightning-open.glsl" }]
 
-[animation.windows_out]
-enabled = true
+[effects.lightning-melt.close]
 duration_ms = 400
 curve = "linear"
-shader = "lightning-close.glsl"
-
-[animation.pair.lightning.open]
-shader = "lightning-open.glsl"
-duration_ms = 400
-curve = "linear"
-
-[animation.pair.lightning.close]
-shader = "lightning-close.glsl"
-duration_ms = 400
-curve = "linear"
+passes = [{ shader = "lightning-close.glsl" }]

@@ -41,6 +41,7 @@ struct fx_offscreen_buffers {
 	struct fx_framebuffer *effects_buffer_swapped;
 	struct fx_framebuffer *animation_buffers[FX_ANIMATION_DEPTH];
 	struct fx_framebuffer *animation_backdrop;
+	struct fx_framebuffer *animation_pipeline_buffers[2];
 };
 
 void fx_offscreen_buffers_destroy(struct fx_offscreen_buffers *fbos);

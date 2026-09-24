@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.fire-tendrils"]
-scope = "window"
-
-[[shaders.preset."window.fire-tendrils".passes]]
-shader = "fire-tendrils.glsl"
+[effects."window.fire-tendrils".content]
+passes = [{ shader = "fire-tendrils.glsl" }]

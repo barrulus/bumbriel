@@ -1,0 +1,24 @@
+[animation]
+enabled = true
+
+[animation.windows_move]
+enabled = true
+drag_physics = true
+duration_ms = 650
+curve = "easeout"
+
+[effects.elastic.open]
+duration_ms = 620
+curve = "linear"
+passes = [{ shader = "shaders/animations/wobbly-lifecycle.glsl" }]
+
+[effects.elastic.close]
+duration_ms = 460
+curve = "linear"
+passes = [{ shader = "shaders/animations/wobbly-lifecycle.glsl" }]
+
+[effects.elastic.move]
+passes = [{ shader = "shaders/animations/wobbly-move.glsl" }]
+
+[effects.elastic.resize]
+passes = [{ shader = "shaders/animations/wobbly-move.glsl" }]

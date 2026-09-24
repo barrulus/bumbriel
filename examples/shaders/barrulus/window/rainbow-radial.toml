@@ -1,6 +1,2 @@
-# Barrulus shader collection.
-[shaders.preset."window.rainbow-radial"]
-scope = "window"
-
-[[shaders.preset."window.rainbow-radial".passes]]
-shader = "rainbow-radial.glsl"
+[effects."window.rainbow-radial".content]
+passes = [{ shader = "rainbow-radial.glsl" }]

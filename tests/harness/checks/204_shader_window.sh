@@ -10,11 +10,13 @@ outer_border_width = 0
 corner_radius = 0
 [appearance.shadow]
 enabled = false
-[shaders]
+[render.effects]
 in_capture = true
+[effects.invert.content]
+passes = [{builtin = "invert"}]
 [[window_rule]]
 match.title = "shaded-window"
-shader = "invert"
+effects = ["invert"]
 TOML
 "$UMBRIEL" msg config-reload >/dev/null
 FILL_COLOR=0xFF204080 "$UMBRIEL_UNMAP_CLIENT" shaded-window 500 400 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
@@ -48,7 +50,7 @@ read -r red green blue < <(timeout 10 "$(dirname "$UMBRIEL")/tests/toplevel-capt
 (( red > 25 && red < 40 && green > 55 && green < 75 && blue > 120 && blue < 135 )) || {
   echo "isolated excluded capture wrong: $red $green $blue"; exit 1;
 }
-sed -i 's/in_capture = false/in_capture = true/; s/shader = "invert"/shader = "off"/' "$UMBRIEL_CONFIG"
+sed -i 's/in_capture = false/in_capture = true/; s/effects = \["invert"\]/effects = []/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload >/dev/null
 read -r red green blue < <(sample)
 (( red > 25 && red < 40 && green > 55 && green < 75 && blue > 120 && blue < 135 )) || {

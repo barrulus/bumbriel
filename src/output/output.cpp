@@ -16,6 +16,7 @@
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
 #include "scene/config_banner.h"
+#include "scene/effects.h"
 #include "scene/node.h"
 #include "scene/quit_confirm.h"
 #include "server/ipc.h"
@@ -33,6 +34,9 @@
 #include <format>
 #include <umbrielfx/render/decoration.h>
 #include <umbrielfx/render/postprocess.h>
+extern "C" {
+#include <umbrielfx/render/animation.h>
+}
 
 namespace umbriel {
 
@@ -215,44 +219,76 @@ namespace umbriel {
     wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
   }
 
+  void Output::appendEffectInputs(std::vector<EffectInput>& inputs) const {
+    if (const auto* rule = findOutputRule(config(), identity()); rule && rule->effects)
+      inputs.push_back({*rule->effects, kAllEffects});
+    m_effectState.appendOverrides(inputs);
+  }
+
+  const ResolvedEffects& Output::resolvedEffects() {
+    std::vector<EffectInput> inputs;
+    if (config().appearance.effects)
+      inputs.push_back({*config().appearance.effects, kAllEffects});
+    globalEffectState().appendOverrides(inputs);
+    if (const auto* rule = findOutputRule(config(), identity()); rule && rule->effects)
+      inputs.push_back({*rule->effects, kAllEffects});
+    m_effectState.resolve(config().effects, inputs, effectAllocator(), kOutputEffects);
+    return m_effectState.resolved();
+  }
+
+  void Output::updateEffect(
+      wlr_scene_node* node, EffectScope scope, AnimationEvent event, const AnimatedValue& value, float direction
+  ) {
+    const auto index = static_cast<size_t>(scope);
+    m_effectEvents[index].update(
+        node, static_cast<unsigned>(event), resolvedEffects()[index], scope, animationParameters(value, direction),
+        value.animating(),
+        effectsEnabled() && nativeEffectEnabled(scope) && !(m_effectState.disabled() & effectBit(scope))
+    );
+  }
+
   void Output::applyPostprocessConfig() {
     if (m_sceneOutput == nullptr)
       return;
-    const auto& shaders = config().shaders;
-    // Every scope opts in through its own preset's palette key; nothing is inherited from another effect.
-    const auto withPalette = [](fx_scene_postprocess effect, std::string_view name) {
-      const auto* preset = postprocessPreset(name);
-      if (preset == nullptr || !preset->palette)
-        return effect;
-      std::ranges::copy(shaderPalette(config().colors), std::begin(effect.palette));
-      effect.palette_count = kShaderPaletteCount;
-      return effect;
-    };
+    const auto& policy = config().effectPolicy;
+    const auto& resolved = resolvedEffects();
     std::vector<fx_scene_postprocess> effects;
-    for (const auto& region : shaders.regions) {
+    std::erase_if(m_regionEffects, [&](const auto& entry) {
+      return std::ranges::none_of(config().effectRegions, [&](const auto& region) {
+        return region.name == entry.first
+            && (region.output.empty() || outputNameMatch(identity(), region.output) != OutputNameMatch::None);
+      });
+    });
+    for (const auto& region : config().effectRegions) {
       if (!region.output.empty() && outputNameMatch(identity(), region.output) == OutputNameMatch::None)
         continue;
-      if (auto* chain = postprocessShader(region.preset)) {
-        const wlr_box box{region.x, region.y, region.width, region.height};
-        effects.push_back(withPalette({chain, box, 0, {}, 0}, region.preset));
+      auto& state = m_regionEffects.try_emplace(region.name, EffectOwner::Region).first->second;
+      std::vector inputs{EffectInput{region.effects, effectBit(EffectScope::Screen)}};
+      if (const auto override = regionEffectOverrides().find(region.name); override != regionEffectOverrides().end())
+        override->second.appendOverrides(inputs);
+      state.resolve(config().effects, inputs, effectAllocator(), effectBit(EffectScope::Screen));
+      if (effectsEnabled() && !(state.disabled() & effectBit(EffectScope::Screen))) {
+        auto effect = outputEffect(state.resolved()[static_cast<size_t>(EffectScope::Screen)], EffectScope::Screen);
+        effect.region = {region.x, region.y, region.width, region.height};
+        if (effect.chain)
+          effects.push_back(effect);
       }
     }
-    const auto* rule = findOutputRule(config(), identity());
-    const auto outputName =
-        selectedShader(m_shaderSelection, rule != nullptr && !rule->shader.empty() ? rule->shader : shaders.output);
-    if (auto* chain = postprocessShader(outputName))
-      effects.push_back(withPalette({chain, {}, 0, {}, 0}, outputName));
-    const auto globalName = selectedShader(globalShaderSelection(), shaders.global);
-    const auto* preset = postprocessPreset(globalName);
-    const fx_scene_postprocess global = withPalette(
-        {postprocessShader(globalName), {}, preset != nullptr ? static_cast<float>(preset->cursorRadius) : 0, {}, 0},
-        globalName
-    );
-    const auto redraw = shaders.redraw == "continuous" ? FX_POSTPROCESS_CONTINUOUS
-        : shaders.redraw == "on-damage"                ? FX_POSTPROCESS_ON_DAMAGE
-                                                       : FX_POSTPROCESS_AUTO;
+    fx_scene_postprocess overlay{};
+    if (effectsEnabled()) {
+      if (!(m_effectState.disabled() & effectBit(EffectScope::Screen))) {
+        auto screen = outputEffect(resolved[static_cast<size_t>(EffectScope::Screen)], EffectScope::Screen);
+        if (screen.chain)
+          effects.push_back(screen);
+      }
+      if (!(m_effectState.disabled() & effectBit(EffectScope::Overlay)))
+        overlay = outputEffect(resolved[static_cast<size_t>(EffectScope::Overlay)], EffectScope::Overlay);
+    }
+    const auto redraw = policy.redraw == "continuous" ? FX_POSTPROCESS_CONTINUOUS
+        : policy.redraw == "on_damage"                ? FX_POSTPROCESS_ON_DAMAGE
+                                                      : FX_POSTPROCESS_AUTO;
     wlr_scene_output_set_postprocess(
-        m_sceneOutput, effects.data(), effects.size(), global, shaders.inCapture, shaders.readsCursor, redraw
+        m_sceneOutput, effects.data(), effects.size(), overlay, policy.inCapture, policy.readsCursor, redraw
     );
     if (const auto* cursor = m_server->cursor())
       wlr_scene_postprocess_pointer(m_server->scene(), cursor->wlr()->x, cursor->wlr()->y, !cursor->hidden());
@@ -1258,12 +1294,9 @@ namespace umbriel {
     // would recreate the same immediate retry loop.
     switch (outputFrameFollowup(m_server->stopping(), m_server->session(), commitFailed, animationsActive)) {
     case OutputFrameFollowup::Schedule:
-      if (shadersActive
-          && !nativeAnimationsActive
-          && config().appearance.shaderFps > 0
-          && m_shaderFrameTimer != nullptr) {
+      if (shadersActive && !nativeAnimationsActive && config().effectPolicy.fps > 0 && m_shaderFrameTimer != nullptr) {
         wl_event_source_timer_update(
-            m_shaderFrameTimer, (1000 + config().appearance.shaderFps - 1) / config().appearance.shaderFps
+            m_shaderFrameTimer, (1000 + config().effectPolicy.fps - 1) / config().effectPolicy.fps
         );
       } else {
         wlr_output_schedule_frame(m_output);
