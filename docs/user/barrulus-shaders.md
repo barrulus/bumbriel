@@ -44,6 +44,7 @@ shader = "shaders/barrulus/rings/lightning.glsl"
 animated = true
 speed = 1.0
 padding = 24
+palette = false
 ```
 
 Paths resolve relative to the TOML file containing `shader`, including included
@@ -76,6 +77,40 @@ match.app_id = "^foot$"
 [window_rule.border_shader]
 enabled = false
 ```
+
+## Following the configured colours
+
+`palette = false` is the default and leaves every shader on the colours written
+into its own GLSL. Setting it true publishes four `[colors]` entries to the
+shader in this order:
+
+| Index | Key |
+| --- | --- |
+| 0 | `accent_primary` |
+| 1 | `accent_secondary` |
+| 2 | `warning` |
+| 3 | `error` |
+
+Only those four are published. The remaining entries are backgrounds, near-greys
+and duplicates, which muddy a cycle rather than extend it.
+
+```toml
+[appearance.border_shader]
+shader = "shaders/barrulus/rings/rainbow-ripple.glsl"
+palette = true
+```
+
+A shell that rewrites `[colors]`, such as one regenerating a scheme from the
+wallpaper, therefore moves the ring with it on the next config reload. Nothing
+restarts and no shader is recompiled.
+
+Of the supplied rings, `pulse.glsl`, `rainbow-ripple.glsl` and `lightning.glsl`
+read the palette. `lightning` takes its body from the ramp and drives its core
+toward white, so the bolt stays readable whatever the scheme.
+
+The others keep their own colours whatever this key says, because their
+appearance is the effect: `fuse.glsl` is a burning fuse and `portal-lava.glsl`
+is molten rock.
 
 `speed` is clamped to 0–10 and padding to 0–1024 logical pixels. `animated = false`
 or speed zero freezes the shader at time zero. A compiled program that does not
@@ -227,6 +262,22 @@ applies the configured base alpha, punched client hole and premultiplication.
 - `ring_base_color(coords)`: configured straight base colour.
 - `umbriel_time`: monotonic elapsed seconds multiplied by configured speed.
 - `umbriel_scale`: physical pixels per logical pixel for antialiasing.
+- `umbriel_palette_count`: published colours, zero unless `palette = true`.
+- `umbriel_palette_at(t)`: the ramp at `t`, wrapping so `t` and `t + 1` agree.
+
+A shader chooses whether to follow the palette by testing the count, which keeps
+it correct under either setting and needs no second source file:
+
+```glsl
+vec3 tint = umbriel_palette_count > 0
+    ? umbriel_palette_at(umbriel_time * 0.08).rgb
+    : vec3(0.15, 0.8, 1.0);
+```
+
+Pass a hue-wheel shader the same position it already gives the wheel and the
+ramp cycles where the spectrum did. `umbriel_palette_at` returns
+`ring_base_color(coords)` when the count is zero, so an unguarded call degrades
+to the configured border colour rather than to black.
 
 These shader examples are authored by Barrulus.
 

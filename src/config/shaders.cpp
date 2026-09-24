@@ -14,6 +14,7 @@ namespace umbriel {
         .text("overlay", target.overlay)
         .boolean("enabled", target.enabled)
         .boolean("animated", target.animated)
+        .boolean("palette", target.palette)
         .real("speed", 0.0, 10.0, target.speed)
         .integer("padding", 0, 1024, target.padding);
     section.sub("light", [&](Section& light) {

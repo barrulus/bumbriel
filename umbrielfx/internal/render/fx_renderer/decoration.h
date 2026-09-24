@@ -11,7 +11,7 @@ struct fx_decoration_shader {
   GLuint program;
   GLint proj, tex_proj, position;
   GLint size, raster, origin, radius, width, padding, time, scale, color, linear;
-  GLint emission, threshold, emission_bounds;
+  GLint emission, threshold, emission_bounds, palette, palette_count;
   GLuint light_program;
   GLint light_proj, light_tex_proj, light_position, light_tex, light_gain, light_linear;
 };

@@ -1937,6 +1937,19 @@ void wlr_scene_border_set_colors(
   scene_node_update(&border->node, NULL);
 }
 
+void wlr_scene_border_set_palette(struct wlr_scene_border* border, const float* colors, int count) {
+  const int clamped = colors == NULL || count < 0 ? 0 : count > FX_RING_PALETTE_MAX ? FX_RING_PALETTE_MAX : count;
+  const size_t bytes = (size_t)clamped * 4 * sizeof(float);
+  if (border->palette_count == clamped && (clamped == 0 || memcmp(border->palette, colors, bytes) == 0)) {
+    return;
+  }
+  border->palette_count = clamped;
+  if (clamped > 0) {
+    memcpy(border->palette, colors, bytes);
+  }
+  scene_node_update(&border->node, NULL);
+}
+
 static void scene_buffer_handle_buffer_release(struct wl_listener* listener, void* data) {
   struct wlr_scene_buffer* scene_buffer = wl_container_of(listener, scene_buffer, buffer_release);
 
@@ -3153,6 +3166,8 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
           .outer_color = {
               border->outer_color[0], border->outer_color[1], border->outer_color[2], border->outer_color[3]
           },
+          .palette = border->palette,
+          .palette_count = border->palette_count,
       };
       fx_render_pass_add_decoration_light(
           fx_pass, &light->light_cache, &ring, &light->parameters.light, &dst_box, &render_region
@@ -3256,6 +3271,8 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
                 .b = scene_border->outer_color[2],
                 .a = scene_border->outer_color[3],
             },
+            .palette = scene_border->palette,
+            .palette_count = scene_border->palette_count,
         }
     );
     break;
