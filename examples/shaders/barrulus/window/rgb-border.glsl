@@ -11,7 +11,10 @@ vec4 postprocess(vec3 c){
 
         float ang = atan(c.y-0.5, c.x-0.5) * 0.1591549;
         float hue = fract(ang + umbriel_time*0.25);
-        vec3  rgb = 0.5 + 0.5*cos(6.2831853*(hue + vec3(0.0,0.33,0.67)));
+        // A zero count means the palette is off, which is how a shader keeps its own colours.
+        vec3 rgb = umbriel_palette_count > 0
+            ? umbriel_palette_at(hue).rgb
+            : 0.5 + 0.5*cos(6.2831853*(hue + vec3(0.0,0.33,0.67)));
 
         return vec4(s.rgb + rgb*m, s.a);
     }

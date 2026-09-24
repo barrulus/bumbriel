@@ -2,6 +2,7 @@
 
 #include "config/config.h"
 #include "config/resolve.h"
+#include "config/shaders.h"
 #include "core/log.h"
 #include "core/tracy.h"
 #include "input/cursor.h"
@@ -217,23 +218,35 @@ namespace umbriel {
     if (m_sceneOutput == nullptr)
       return;
     const auto& shaders = config().shaders;
+    // Every scope opts in through its own preset's palette key; nothing is inherited from another effect.
+    const auto withPalette = [](fx_scene_postprocess effect, std::string_view name) {
+      const auto* preset = postprocessPreset(name);
+      if (preset == nullptr || !preset->palette)
+        return effect;
+      std::ranges::copy(shaderPalette(config().colors), std::begin(effect.palette));
+      effect.palette_count = kShaderPaletteCount;
+      return effect;
+    };
     std::vector<fx_scene_postprocess> effects;
     for (const auto& region : shaders.regions) {
       if (!region.output.empty() && outputNameMatch(identity(), region.output) == OutputNameMatch::None)
         continue;
-      if (auto* chain = postprocessShader(region.preset))
-        effects.push_back({chain, {region.x, region.y, region.width, region.height}, 0});
+      if (auto* chain = postprocessShader(region.preset)) {
+        const wlr_box box{region.x, region.y, region.width, region.height};
+        effects.push_back(withPalette({chain, box, 0, {}, 0}, region.preset));
+      }
     }
     const auto* rule = findOutputRule(config(), identity());
     const auto outputName =
         selectedShader(m_shaderSelection, rule != nullptr && !rule->shader.empty() ? rule->shader : shaders.output);
     if (auto* chain = postprocessShader(outputName))
-      effects.push_back({chain, {}, 0});
+      effects.push_back(withPalette({chain, {}, 0, {}, 0}, outputName));
     const auto globalName = selectedShader(globalShaderSelection(), shaders.global);
     const auto* preset = postprocessPreset(globalName);
-    const fx_scene_postprocess global{
-        postprocessShader(globalName), {}, preset != nullptr ? static_cast<float>(preset->cursorRadius) : 0
-    };
+    const fx_scene_postprocess global = withPalette(
+        {postprocessShader(globalName), {}, preset != nullptr ? static_cast<float>(preset->cursorRadius) : 0, {}, 0},
+        globalName
+    );
     const auto redraw = shaders.redraw == "continuous" ? FX_POSTPROCESS_CONTINUOUS
         : shaders.redraw == "on-damage"                ? FX_POSTPROCESS_ON_DAMAGE
                                                        : FX_POSTPROCESS_AUTO;

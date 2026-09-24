@@ -104,6 +104,9 @@ A shell that rewrites `[colors]`, such as one regenerating a scheme from the
 wallpaper, therefore moves the ring with it on the next config reload. Nothing
 restarts and no shader is recompiled.
 
+The same key exists on window, output and global presets; see
+[following the configured colours](#following-the-configured-colours-1) for those.
+
 Of the supplied rings, `pulse.glsl`, `rainbow-ripple.glsl` and `lightning.glsl`
 read the palette. `lightning` takes its body from the ramp and drives its core
 toward white, so the bolt stays readable whatever the scheme.
@@ -327,6 +330,43 @@ The separate builtins are `grayscale` (Rec.709 coefficients), `invert`,
 `saturation` (1.5), and `temperature` (4000 K). `screen.grayscale` retains the
 source's `(0.299, 0.587, 0.114)` coefficients. `screen.warmtint` retains its own
 RGB multipliers. Temperature is exactly neutral at 6500 K.
+
+### Following the configured colours
+
+A preset opts in with `palette = true`, the same key and the same four `[colors]`
+entries the [border shaders](#following-the-configured-colours) publish:
+
+```toml
+[shaders.preset."window.rainbow-smoke"]
+scope = "window"
+palette = true
+passes = [{ shader = "shaders/barrulus/window/rainbow-smoke.glsl" }]
+```
+
+The uniforms are identical, so one shader body is correct in either scope:
+
+- `umbriel_palette_count`: published colours, zero unless `palette = true`.
+- `umbriel_palette_at(t)`: the ramp at `t`, wrapping so `t` and `t + 1` agree.
+
+Where a ring falls back to `ring_base_color()`, a postprocess pass has no base
+colour to fall back to, so `umbriel_palette_at` returns opaque white when the
+count is zero. Test the count rather than relying on that:
+
+```glsl
+vec3 tint = umbriel_palette_count > 0
+    ? umbriel_palette_at(hue).rgb
+    : 0.5 + 0.5 * cos(6.2831853 * (hue + vec3(0.0, 0.33, 0.67)));
+```
+
+`rainbow-smoke`, `rainbow-waves`, `rainbow-radial`, `rgb-shimmer` and
+`rgb-border` read it. Every other shipped effect keeps its own colours, because
+their appearance is the effect rather than a theme.
+
+The key is read off the preset naming each effect, so window, output, region and
+global scopes opt in separately and nothing is inherited from another effect. A
+window preset with `palette = false` sees a count of zero whatever the global
+preset does. A shell rewriting `[colors]` moves every opted-in effect together on
+the next reload.
 
 Custom ordered chains contain 1–16 passes. A broken or missing pass disables
 the entire chain until corrected. No partial chain or stale last-good program

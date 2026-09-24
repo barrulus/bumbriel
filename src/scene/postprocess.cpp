@@ -86,6 +86,16 @@ namespace umbriel {
         return &entry.preset;
     return nullptr;
   }
+  void applyPostprocessShader(wlr_scene_rect* rect, fx_postprocess_chain* chain, std::string_view presetName) {
+    wlr_scene_rect_set_postprocess(rect, chain);
+    const auto* preset = postprocessPreset(presetName);
+    if (chain != nullptr && preset != nullptr && preset->palette) {
+      const auto palette = shaderPalette(config().colors);
+      wlr_scene_rect_set_palette(rect, palette.data(), kShaderPaletteCount);
+    } else {
+      wlr_scene_rect_set_palette(rect, nullptr, 0);
+    }
+  }
   std::string_view selectedShader(const ShaderSelection& selection, std::string_view fallback) {
     if (!selection.enabled)
       return "off";

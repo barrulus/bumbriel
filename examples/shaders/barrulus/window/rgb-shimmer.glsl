@@ -27,7 +27,10 @@ vec4 postprocess(vec3 c){
 
     float f   = fbm(p*3.0 + vec2(umbriel_time*0.13, umbriel_time*0.08));
     float hue = fract(f + umbriel_time*0.08);
-    vec3  rb  = 0.5 + 0.5*cos(6.2831853*(hue + vec3(0.0, 0.33, 0.67)));
+    // A zero count means the palette is off, which is how a shader keeps its own colours.
+    vec3 rb = umbriel_palette_count > 0
+        ? umbriel_palette_at(hue).rgb
+        : 0.5 + 0.5*cos(6.2831853*(hue + vec3(0.0, 0.33, 0.67)));
 
     float patch = barrulus_smoothstep(0.35, 0.62, fbm(p*2.0 - vec2(umbriel_time*0.10, 0.0)));
 

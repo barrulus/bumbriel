@@ -128,7 +128,9 @@ namespace umbriel {
           Config::Shaders::Preset preset;
           preset.name = std::string(name.str());
           Section keys(*table, "shaders.preset." + preset.name, diagnostics);
-          keys.text("scope", preset.scope).integer("cursor_radius", 0, 4096, preset.cursorRadius);
+          keys.text("scope", preset.scope)
+              .boolean("palette", preset.palette)
+              .integer("cursor_radius", 0, 4096, preset.cursorRadius);
           if (preset.scope != "window"
               && preset.scope != "output"
               && preset.scope != "global"

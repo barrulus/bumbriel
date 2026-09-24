@@ -1300,6 +1300,8 @@ struct scene_postprocess {
   struct wl_list link, histories;
   struct wlr_scene_rect* rect;
   struct fx_postprocess_chain* chain;
+  float palette[FX_PALETTE_MAX * 4];
+  int palette_count;
 };
 struct scene_output_postprocess {
   struct wlr_addon addon;
@@ -1344,6 +1346,18 @@ static struct scene_postprocess* scene_postprocess_get(struct wlr_scene_node* no
   struct scene_postprocess* effect = wl_container_of(addon, effect, addon);
   return effect;
 }
+// Truncates rather than rejects, so an oversized ramp still colours the effect.
+static int postprocess_palette_copy(float* dst, const float* colors, int count) {
+  const int clamped = colors == NULL || count < 0 ? 0 : count > FX_PALETTE_MAX ? FX_PALETTE_MAX : count;
+  if (clamped > 0)
+    memcpy(dst, colors, (size_t)clamped * 4 * sizeof(float));
+  return clamped;
+}
+static bool postprocess_palette_equal(const struct fx_scene_postprocess* a, const struct fx_scene_postprocess* b) {
+  return a->palette_count == b->palette_count
+      && (a->palette_count == 0
+          || memcmp(a->palette, b->palette, (size_t)a->palette_count * 4 * sizeof(float)) == 0);
+}
 void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postprocess_chain* chain) {
   struct scene_postprocess* effect = scene_postprocess_get(&rect->node);
   if (effect != NULL && effect->chain == chain)
@@ -1364,6 +1378,21 @@ void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postp
   wl_list_insert(&scene_postprocesses, &effect->link);
   wlr_addon_init(&effect->addon, &rect->node.addons, &scene_postprocess_impl, &scene_postprocess_impl);
   wlr_scene_rect_set_color(rect, (float[4]){0, 0, 0, 0.5});
+  scene_node_update(&rect->node, NULL);
+}
+void wlr_scene_rect_set_palette(struct wlr_scene_rect* rect, const float* colors, int count) {
+  struct scene_postprocess* effect = scene_postprocess_get(&rect->node);
+  if (effect == NULL)
+    return;
+  float palette[FX_PALETTE_MAX * 4];
+  const int clamped = postprocess_palette_copy(palette, colors, count);
+  if (effect->palette_count == clamped
+      && (clamped == 0 || memcmp(effect->palette, palette, (size_t)clamped * 4 * sizeof(float)) == 0)) {
+    return;
+  }
+  effect->palette_count = clamped;
+  if (clamped > 0)
+    memcpy(effect->palette, palette, (size_t)clamped * 4 * sizeof(float));
   scene_node_update(&rect->node, NULL);
 }
 static void output_postprocess_clear(struct scene_output_postprocess* effect) {
@@ -1451,6 +1480,7 @@ void wlr_scene_output_set_postprocess(
   bool same = count == effect->count
       && global.chain == effect->global.chain
       && global.cursor_radius == effect->global.cursor_radius
+      && postprocess_palette_equal(&global, &effect->global)
       && wlr_box_equal(&global.region, &effect->global.region)
       && in_capture == effect->in_capture
       && reads_cursor == effect->reads_cursor
@@ -1458,6 +1488,7 @@ void wlr_scene_output_set_postprocess(
   for (size_t i = 0; same && i < count; ++i)
     same = effects[i].chain == effect->effects[i].chain
         && effects[i].cursor_radius == effect->effects[i].cursor_radius
+        && postprocess_palette_equal(&effects[i], &effect->effects[i])
         && wlr_box_equal(&effects[i].region, &effect->effects[i].region);
   if (same)
     return;
@@ -1471,9 +1502,12 @@ void wlr_scene_output_set_postprocess(
   effect->count = count;
   for (size_t i = 0; i < count; ++i) {
     effect->effects[i] = effects[i];
+    effect->effects[i].palette_count =
+        postprocess_palette_copy(effect->effects[i].palette, effects[i].palette, effects[i].palette_count);
     fx_postprocess_chain_ref(effects[i].chain);
   }
   effect->global = global;
+  effect->global.palette_count = postprocess_palette_copy(effect->global.palette, global.palette, global.palette_count);
   fx_postprocess_chain_ref(global.chain);
   effect->in_capture = in_capture;
   effect->reads_cursor = reads_cursor;
@@ -1939,14 +1973,15 @@ void wlr_scene_border_set_colors(
 }
 
 void wlr_scene_border_set_palette(struct wlr_scene_border* border, const float* colors, int count) {
-  const int clamped = colors == NULL || count < 0 ? 0 : count > FX_RING_PALETTE_MAX ? FX_RING_PALETTE_MAX : count;
+  float palette[FX_PALETTE_MAX * 4];
+  const int clamped = postprocess_palette_copy(palette, colors, count);
   const size_t bytes = (size_t)clamped * 4 * sizeof(float);
-  if (border->palette_count == clamped && (clamped == 0 || memcmp(border->palette, colors, bytes) == 0)) {
+  if (border->palette_count == clamped && (clamped == 0 || memcmp(border->palette, palette, bytes) == 0)) {
     return;
   }
   border->palette_count = clamped;
   if (clamped > 0) {
-    memcpy(border->palette, colors, bytes);
+    memcpy(border->palette, palette, bytes);
   }
   scene_node_update(&border->node, NULL);
 }
@@ -3027,6 +3062,8 @@ found:;
   struct fx_postprocess_parameters parameters = {
       .time = settings->time + settings->origin - postprocess_clock_origin,
       .scale = data->scale,
+      .palette = effect->palette_count > 0 ? effect->palette : NULL,
+      .palette_count = effect->palette_count,
       .output_size = {effect->rect->width * data->scale, effect->rect->height * data->scale},
       .region = {0, 0, 1, 1},
       .box = *box,
@@ -3063,6 +3100,8 @@ static void render_output_postprocess(
   struct fx_postprocess_parameters parameters = {
       .time = settings->time,
       .scale = data->scale,
+      .palette = effect->palette_count > 0 ? effect->palette : NULL,
+      .palette_count = effect->palette_count,
       .cursor =
           {(settings->pointer_x - data->logical.x) * data->scale,
            (settings->pointer_y - data->logical.y) * data->scale},

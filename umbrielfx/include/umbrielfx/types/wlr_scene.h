@@ -28,6 +28,7 @@
 #include <wlr/util/addon.h>
 #include <wlr/util/box.h>
 
+#include "umbrielfx/render/postprocess.h"
 #include "umbrielfx/types/fx/blur_data.h"
 #include "umbrielfx/types/fx/clipped_region.h"
 #include "umbrielfx/types/linked_node.h"
@@ -175,9 +176,6 @@ struct wlr_scene_rect {
 	struct clipped_region clipped_region;
 };
 
-// Bounded so the ring palette stays a fixed-size uniform array in GLSL ES 1.00.
-#define FX_RING_PALETTE_MAX 8
-
 /** A scene-graph node displaying a two-color rounded border in one pass */
 struct wlr_scene_border {
 	struct wlr_scene_node node;
@@ -188,7 +186,7 @@ struct wlr_scene_border {
 	struct clipped_region clipped_region;
 	struct fx_corner_radii seam_corners;
 	struct fx_corner_radii outer_corners;
-	float palette[FX_RING_PALETTE_MAX * 4];
+	float palette[FX_PALETTE_MAX * 4];
 	int palette_count;
 };
 
@@ -687,7 +685,7 @@ void wlr_scene_border_set_colors(struct wlr_scene_border *border,
 /**
  * The ordered colors a ring shader reads through umbriel_palette_at().
  * Colors are straight, not premultiplied. A count of zero leaves shaders on
- * ring_base_color(). Counts above FX_RING_PALETTE_MAX are truncated.
+ * ring_base_color(). Counts above FX_PALETTE_MAX are truncated.
  */
 void wlr_scene_border_set_palette(struct wlr_scene_border *border,
 		const float *colors, int count);
