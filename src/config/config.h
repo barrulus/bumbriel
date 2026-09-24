@@ -572,7 +572,8 @@ namespace umbriel {
       int outerBorderWidth = 0;
       int cornerRadius = 10;
       double dragOpacity = 0.75;
-      // Fullscreen windows ignore window rule opacity and draw over the backdrop.
+      // Fullscreen windows ignore window rule opacity and draw over the backdrop. When false, a fullscreen window with
+      // rule or client transparency shows the desktop instead.
       bool opaqueFullscreen = true;
       struct Blur {
         bool enabled = true;

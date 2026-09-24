@@ -110,6 +110,7 @@ namespace {
     bool requestMaximized = false;
     bool requestMaximizedAfterConfigure = false;
     bool requestMaximizedAfterMap = false;
+    bool requestMaximizedAfterFrame = false;
     bool maximizeRequested = false;
     bool logConfigures = false;
     xdg_toplevel* parentOnFirstConfigure = nullptr;
@@ -359,6 +360,20 @@ namespace {
     return waitForAuxiliaryToplevel(state, window);
   }
 
+  // Sends the restored maximize one compositor dispatch after the mapping commit and before acknowledging the
+  // configure that answers it, the order kitty uses.
+  void maximizeAfterFrameDone(void* data, wl_callback* callback, uint32_t /*time*/) {
+    auto& state = *static_cast<State*>(data);
+    wl_callback_destroy(callback);
+    xdg_toplevel_set_maximized(state.toplevel);
+    wl_surface_commit(state.surface);
+    wl_display_flush(state.display);
+    std::println("maximize-after-frame");
+    std::fflush(stdout);
+  }
+
+  constexpr wl_callback_listener kMaximizeAfterFrameListener = {.done = maximizeAfterFrameDone};
+
   void xdgSurfaceConfigure(void* data, xdg_surface* xdgSurface, uint32_t serial) {
     auto& state = *static_cast<State*>(data);
     xdg_surface_ack_configure(xdgSurface, serial);
@@ -407,6 +422,10 @@ namespace {
       // post-map session-state re-assertion in the same opening batch.
       xdg_toplevel_set_maximized(state.toplevel);
       wl_surface_commit(state.surface);
+      state.maximizeRequested = true;
+    }
+    if (state.requestMaximizedAfterFrame && !state.maximizeRequested) {
+      wl_callback_add_listener(wl_display_sync(state.display), &kMaximizeAfterFrameListener, &state);
       state.maximizeRequested = true;
     }
     if (state.requestFullscreen && !state.fullscreenRequested) {
@@ -736,6 +755,7 @@ int main(int argc, char** argv) {
   state.requestMaximized = std::getenv("REQUEST_MAXIMIZED") != nullptr;
   state.requestMaximizedAfterConfigure = std::getenv("REQUEST_MAXIMIZED_AFTER_CONFIGURE") != nullptr;
   state.requestMaximizedAfterMap = std::getenv("REQUEST_MAXIMIZED_AFTER_MAP") != nullptr;
+  state.requestMaximizedAfterFrame = std::getenv("REQUEST_MAXIMIZED_AFTER_FRAME") != nullptr;
   state.logConfigures = std::getenv("LOG_CONFIGURES") != nullptr;
   state.requestFullscreen = std::getenv("REQUEST_FULLSCREEN") != nullptr;
   state.requestHdr = std::getenv("COLOR_HDR") != nullptr;

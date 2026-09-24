@@ -410,7 +410,9 @@ namespace umbriel {
     // Re-apply compositor-owned opacity to surface buffers. With opaque_fullscreen, fullscreen bypasses window-rule
     // opacity, while fades, drag opacity, focus dimming, and client-provided alpha remain active.
     [[nodiscard]] float effectiveOpacity() const;
-    // A fullscreen window in this state hides everything behind it: it draws over the backdrop and skips blur.
+    // A fullscreen window in this state hides everything behind it: it draws over the backdrop and skips blur. Without
+    // opaque_fullscreen, rule opacity below 1, client alpha below 1, or an opaque region short of the window geometry
+    // lets the desktop show through instead.
     [[nodiscard]] bool fullscreenOpaque() const;
     // The lifecycle fade runs through a whole-window shader, so buffers and borders stay opaque under it.
     [[nodiscard]] bool fadeComposited() const;
@@ -642,6 +644,8 @@ namespace umbriel {
     // only through the first root commit after the opening gate.
     bool m_consumeRestoredMaximizeRequest = false;
     wl_event_source* m_acceptClientMaximizeIdle = nullptr;
+    // Configure serial whose acknowledgement opens the gate when one was outstanding after the map dispatch.
+    std::optional<uint32_t> m_acceptClientMaximizeSerial;
     bool m_xwayland = false;
     // False until the first setPosition/animateTo places the node; the initial
     // placement snaps (avoids animating from the default (0,0) world origin).

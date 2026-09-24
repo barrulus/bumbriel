@@ -13,6 +13,7 @@
 #include "overview/overview.h"
 #include "scene/animation_shader.h"
 #include "scene/color.h"
+#include "scene/surface_blur.h"
 #include "server/server.h"
 
 #include <umbrielfx/render/postprocess.h>
@@ -701,7 +702,21 @@ namespace umbriel {
     );
   }
 
-  bool View::fullscreenOpaque() const { return config().appearance.opaqueFullscreen || m_ruleOpacity >= 1.0F; }
+  bool View::fullscreenOpaque() const {
+    if (config().appearance.opaqueFullscreen) {
+      return true;
+    }
+    if (m_ruleOpacity < 1.0F) {
+      return false;
+    }
+    wlr_surface* surface = m_toplevel->base->surface;
+    if (const wlr_alpha_modifier_surface_v1_state* clientAlpha = wlr_alpha_modifier_v1_get_surface_state(surface);
+        clientAlpha != nullptr && clientAlpha->multiplier < 1.0) {
+      return false;
+    }
+    const wlr_box& geometry = m_toplevel->base->geometry;
+    return geometry.width <= 0 || geometry.height <= 0 || !surfaceTransparent(surface, geometry);
+  }
 
   void View::setFadeAlpha(float alpha) {
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
@@ -1772,7 +1787,17 @@ namespace umbriel {
   void View::onAcceptClientMaximizeRequests(void* data) {
     auto* self = static_cast<View*>(data);
     self->m_acceptClientMaximizeIdle = nullptr;
-    self->m_acceptClientMaximizeRequests = self->m_mapped;
+    if (!self->m_mapped || self->m_acceptClientMaximizeRequests) {
+      return;
+    }
+    // Clients such as kitty restore maximize just after their first frame. Keep the gate closed until the client
+    // acknowledges the configure that carries the opening layout.
+    const wlr_xdg_surface* surface = self->m_toplevel->base;
+    if (surface->configure_idle != nullptr || !wl_list_empty(&surface->configure_list)) {
+      self->m_acceptClientMaximizeSerial = surface->scheduled_serial;
+      return;
+    }
+    self->m_acceptClientMaximizeRequests = true;
   }
 
   void View::onRequestFullscreen(wl_listener* listener, void* /*data*/) {
@@ -3197,6 +3222,7 @@ namespace umbriel {
     m_openingParentRequested = false;
     m_acceptClientMaximizeRequests = false;
     m_consumeRestoredMaximizeRequest = false;
+    m_acceptClientMaximizeSerial.reset();
     if (m_acceptClientMaximizeIdle != nullptr) {
       wl_event_source_remove(m_acceptClientMaximizeIdle);
       m_acceptClientMaximizeIdle = nullptr;
@@ -3350,6 +3376,10 @@ namespace umbriel {
       m_resizeCrossfade.start(move.durationMs, move.curve);
       m_resizeCrossfade.applyOpacity(effectiveOpacity());
       scheduleFrame();
+    }
+    // Client transparency can change on any commit. An unmap commit reaches here after handleUnmap hid the backdrop.
+    if (m_mapped) {
+      m_presentation.setFullscreenOpaque(fullscreenOpaque());
     }
     if (m_captureScene != nullptr) {
       // Restrict the capture to the xdg window geometry. Client subsurfaces
@@ -3588,6 +3618,12 @@ namespace umbriel {
     updateForeignState();
     if (Output* output = currentOutput()) {
       output->updateHdr();
+    }
+    if (m_mapped
+        && m_acceptClientMaximizeSerial
+        && static_cast<int32_t>(m_toplevel->base->current.configure_serial - *m_acceptClientMaximizeSerial) >= 0) {
+      m_acceptClientMaximizeSerial.reset();
+      m_acceptClientMaximizeRequests = true;
     }
     // The first root commit after the opening gate settles the restore sequence.
     // A later maximize request is client intent and must not be consumed.
@@ -4070,6 +4106,14 @@ namespace umbriel {
 
     if (floating) {
       auto [keepWidth, keepHeight] = floatingRestoreSize();
+      // Where the layout puts the tile, read before it leaves the layout. The drawn node lags behind a pending arrange
+      // (after a move to another output it is still on the old one), so placing from it would depend on frame timing.
+      const bool inLayout = m_workspace != nullptr && m_workspace->layout().columnOf(this) >= 0;
+      if (inLayout) {
+        m_workspace->flushArrange();
+      }
+      const wlr_box slot = inLayout ? m_workspace->layout().targetBox(this)
+                                    : wlr_box{.x = layoutTargetX(), .y = layoutTargetY(), .width = 0, .height = 0};
       if (m_workspace != nullptr) {
         const int column = m_workspace->layout().columnOf(this);
         if (m_workspace->scrollingLayout() != nullptr && column >= 0) {
@@ -4083,8 +4127,8 @@ namespace umbriel {
         }
         m_workspace->layoutDetach(this);
       }
-      const int keepX = m_sceneTree->node.x;
-      const int keepY = m_sceneTree->node.y;
+      const int keepX = slot.x;
+      const int keepY = slot.y;
       m_tiled = false;
       m_presentedTiledBox = {};
       if (m_workspace != nullptr) {
@@ -4164,7 +4208,7 @@ namespace umbriel {
     if (!fullscreen && geo.width > 0 && geo.height > 0) {
       m_floating.rememberSize(geo.width, geo.height);
     }
-    m_floating.rememberPositionFraction({.x = m_sceneTree->node.x, .y = m_sceneTree->node.y}, usable);
+    m_floating.rememberPositionFraction({.x = layoutTargetX(), .y = layoutTargetY()}, usable);
 
     m_floating.clearSizeRequest();
     m_tiled = true;

@@ -107,6 +107,7 @@ namespace umbriel {
     void updateHdr();
     void forgetHdrView(const View* view);
     void markBlurBackgroundDirty();
+    void scheduleFullFrame();
     void handleExternalConfigChange();
     // Tell one surface this output's scale (fractional + integer preferred buffer scale). Both wlroots calls dedup
     // internally, so re-notifying is free. Shaped as a wlr_surface_iterator_func_t so shell for_each helpers can walk a

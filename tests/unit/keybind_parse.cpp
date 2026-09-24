@@ -385,6 +385,12 @@ UMBRIEL_TEST(parsesArgumentFreeNewActions) {
   CHECK(parseAction("window-move-to-workspace-previous", bind));
   CHECK(bind.action == KeybindAction::WindowMoveToWorkspacePrevious);
 
+  CHECK(parseAction("window-move-to-workspace-silent-next", bind));
+  CHECK(bind.action == KeybindAction::WindowMoveToWorkspaceSilentNext);
+
+  CHECK(parseAction("window-move-to-workspace-silent-previous", bind));
+  CHECK(bind.action == KeybindAction::WindowMoveToWorkspaceSilentPrevious);
+
   CHECK(parseAction("column-move-to-workspace-next", bind));
   CHECK(bind.action == KeybindAction::ColumnMoveToWorkspaceNext);
 
@@ -476,6 +482,14 @@ UMBRIEL_TEST(parsesWorkspaceSelectors) {
 
   CHECK(parseAction("window-move-to-workspace:2/HDMI-A-1", bind));
   CHECK(bind.action == KeybindAction::WindowMoveToWorkspace);
+  position = selector(bind);
+  positionValue = position != nullptr ? std::get_if<umbriel::WorkspaceIndex>(&position->reference) : nullptr;
+  CHECK(positionValue != nullptr);
+  CHECK(positionValue != nullptr && positionValue->value == 2);
+  CHECK(position != nullptr && position->output == "HDMI-A-1");
+
+  CHECK(parseAction("window-move-to-workspace-silent:2/HDMI-A-1", bind));
+  CHECK(bind.action == KeybindAction::WindowMoveToWorkspaceSilent);
   position = selector(bind);
   positionValue = position != nullptr ? std::get_if<umbriel::WorkspaceIndex>(&position->reference) : nullptr;
   CHECK(positionValue != nullptr);
@@ -781,6 +795,8 @@ UMBRIEL_TEST(defaultKeybindsAreUsable) {
   CHECK(close->useMod);
   CHECK_EQ(close->modifiers, uint32_t{0});
   CHECK_EQ(close->keysym, xkb_keysym_to_lower(XKB_KEY_q));
+  // Holding close would also close each window that focus moves to.
+  CHECK(!close->repeat);
 
   // Overview toggle must not key-repeat: holding it would thrash open/close.
   const auto overview =

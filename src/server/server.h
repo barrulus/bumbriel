@@ -351,6 +351,7 @@ namespace umbriel {
     void removeView(View* view);
     void removeLayerSurface(LayerSurface* layerSurface, wlr_output* output);
     void removeSessionLock(SessionLock* lock);
+    void activateSessionLock(SessionLock* lock);
     void unlockSession();
     void raiseLockTree();
     void updateLockBlank();

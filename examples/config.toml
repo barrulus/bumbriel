@@ -47,6 +47,10 @@ files = []
 [appearance.blur]
 radius = 3
 
+# Choose the background color shown if the lock screen takes too long to appear.
+# [colors]
+# backdrop = "#000000FF"
+
 # ==============================================================================
 # Input
 # Enable NumLock when a physical keyboard connects.
@@ -63,9 +67,9 @@ numlock_toggle = true
 [keybinds]
 
 # Applications and session
-"Mod+Return" = "spawn:kitty"
+"Mod+Return" = { action = "spawn:kitty", repeat = false }
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
-"Mod+Q" = "window-close"
+"Mod+Q" = { action = "window-close", repeat = false }
 "Mod+Escape" = "session-quit"
 "Mod+Shift+Escape" = { action = "shortcuts-inhibit-toggle", allow_when_inhibited = true, repeat = false }
 
@@ -85,12 +89,12 @@ numlock_toggle = true
 "Mod+Shift+Right" = "column-move-right"
 
 # Window state and layout
-"Mod+T" = "window-toggle-floating"
-"Mod+Shift+T" = "window-focus-switch-floating"
-"Mod+P" = "window-toggle-pinned"
-"Mod+M" = "window-toggle-maximize-to-edges"
-"Mod+F" = "window-toggle-fullscreen"
-"Mod+Ctrl+F" = "window-toggle-maximize"
+"Mod+T" = { action = "window-toggle-floating", repeat = false }
+"Mod+Shift+T" = { action = "window-focus-switch-floating", repeat = false }
+"Mod+P" = { action = "window-toggle-pinned", repeat = false }
+"Mod+M" = { action = "window-toggle-maximize-to-edges", repeat = false }
+"Mod+F" = { action = "window-toggle-fullscreen", repeat = false }
+"Mod+Ctrl+F" = { action = "window-toggle-maximize", repeat = false }
 "Mod+R" = "window-cycle-primary-extent"
 "Mod+Shift+R" = "window-cycle-primary-extent-back"
 "Mod+Comma" = "window-consume-left"
@@ -120,9 +124,9 @@ numlock_toggle = true
 "Mod+Shift+9" = "window-move-to-workspace:9"
 
 # Scratchpad
-"Mod+Shift+Space" = "window-move-to-scratchpad"
+"Mod+Shift+Space" = { action = "window-move-to-scratchpad", repeat = false }
 "Mod+Space" = "scratchpad-toggle"
-"Mod+Ctrl+Space" = "window-restore-from-scratchpad"
+"Mod+Ctrl+Space" = { action = "window-restore-from-scratchpad", repeat = false }
 "Mod+Tab" = "scratchpad-focus-next"
 
 # ==============================================================================

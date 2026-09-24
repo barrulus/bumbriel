@@ -1283,37 +1283,49 @@ namespace umbriel {
       return;
     }
 
-    cancelModifierTap();
-    m_sessionLocked = true;
-    m_overview->forceClose();
-    if (m_cheatsheet != nullptr) {
-      m_cheatsheet->hide();
+    m_sessionLock = std::make_unique<SessionLock>(*this, lock);
+    m_sessionLock->start();
+  }
+
+  void Server::activateSessionLock(SessionLock* lock) {
+    if (m_sessionLock.get() != lock) {
+      return;
     }
-    if (m_quitConfirm != nullptr) {
-      m_quitConfirm->hide();
-    }
-    m_cursor->resetMode();
-    m_cursor->clearConstraint();
-    m_lockFocusOutput.clear();
-    if (View* focused = View::fromSurface(m_seat->wlr()->keyboard_state.focused_surface)) {
-      if (Workspace* workspace = focused->workspace(); workspace != nullptr && workspace->group() != nullptr) {
-        if (const Output* output = workspace->group()->output(); output != nullptr) {
-          m_lockFocusOutput = output->wlr()->name;
+
+    if (!m_sessionLocked) {
+      m_lockFocusOutput.clear();
+      if (View* focused = View::fromSurface(m_seat->wlr()->keyboard_state.focused_surface)) {
+        if (Workspace* workspace = focused->workspace(); workspace != nullptr && workspace->group() != nullptr) {
+          if (const Output* output = workspace->group()->output(); output != nullptr) {
+            m_lockFocusOutput = output->wlr()->name;
+          }
         }
       }
+
+      m_sessionLocked = true;
+      cancelModifierTap();
+      m_overview->forceClose();
+      if (m_cheatsheet != nullptr) {
+        m_cheatsheet->hide();
+      }
+      if (m_quitConfirm != nullptr) {
+        m_quitConfirm->hide();
+      }
+      m_cursor->resetMode();
+      m_cursor->clearConstraint();
+      clearNormalFocus();
+      updateIdleInhibit();
     }
-    clearNormalFocus();
-    updateIdleInhibit();
+
     updateLockBlank();
     setLockBlankEnabled(true);
     raiseLockTree();
-    m_sessionLock = std::make_unique<SessionLock>(*this, lock);
   }
 
   void Server::unlockSession() {
     m_sessionLocked = false;
     updateIdleInhibit();
-    wlr_scene_node_set_enabled(&m_lockBlank->node, false);
+    setLockBlankEnabled(false);
     // The cursor need not sit on the output that had focus, so restore the
     // remembered one. refocus() then keeps that output's active workspace, which
     // is what makes unlocking on an empty workspace stay there.
@@ -1348,7 +1360,9 @@ namespace umbriel {
     if (layoutBox.width <= 0 || layoutBox.height <= 0) {
       return;
     }
-    wlr_scene_rect_set_color(m_lockBlank, config().colors.backdrop.data());
+    auto color = config().colors.backdrop;
+    color[3] = 1.0F;
+    wlr_scene_rect_set_color(m_lockBlank, color.data());
     wlr_scene_rect_set_size(m_lockBlank, layoutBox.width, layoutBox.height);
     wlr_scene_node_set_position(&m_lockBlank->node, layoutBox.x, layoutBox.y);
   }
@@ -1381,6 +1395,9 @@ namespace umbriel {
     if (m_sessionLocked) {
       updateLockBlank();
       raiseLockTree();
+    }
+    if (m_sessionLock != nullptr) {
+      m_sessionLock->outputsChanged();
     }
     updateOutputManagerConfig();
     refreshSurfaceScales();
@@ -1904,10 +1921,16 @@ namespace umbriel {
       m_scratchpadManager->releaseOutput(output);
     }
 
+    if (m_sessionLock != nullptr) {
+      m_sessionLock->forgetOutput(output->wlr());
+    }
     std::erase_if(m_outputs, [output](const std::unique_ptr<Output>& entry) { return entry.get() == output; });
     markDirty(Dirty::Banner | Dirty::Cheatsheet | Dirty::QuitConfirm);
     if (m_sessionLocked) {
       updateLockBlank();
+    }
+    if (m_sessionLock != nullptr) {
+      m_sessionLock->outputsChanged();
     }
     updateOutputManagerConfig();
     // Scratchpad and pinned views rehome without going through setWorkspace.
