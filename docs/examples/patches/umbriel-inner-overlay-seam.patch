@@ -1,0 +1,17 @@
+--- a/umbrielfx/render/fx_renderer/shaders/postprocess_composite.frag
++++ b/umbrielfx/render/fx_renderer/shaders/postprocess_composite.frag
+@@ -14,8 +14,12 @@
+     r = min(r, min(size.x, size.y) * 0.5);
+     vec2 q = abs(p) - size * 0.5 + r;
+     float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+-    // Keep the native corner antialiasing instead of applying it twice.
+-    if (mask && d > -0.5) discard;
++    // Preserve the native antialiased corner fringe. Straight edges are already
++    // clipped by the quad: their last pixel is mathematically at d == -0.5,
++    // but interpolation roundoff can put it just above the threshold and drop
++    // a whole edge row/column. Only apply this distance test inside corner arcs.
++    bool corner = q.x > 0.0 && q.y > 0.0;
++    if (mask && corner && d > -0.5) discard;
+     vec4 value = texture2D(tex, v_texcoord);
+     if (linear && value.a > 0.0) value.rgb = to_linear(value.rgb / value.a) * value.a;
+     gl_FragColor = value;

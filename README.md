@@ -192,6 +192,9 @@ See [`examples/config.toml`](examples/config.toml) for the packaged starting con
 [`our online documentation`](https://docs.noctalia.dev/umbriel/) for the full reference.
 The fork's [Barrulus shader collection](docs/user/barrulus-shaders.md) covers lifecycle, border, window,
 screen and cursor presets.
+The [working shader library](docs/examples/README.md) includes a complete desktop configuration,
+effect pools, GLSL sources and generators. Its paired effects combine an outer border shader with
+an inner overlay over the window content; both are selected together, independently of window effects.
 
 ### Nix (home-manager / NixOS)
 

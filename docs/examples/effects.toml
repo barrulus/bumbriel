@@ -1,0 +1,207 @@
+# Reusable effect definitions. This file does not assign effects to apps.
+# Border definitions describe the frame; their optional overlay references a
+# scope="border" preset for the matching inward effect. Window presets affect
+# the client content independently. These table names are Umbriel's native syntax.
+
+[shaders.border.flowering-vine]
+enabled = true
+animated = true
+speed = 1
+padding = 8
+shader = "shaders/rings/flowering-vine.glsl"
+overlay = "ring.flowering-vine"
+[shaders.border.flowering-vine.light]
+enabled = true
+spread = 16
+intensity = 0.25
+threshold = 0.75
+
+[shaders.preset."ring.flowering-vine"]
+scope = "border"
+passes = [{ shader = "shaders/window/flowering-vine-overlay.glsl" }]
+
+# Border effect definitions (including paired inward overlays)
+[shaders.border.fuse]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/fuse.glsl"
+padding = 48
+[shaders.border.fuse.light]
+enabled = true
+spread = 90
+intensity = 1.4
+threshold = 0.5
+
+[shaders.border.lightning]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/lightning.glsl"
+padding = 24
+[shaders.border.lightning.light]
+enabled = true
+spread = 80
+intensity = 1.0
+threshold = 0.5
+
+[shaders.border.rainbow]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/rainbow-ripple.glsl"
+padding = 14
+overlay = "ring.rainbow"
+[shaders.border.rainbow.light]
+enabled = false
+
+[shaders.preset."ring.rainbow"]
+scope = "border"
+passes = [{ shader = "shaders/window/rainbow-ripple-overlay.glsl" }]
+
+[shaders.border.pulse]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/pulse.glsl"
+padding = 0
+[shaders.border.pulse.light]
+enabled = false
+
+[shaders.border.neon-bleed]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/neon-bleed.glsl"
+padding = 14
+overlay = "ring.neon-bleed"
+
+[shaders.preset."ring.neon-bleed"]
+scope = "border"
+passes = [{ shader = "shaders/window/neon-bleed-overlay.glsl" }]
+
+[shaders.border.portal-lava]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/portal-lava.glsl"
+padding = 14
+overlay = "ring.portal-lava"
+
+[shaders.preset."ring.portal-lava"]
+scope = "border"
+passes = [{ shader = "shaders/window/portal-lava-overlay.glsl" }]
+
+[shaders.border.sentient-runner]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/sentient-runner.glsl"
+padding = 14
+
+[shaders.border.sentient-spark]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/sentient-spark.glsl"
+padding = 14
+
+[shaders.border.flowing-water]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/flowing-water.glsl"
+padding = 30
+
+[shaders.border.faerie-magic]
+enabled = true
+animated = true
+speed = 1
+shader = "shaders/rings/faerie-magic.glsl"
+padding = 8
+overlay = "ring.faerie-magic"
+
+[shaders.preset."ring.faerie-magic"]
+scope = "border"
+passes = [{ shader = "shaders/window/faerie-magic-overlay.glsl" }]
+
+# Window-content effect definitions
+[shaders.preset."window.autumn-leaves"]
+scope = "window"
+passes = [{ shader = "shaders/window/autumn-leaves.glsl" }]
+
+[shaders.preset."window.crt"]
+scope = "window"
+passes = [{ shader = "shaders/window/crt.glsl" }]
+
+[shaders.preset."window.fire-tendrils"]
+scope = "window"
+passes = [{ shader = "shaders/window/fire-tendrils.glsl" }]
+
+[shaders.preset."window.mercury-sheen"]
+scope = "window"
+passes = [{ shader = "shaders/window/mercury-sheen.glsl" }]
+
+[shaders.preset."window.parchment-dark"]
+scope = "window"
+passes = [{ shader = "shaders/window/parchment-dark.glsl" }]
+
+[shaders.preset."window.parchment"]
+scope = "window"
+passes = [{ shader = "shaders/window/parchment.glsl" }]
+
+[shaders.preset."window.prairie-wind"]
+scope = "window"
+passes = [{ shader = "shaders/window/prairie-wind.glsl" }]
+
+[shaders.preset."window.rainbow-radial"]
+scope = "window"
+passes = [{ shader = "shaders/window/rainbow-radial.glsl" }]
+
+[shaders.preset."window.rainbow-smoke"]
+scope = "window"
+passes = [{ shader = "shaders/window/rainbow-smoke.glsl" }]
+
+[shaders.preset."window.rainbow-waves"]
+scope = "window"
+passes = [{ shader = "shaders/window/rainbow-waves.glsl" }]
+
+[shaders.preset."window.rainfall"]
+scope = "window"
+passes = [{ shader = "shaders/window/rainfall.glsl" }]
+
+[shaders.preset."window.rgb-border"]
+scope = "window"
+passes = [{ shader = "shaders/window/rgb-border.glsl" }]
+
+[shaders.preset."window.rgb-shimmer"]
+scope = "window"
+passes = [{ shader = "shaders/window/rgb-shimmer.glsl" }]
+
+[shaders.preset."window.ripple-drops"]
+scope = "window"
+passes = [{ shader = "shaders/window/ripple-drops.glsl" }]
+
+[shaders.preset."window.rolling-clouds"]
+scope = "window"
+passes = [{ shader = "shaders/window/rolling-clouds.glsl" }]
+
+[shaders.preset."window.rorschach2"]
+scope = "window"
+passes = [{ shader = "shaders/window/rorschach2.glsl" }]
+
+[shaders.preset."window.sentient-circuit"]
+scope = "window"
+passes = [{ shader = "shaders/window/sentient-circuit.glsl" }]
+
+[shaders.preset."window.sentient-circuit-v2"]
+scope = "window"
+passes = [{ shader = "shaders/window/sentient-circuit-v2.glsl" }]
+
+[shaders.preset."window.snowfall"]
+scope = "window"
+passes = [{ shader = "shaders/window/snowfall.glsl" }]
+
+[shaders.preset."window.adaptive-text-v4"]
+scope = "window"
+passes = [{ shader = "shaders/window/adaptive-text-v4.glsl" }]
