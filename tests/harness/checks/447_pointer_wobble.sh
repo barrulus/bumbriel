@@ -44,17 +44,17 @@ capture() {
 pointer_hold 1280 720 move 260 210 mod logo press 272 move 320 210 \
   -- move 200 210 mark reversed hold release 272 mod none
 read -r x y w h < <(capture right)
-((w > 400 && x < 255)) || { echo "right drag did not trail outside its box: $x $y $w $h"; exit 1; }
+((w > 400 && x < 230)) || { echo "right drag did not produce a prominent bend: $x $y $w $h"; exit 1; }
 "$UMBRIEL" clock-advance 16 > /dev/null
 pointer_step reversed
 read -r x y w h < <(capture left)
-((x + w > 625)) || { echo "left drag did not trail right of its box: $x $y $w $h"; exit 1; }
+((x + w > 650)) || { echo "left drag did not produce a prominent bend: $x $y $w $h"; exit 1; }
 pointer_release
 capture released > /dev/null
 "$UMBRIEL" clock-advance 100 > /dev/null
 capture settling > /dev/null
 ! cmp -s "$UMBRIEL_RUNTIME_DIR/released.png" "$UMBRIEL_RUNTIME_DIR/settling.png"
-for _ in $(seq 30); do "$UMBRIEL" clock-advance 100 > /dev/null; done
+for _ in $(seq 50); do "$UMBRIEL" clock-advance 100 > /dev/null; done
 "$UMBRIEL" settle
 [[ $(capture settled) == '140 150 480 300' ]]
 

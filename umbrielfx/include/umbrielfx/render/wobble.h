@@ -11,6 +11,7 @@ struct fx_wobble {
   float displacement[FX_WOBBLE_POINTS][2];
   float velocity[FX_WOBBLE_POINTS][2];
   float weights[FX_WOBBLE_POINTS];
+  float drag[FX_WOBBLE_POINTS];
   float width, height;
   double remainder;
   uint64_t transition_id;

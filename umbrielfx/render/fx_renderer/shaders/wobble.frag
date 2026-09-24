@@ -17,6 +17,6 @@ vec2 wobble_offset(vec2 uv) {
 vec4 animation(vec2 uv) {
     vec2 source = uv;
     // The solver bounds the displacement gradient, making this a contraction.
-    for (int i = 0; i < 10; i++) source = uv - wobble_offset(source);
+    for (int i = 0; i < 28; i++) source = uv - wobble_offset(source);
     return umbriel_sample(source);
 }

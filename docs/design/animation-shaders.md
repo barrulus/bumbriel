@@ -57,6 +57,11 @@ The grab constraint pins the interpolated point rather than rounding to a grid
 vertex. Neighbor springs propagate the impulse, restoring springs return the
 sheet to its rest shape, and damping removes energy. Integration uses fixed
 240 Hz steps. Large clock gaps settle the sheet instead of replaying stale motion.
+Pointer deltas receive a 2× gain spread smoothly around the grab, with softer
+springs and damping for a pronounced bend and a longer jiggle. Limits follow the
+actual neighbouring displacement gradients, allowing broad bends without folding
+the sheet. Excursion remains
+capped at 20% of each dimension and 200 logical pixels.
 
 Normalized displacements reach `umbriel_wobble[16]` in the built-in shader.
 Smooth interpolation and bounded displacement gradients allow inverse texture
