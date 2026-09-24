@@ -1,6 +1,7 @@
 #include "view/decoration.h"
 
 #include "config/config.h"
+#include "config/shaders.h"
 #include "scene/border_rect.h"
 #include "scene/color.h"
 #include "scene/decoration_shader.h"
@@ -15,22 +16,6 @@ extern "C" {
 // clang-format on
 
 namespace umbriel {
-
-  namespace {
-    // The chromatic palette entries only; the greys and darks would mud a cycle.
-    constexpr int kRingPaletteCount = 4;
-
-    std::array<float, kRingPaletteCount * 4> ringPalette(const Config::Colors& colors) {
-      const std::array<const std::array<float, 4>*, kRingPaletteCount> ramp{
-          &colors.accentPrimary, &colors.accentSecondary, &colors.warning, &colors.error
-      };
-      std::array<float, kRingPaletteCount * 4> out{};
-      for (size_t entry = 0; entry < ramp.size(); ++entry) {
-        std::ranges::copy(*ramp[entry], out.begin() + static_cast<std::ptrdiff_t>(entry * 4));
-      }
-      return out;
-    }
-  } // namespace
 
   // Borders
   void ViewDecoration::ensureBorders(wlr_scene_tree* parent) {
@@ -62,8 +47,8 @@ namespace umbriel {
         decorationParameters(m_shaderConfig, static_cast<float>(m_shaderConfig.padding), 1.0F, m_lightSuppressed);
     wlr_scene_border_set_shader(m_border, shader, &parameters);
     if (shader != nullptr && m_shaderConfig.palette) {
-      const auto palette = ringPalette(config().colors);
-      wlr_scene_border_set_palette(m_border, palette.data(), kRingPaletteCount);
+      const auto palette = shaderPalette(config().colors);
+      wlr_scene_border_set_palette(m_border, palette.data(), kShaderPaletteCount);
     } else {
       wlr_scene_border_set_palette(m_border, nullptr, 0);
     }

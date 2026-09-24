@@ -1825,6 +1825,7 @@ void wlr_scene_border_copy_shader(struct wlr_scene_border* destination, struct w
   if (effect == NULL)
     return;
   wlr_scene_border_set_shader(destination, effect->shader, &effect->parameters);
+  wlr_scene_border_set_palette(destination, source->palette, source->palette_count);
   struct scene_decoration* copy = scene_decoration_get(destination);
   if (copy != NULL) {
     copy->time = effect->time;
