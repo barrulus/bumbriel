@@ -285,7 +285,7 @@ namespace umbriel {
     const int surfaceRadius = nestedRadius(outerRadius, innerWidth + outerWidth);
     const bool borderVisible = decorated && innerWidth + outerWidth > 0;
     if (card.shader != nullptr) {
-      wlr_scene_rect_set_postprocess(card.shader, view->windowShader());
+      applyPostprocessShader(card.shader, view->windowShader(), view->windowShaderName());
       wlr_scene_rect_set_size(card.shader, contentW, contentH);
       wlr_scene_rect_set_corner_radius(card.shader, surfaceRadius);
       wlr_scene_node_place_below(&card.shader->node, &card.border->node);
@@ -294,7 +294,7 @@ namespace umbriel {
     if (card.borderOverlay != nullptr) {
       auto* overlay =
           borderVisible && view == liveTarget && settings.enabled ? postprocessShader(settings.overlay) : nullptr;
-      wlr_scene_rect_set_postprocess(card.borderOverlay, overlay);
+      applyPostprocessShader(card.borderOverlay, overlay, settings.overlay);
       wlr_scene_node_set_enabled(&card.borderOverlay->node, overlay != nullptr);
       wlr_scene_rect_set_size(card.borderOverlay, contentW, contentH);
       wlr_scene_rect_set_corner_radius(card.borderOverlay, surfaceRadius);

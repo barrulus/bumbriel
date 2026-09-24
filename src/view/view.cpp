@@ -2295,15 +2295,7 @@ namespace umbriel {
         rect = wlr_scene_rect_create(parent, 0, 0, kTransparent.data());
       if (rect == nullptr)
         return;
-      wlr_scene_rect_set_postprocess(rect, chain);
-      // The preset that named this chain owns the opt-in, so a window effect follows the scheme on its own key.
-      const auto* preset = postprocessPreset(presetName);
-      if (chain != nullptr && preset != nullptr && preset->palette) {
-        const auto palette = shaderPalette(config().colors);
-        wlr_scene_rect_set_palette(rect, palette.data(), kShaderPaletteCount);
-      } else {
-        wlr_scene_rect_set_palette(rect, nullptr, 0);
-      }
+      applyPostprocessShader(rect, chain, presetName);
       wlr_scene_node_set_enabled(&rect->node, chain != nullptr && (capture || !m_fade.animating()));
       wlr_scene_rect_set_size(rect, geometry.width, geometry.height);
       wlr_scene_rect_set_corner_radius(rect, surfaceRadius());
