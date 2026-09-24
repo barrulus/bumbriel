@@ -32,6 +32,7 @@ namespace umbriel {
       std::shared_ptr<fx_animation_shader> shader;
     };
     BuiltinEntry builtinFade;
+    BuiltinEntry builtinWobble;
 
     fx_animation_shader* builtinFadeShader(wlr_renderer* renderer) {
       if (builtinFade.renderer != renderer) {
@@ -43,7 +44,8 @@ namespace umbriel {
       }
       return builtinFade.shader.get();
     }
-    static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
+    static_assert(static_cast<unsigned>(AnimationEvent::InteractiveMove) + 1 == FX_ANIMATION_SLOTS);
+    static_assert(static_cast<unsigned>(AnimationEvent::InteractiveMove) == FX_ANIMATION_INTERACTIVE_SLOT);
 
     template <typename Value>
     void update(
@@ -65,6 +67,14 @@ namespace umbriel {
       );
     }
   } // namespace
+
+  fx_animation_shader* interactiveWobbleShader(wlr_renderer* renderer) {
+    if (builtinWobble.renderer != renderer) {
+      builtinWobble.renderer = renderer;
+      builtinWobble.shader = {fx_wobble_shader_create(renderer), fx_animation_shader_unref};
+    }
+    return builtinWobble.shader.get();
+  }
 
   const Config::Animation::Pair* selectedPair() {
     const auto& animation = config().animation;
@@ -113,6 +123,11 @@ namespace umbriel {
 
   fx_animation_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
     const auto& settings = config().animation;
+    if (event == AnimationEvent::InteractiveMove) {
+      return settings.enabled && settings.windowsMove.enabled && settings.windowsMove.wobble
+          ? interactiveWobbleShader(renderer)
+          : nullptr;
+    }
     const auto open = selectedWindowsIn();
     const auto close = selectedWindowsOut();
     const std::optional<AnimationShaderSource>* source = nullptr;
@@ -125,6 +140,8 @@ namespace umbriel {
     label = "animation." name;                                                                                         \
     break
     switch (event) {
+    case AnimationEvent::InteractiveMove:
+      return nullptr;
       EVENT(DimUnfocused, dimUnfocused, "dim_unfocused");
       EVENT(Border, border, "border");
       EVENT(WindowsMove, windowsMove, "windows_move");
@@ -184,6 +201,7 @@ namespace umbriel {
   void clearAnimationShaderCache() {
     cache = {};
     builtinFade = {};
+    builtinWobble = {};
   }
 
   void updateAnimationShader(

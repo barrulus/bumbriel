@@ -1190,7 +1190,7 @@ namespace umbriel {
       });
       s.sub("windows_move", [&](Section& section) {
         readShader(section, animation.windowsMove);
-        section.boolean("enabled", animation.windowsMove.enabled);
+        section.boolean("enabled", animation.windowsMove.enabled).boolean("wobble", animation.windowsMove.wobble);
         readTimeline(section, "animation.windows_move", animation.windowsMove.durationMs, animation.windowsMove.curve);
       });
       s.sub("workspaces", [&](Section& section) {

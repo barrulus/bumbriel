@@ -1,7 +1,7 @@
 # Desktop behavior: choose pools for apps, set shortcuts and personal preferences.
 # effects.toml defines effects; pools.toml groups them. All includes are here.
 [include]
-files = ["defaults.toml", "effects.toml", "pools.toml"]
+files = ["defaults.toml", "effects.toml", "pools.toml", "wobbly.toml"]
 
 [shaders]
 # Include window, region, output and global effects in recordings and screenshots.

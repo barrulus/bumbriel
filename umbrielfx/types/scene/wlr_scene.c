@@ -1101,6 +1101,16 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
   pixman_region32_fini(damage);
 }
 
+bool wlr_scene_node_animation_bounds(struct wlr_scene_node* node, struct wlr_box* box) {
+  pixman_region32_t bounds;
+  pixman_region32_init(&bounds);
+  scene_node_bounds(node, 0, 0, &bounds);
+  const pixman_box32_t* extents = pixman_region32_extents(&bounds);
+  *box = (struct wlr_box){extents->x1, extents->y1, extents->x2 - extents->x1, extents->y2 - extents->y1};
+  pixman_region32_fini(&bounds);
+  return box->width > 0 && box->height > 0;
+}
+
 void wlr_scene_node_set_animation(
     struct wlr_scene_node* node, unsigned slot, struct fx_animation_shader* shader,
     const struct fx_animation_parameters* parameters
@@ -1141,6 +1151,8 @@ void wlr_scene_node_set_animation(
       && next.linear_progress == animation->parameters[slot].linear_progress
       && next.direction == animation->parameters[slot].direction
       && next.transition_id == animation->parameters[slot].transition_id
+      && next.padding == animation->parameters[slot].padding
+      && memcmp(next.wobble, animation->parameters[slot].wobble, sizeof(next.wobble)) == 0
       && memcmp(next.random_seed, animation->parameters[slot].random_seed, sizeof(next.random_seed)) == 0;
   if (previous == shader && !restarted && parameters_equal) {
     return;
@@ -1205,7 +1217,8 @@ void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destinat
   }
   for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
     if (animation->shaders[slot] != NULL) {
-      const unsigned destination_slot = slot >= 4 ? 3 : slot;
+      // The elastic sheet must not overwrite a snapshot's opening effect.
+      const unsigned destination_slot = slot == FX_ANIMATION_INTERACTIVE_SLOT ? slot : (slot >= 4 ? 3 : slot);
       wlr_scene_node_set_animation(
           destination, destination_slot, animation->shaders[slot], &animation->parameters[slot]
       );
@@ -1355,8 +1368,7 @@ static int postprocess_palette_copy(float* dst, const float* colors, int count) 
 }
 static bool postprocess_palette_equal(const struct fx_scene_postprocess* a, const struct fx_scene_postprocess* b) {
   return a->palette_count == b->palette_count
-      && (a->palette_count == 0
-          || memcmp(a->palette, b->palette, (size_t)a->palette_count * 4 * sizeof(float)) == 0);
+      && (a->palette_count == 0 || memcmp(a->palette, b->palette, (size_t)a->palette_count * 4 * sizeof(float)) == 0);
 }
 void wlr_scene_rect_set_postprocess(struct wlr_scene_rect* rect, struct fx_postprocess_chain* chain) {
   struct scene_postprocess* effect = scene_postprocess_get(&rect->node);
@@ -3203,9 +3215,8 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
           .outer_width = border->outer_width * data->scale,
           .inner_color =
               {border->inner_color[0], border->inner_color[1], border->inner_color[2], border->inner_color[3]},
-          .outer_color = {
-              border->outer_color[0], border->outer_color[1], border->outer_color[2], border->outer_color[3]
-          },
+          .outer_color =
+              {border->outer_color[0], border->outer_color[1], border->outer_color[2], border->outer_color[3]},
           .palette = border->palette,
           .palette_count = border->palette_count,
       };
@@ -3305,12 +3316,13 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
                     .b = scene_border->inner_color[2],
                     .a = scene_border->inner_color[3],
                 },
-            .outer_color = {
-                .r = scene_border->outer_color[0],
-                .g = scene_border->outer_color[1],
-                .b = scene_border->outer_color[2],
-                .a = scene_border->outer_color[3],
-            },
+            .outer_color =
+                {
+                    .r = scene_border->outer_color[0],
+                    .g = scene_border->outer_color[1],
+                    .b = scene_border->outer_color[2],
+                    .a = scene_border->outer_color[3],
+                },
             .palette = scene_border->palette,
             .palette_count = scene_border->palette_count,
         }

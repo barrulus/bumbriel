@@ -66,6 +66,25 @@ enabled = false
 Each event also accepts `enabled`, `duration_ms`, and `curve`. A spring curve
 chooses its own duration, so `duration_ms` has no effect on that event.
 
+## Pointer-driven wobble
+
+Set `wobble = true` in `[animation.windows_move]` to make a dragged window behave
+like an elastic sheet. The grab point follows the pointer; the rest trails your
+movement, responds to reversals and repeated shaking, and settles after release.
+Grabbing near a corner produces an asymmetric bend. This is independent of the
+custom movement shader and its duration or curve; both animation enable switches
+still apply. It is disabled by default.
+
+```toml
+[animation.windows_move]
+wobble = true
+```
+
+The effect covers compositor and client-requested window moves, including tiles
+after they detach for dragging. It does not change input geometry or client
+buffers. Mouse resizing and overview-card dragging retain their existing behavior.
+Disabling it during a drag restores the normal presentation immediately.
+
 ## Event tables
 
 The [Barrulus collection](barrulus-shaders.md) provides matched open/close presets and
@@ -76,7 +95,7 @@ continue after the `animation.border` colour transition ends.
 | --- | --- | --- |
 | `[animation.windows_in]` | `style`, `scale` | Window opening |
 | `[animation.windows_out]` | `style`, `scale` | Window closing |
-| `[animation.windows_move]` | none | Move, resize, reflow, maximize, and restore |
+| `[animation.windows_move]` | `wobble` | Move, resize, reflow, maximize, and restore |
 | `[animation.workspaces]` | none | Workspace switching |
 | `[animation.overview]` | `workspace_curve` | Overview opening, closing, and filmstrip movement |
 | `[animation.scratchpad]` | `dim`, `blur`, `scale`, `maximize`, `fullscreen` | Scratchpad windows and backdrop |

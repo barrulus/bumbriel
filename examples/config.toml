@@ -190,6 +190,10 @@ blur_optimized = false
 # the overview after a short delay.
 # Overview: https://docs.noctalia.dev/umbriel/workspaces-overview/
 # Animation: https://docs.noctalia.dev/umbriel/animation/
+# For pointer-driven elastic movement, enable this optional effect:
+# [animation.windows_move]
+# wobble = true
+
 [hot_corners.top_left]
 enabled = true
 delay_ms = 500

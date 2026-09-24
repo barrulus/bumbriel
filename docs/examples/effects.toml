@@ -126,6 +126,14 @@ scope = "border"
 passes = [{ shader = "shaders/window/faerie-magic-overlay.glsl" }]
 
 # Window-content effect definitions
+[shaders.preset."window.liquid-glass"]
+scope = "window"
+passes = [{ shader = "shaders/window/liquid-glass.glsl" }]
+
+[shaders.preset."window.flap-board"]
+scope = "window"
+passes = [{ shader = "shaders/window/flap-board.glsl" }]
+
 [shaders.preset."window.autumn-leaves"]
 scope = "window"
 passes = [{ shader = "shaders/window/autumn-leaves.glsl" }]

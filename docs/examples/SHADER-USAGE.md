@@ -11,6 +11,8 @@ See [the README](README.md) for outer rings, inner overlays, generators and shor
 
 | Shader file | Status | Reference / reason |
 | --- | --- | --- |
+| [shaders/animations/wobbly-lifecycle.glsl](shaders/animations/wobbly-lifecycle.glsl) | In use | Opening and closing in `wobbly.toml`; named animation pair `wobbly` |
+| [shaders/animations/wobbly-move.glsl](shaders/animations/wobbly-move.glsl) | In use | Animated movement and resize in `wobbly.toml` |
 | [shaders/bleed/droplets.glsl](shaders/bleed/droplets.glsl) | Generator source | Shared source for the neon-bleed and portal-lava outer/inner pairs |
 | [shaders/bleed/neon.glsl](shaders/bleed/neon.glsl) | Generator source | Shared source for the neon-bleed and portal-lava outer/inner pairs |
 | [shaders/bleed/portal.glsl](shaders/bleed/portal.glsl) | Generator source | Shared source for the neon-bleed and portal-lava outer/inner pairs |
@@ -42,6 +44,8 @@ See [the README](README.md) for outer rings, inner overlays, generators and shor
 | [shaders/window/fire-tendrils.glsl](shaders/window/fire-tendrils.glsl) | In use | Preset `window.fire-tendrils`; pools: `favourites` |
 | [shaders/window/fire.glsl](shaders/window/fire.glsl) | Unregistered | Retained library shader; no reference in the included configuration |
 | [shaders/window/fisheye-rgb.glsl](shaders/window/fisheye-rgb.glsl) | Unregistered | Retained library shader; no reference in the included configuration |
+| [shaders/window/flap-board.glsl](shaders/window/flap-board.glsl) | In use | Preset `window.flap-board`; pool: `favourites` |
+| [shaders/window/liquid-glass.glsl](shaders/window/liquid-glass.glsl) | In use | Preset `window.liquid-glass`; pool: `favourites` |
 | [shaders/window/flowering-vine-overlay.glsl](shaders/window/flowering-vine-overlay.glsl) | In use | Paired inner overlay for `flowering-vine` (`scope = "border"`) |
 | [shaders/window/mercury-sheen.glsl](shaders/window/mercury-sheen.glsl) | In use | Preset `window.mercury-sheen`; pools: `favourites` |
 | [shaders/window/neon-bleed-overlay.glsl](shaders/window/neon-bleed-overlay.glsl) | In use | Paired inner overlay for `neon-bleed` (`scope = "border"`) |

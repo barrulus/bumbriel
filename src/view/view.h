@@ -23,6 +23,7 @@
 #include <wayland-server-core.h>
 
 extern "C" {
+#include <umbrielfx/render/wobble.h>
 #include <wlr/util/box.h>
 }
 struct wlr_ext_foreign_toplevel_handle_v1;
@@ -62,6 +63,9 @@ namespace umbriel {
     // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
     void syncAnimationShaders(wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr);
+    void beginPointerWobble(double x, double y);
+    void movePointerWobble(double dx, double dy);
+    void endPointerWobble();
     [[nodiscard]] wlr_scene_tree* captureTree() const;
     [[nodiscard]] bool mapped() const { return m_mapped; }
     [[nodiscard]] bool xwayland() const { return m_xwayland; }
@@ -691,6 +695,9 @@ namespace umbriel {
     // arrive before map. Window-rule policy is deliberately resolved only after the window maps.
     std::optional<bool> m_deferredActivationTrusted;
     AnimatedValue m_posX;
+    fx_wobble m_wobble{};
+    uint64_t m_wobbleLastMsec = 0;
+    void tickPointerWobble(uint64_t nowMsec);
     AnimatedValue m_posY;
     AnimatedValue m_fade;
     bool m_customFade = false;

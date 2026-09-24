@@ -33,9 +33,9 @@ start from a partial alpha that normalized progress does not carry.
 ## Scene processing
 
 Effect state is attached through scene-node addons, preserving the scene ABI.
-Nine ordered slots permit simultaneous effects on a node. Descendant effects
+Ten ordered slots permit simultaneous effects on a node. Descendant effects
 run before ancestor effects; same-node order is dimming, border, movement,
-opening, closing, scratchpad, layers, workspaces, then overview.
+opening, closing, scratchpad, layers, workspaces, overview, then interactive wobble.
 
 | Event | Target and timeline owner |
 | --- | --- |
@@ -48,6 +48,25 @@ opening, closing, scratchpad, layers, workspaces, then overview.
 | `border` | Border tree and focus-color animation |
 | `dim_unfocused` | View tree and focus-opacity animation |
 | `layers` | Layer tree or close snapshot and map/unmap fade |
+| Interactive wobble | View content tree, driven by pointer displacement and a settling spring grid |
+
+The compositor supplies the grab location, actual scene-position deltas, release
+and animation-clock ticks. `umbrielfx/render/wobble.c` owns the 4×4 spring
+simulation; the compositor keeps its per-view state alive after the grab ends.
+The grab constraint pins the interpolated point rather than rounding to a grid
+vertex. Neighbor springs propagate the impulse, restoring springs return the
+sheet to its rest shape, and damping removes energy. Integration uses fixed
+240 Hz steps. Large clock gaps settle the sheet instead of replaying stale motion.
+
+Normalized displacements reach `umbriel_wobble[16]` in the built-in shader.
+Smooth interpolation and bounded displacement gradients allow inverse texture
+sampling without a separate mesh API. The final draw quad expands with the
+spring excursion; source sampling stays in the original window rectangle.
+Output rotation and scale apply to that expansion, and ancestor clips still
+apply. The interactive slot survives snapshot copying without overwriting a
+lifecycle effect. Padded effects do not allocate feedback history. Animated
+shadows use the same deformed silhouette. Client geometry and input regions
+remain unchanged.
 
 The renderer captures contiguous descendants from the scene's paint-ordered
 render list into an alpha framebuffer, recursively processes inner effects,

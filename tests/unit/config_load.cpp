@@ -3349,3 +3349,23 @@ UMBRIEL_TEST(examplePoolsLoadWithTheWindowCollection) {
 }
 
 int main() { return RUN_TESTS(); }
+
+UMBRIEL_TEST(pointerWobbleReloadEnablesAndDisablesTheAnimationPath) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  file.write("[animation.windows_move]\nwobble = false\n");
+  CHECK(store.reload().success);
+  CHECK(!store.config().animation.windowsMove.wobble);
+  file.write("[animation.windows_move]\nwobble = true\n");
+  const auto enabled = store.reload();
+  CHECK(enabled.success);
+  CHECK(enabled.effects.animation);
+  CHECK(store.config().animation.windowsMove.wobble);
+  CHECK(!containsDiagnostic(store, "unknown key"));
+  file.write("");
+  const auto disabled = store.reload();
+  CHECK(disabled.success);
+  CHECK(disabled.effects.animation);
+  CHECK(!store.config().animation.windowsMove.wobble);
+}

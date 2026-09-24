@@ -713,6 +713,28 @@ static void draw_animation_texture(
   glUniform1f(shader->direction, parameters->direction);
   glUniform2f(shader->size, logical_box->width, logical_box->height);
   glUniform4fv(shader->random_seed, 1, parameters->random_seed);
+  glUniform2fv(shader->wobble, FX_WOBBLE_POINTS, &parameters->wobble[0][0]);
+  struct wlr_box draw_box = *box;
+  const bool rotated = transform & WL_OUTPUT_TRANSFORM_90;
+  const float logical_width = rotated ? logical_box->height : logical_box->width;
+  const float scale = logical_width > 0 ? box->width / logical_width : 1;
+  float logical_padding = fmaxf(parameters->padding, 0);
+  if (shader->wobble >= 0) {
+    // A drag can retarget its size, and overview mirrors have another size.
+    // Derive the excursion from this target's dimensions, not the original grab.
+    for (int i = 0; i < FX_WOBBLE_POINTS; i++) {
+      logical_padding = fmaxf(logical_padding, fabsf(parameters->wobble[i][0]) * logical_box->width + 2);
+      logical_padding = fmaxf(logical_padding, fabsf(parameters->wobble[i][1]) * logical_box->height + 2);
+    }
+  }
+  const int padding = (int)ceilf(logical_padding * scale);
+  draw_box.x -= padding;
+  draw_box.y -= padding;
+  draw_box.width += 2 * padding;
+  draw_box.height += 2 * padding;
+  const float padding_x = box->width > 0 ? (float)padding / box->width : 0;
+  const float padding_y = box->height > 0 ? (float)padding / box->height : 0;
+  glUniform2f(shader->render_padding, rotated ? padding_y : padding_x, rotated ? padding_x : padding_y);
   const struct wlr_fbox unit = {.width = 1, .height = 1};
   float uv_matrix[9], inverse[9], sample_matrix[9];
   fx_make_tex_matrix(uv_matrix, transform, &unit);
@@ -751,7 +773,7 @@ static void draw_animation_texture(
     glUniformMatrix3fv(shader->previous_sample_matrix, 1, GL_FALSE, sample_matrix);
     glActiveTexture(GL_TEXTURE0);
   }
-  fx_set_proj_matrix(shader->proj, projection, box);
+  fx_set_proj_matrix(shader->proj, projection, &draw_box);
   if (blend) {
     glEnable(GL_BLEND);
   } else {
@@ -760,9 +782,9 @@ static void draw_animation_texture(
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glDisable(GL_STENCIL_TEST);
   if (mark_updated) {
-    render_pass_mark_updated(pass, box, clip);
+    render_pass_mark_updated(pass, &draw_box, clip);
   }
-  fx_render_box(box, clip, shader->position);
+  fx_render_box(&draw_box, clip, shader->position);
   glBindTexture(GL_TEXTURE_2D, 0);
   if (shader->previous_tex >= 0) {
     glActiveTexture(GL_TEXTURE1);
@@ -792,7 +814,7 @@ void fx_render_pass_end_animation_with_history(
   struct wlr_texture* previous_texture = NULL;
   struct wlr_box previous_box = {0};
   const uint32_t format = pass->has_color_transform ? DRM_FORMAT_ABGR16161616F : DRM_FORMAT_ABGR8888;
-  if (shader->previous_tex >= 0 && history != NULL && output != NULL) {
+  if (shader->previous_tex >= 0 && history != NULL && output != NULL && parameters->padding == 0) {
     output_history = animation_history_get_output(history, output, renderer, update_history);
     if (output_history != NULL && update_history && !animation_history_matches(output_history, format, transform)) {
       animation_history_set_format(output_history, format, transform);

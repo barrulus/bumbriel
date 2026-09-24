@@ -18,11 +18,13 @@ namespace umbriel {
     Scratchpad,
     Layers,
     Workspaces,
-    Overview
+    Overview,
+    InteractiveMove
   };
 
   // The configured custom shader for `event`, or null.
   [[nodiscard]] fx_animation_shader* animationShader(wlr_renderer* renderer, AnimationEvent event);
+  [[nodiscard]] fx_animation_shader* interactiveWobbleShader(wlr_renderer* renderer);
   Config::Animation::WindowsIn selectedWindowsIn();
   Config::Animation::WindowsOut selectedWindowsOut();
   bool selectAnimationPair(std::string_view operation);

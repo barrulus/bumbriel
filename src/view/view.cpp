@@ -1290,7 +1290,59 @@ namespace umbriel {
     scheduleFrame();
   }
 
-  void View::setDragPosition(int x, int y) { setScenePosition(x, y); }
+  void View::setDragPosition(int x, int y) {
+    const int dx = x - m_sceneTree->node.x;
+    const int dy = y - m_sceneTree->node.y;
+    setScenePosition(x, y);
+    movePointerWobble(dx, dy);
+  }
+
+  void View::beginPointerWobble(double x, double y) {
+    const auto& animation = config().animation;
+    m_wobble = {};
+    if (!m_mapped
+        || m_contentTree == nullptr
+        || !animation.enabled
+        || !animation.windowsMove.enabled
+        || !animation.windowsMove.wobble)
+      return;
+    wlr_box bounds{};
+    if (!wlr_scene_node_animation_bounds(&m_contentTree->node, &bounds))
+      return;
+    int lx = 0, ly = 0;
+    wlr_scene_node_coords(&m_contentTree->node, &lx, &ly);
+    fx_wobble_begin(
+        &m_wobble, bounds.width, bounds.height, static_cast<float>((x - lx - bounds.x) / bounds.width),
+        static_cast<float>((y - ly - bounds.y) / bounds.height)
+    );
+    m_wobbleLastMsec = m_server->animationClockMsec();
+  }
+
+  void View::tickPointerWobble(uint64_t nowMsec) {
+    const auto& animation = config().animation;
+    if (!m_mapped
+        || m_server->sessionLocked()
+        || !animation.enabled
+        || !animation.windowsMove.enabled
+        || !animation.windowsMove.wobble) {
+      m_wobble = {};
+    } else if (nowMsec > m_wobbleLastMsec) {
+      fx_wobble_tick(&m_wobble, static_cast<double>(nowMsec - m_wobbleLastMsec) / 1000.0);
+    }
+    m_wobbleLastMsec = nowMsec;
+  }
+
+  void View::movePointerWobble(double dx, double dy) {
+    tickPointerWobble(m_server->animationClockMsec());
+    fx_wobble_move(&m_wobble, static_cast<float>(dx), static_cast<float>(dy));
+    syncAnimationShaders();
+  }
+
+  void View::endPointerWobble() {
+    tickPointerWobble(m_server->animationClockMsec());
+    fx_wobble_release(&m_wobble);
+    syncAnimationShaders();
+  }
 
   void View::animateTo(int x, int y) {
     // First placement snaps: the node starts at the default (0,0) world origin, so animating would fly the window
@@ -1340,6 +1392,25 @@ namespace umbriel {
       return;
     }
     auto* renderer = m_server->renderer();
+    const auto& animation = config().animation;
+    if (!animation.enabled || !animation.windowsMove.enabled || !animation.windowsMove.wobble)
+      m_wobble = {};
+    fx_animation_parameters wobble{};
+    wobble.transition_id = m_wobble.transition_id;
+    if (m_wobble.active) {
+      for (int i = 0; i < FX_WOBBLE_POINTS; ++i) {
+        wobble.wobble[i][0] = m_wobble.displacement[i][0] / m_wobble.width;
+        wobble.wobble[i][1] = m_wobble.displacement[i][1] / m_wobble.height;
+        wobble.padding = std::max(
+            wobble.padding,
+            std::max(std::abs(m_wobble.displacement[i][0]), std::abs(m_wobble.displacement[i][1])) + 2.0F
+        );
+      }
+    }
+    wlr_scene_node_set_animation(
+        &target->node, static_cast<unsigned>(AnimationEvent::InteractiveMove),
+        m_wobble.active ? interactiveWobbleShader(renderer) : nullptr, &wobble
+    );
     if (m_posX.animating() || m_posY.animating() || m_presentation.animating()) {
       const auto& movement = m_posX.animating() ? m_posX : (m_posY.animating() ? m_posY : m_presentation.animation());
       updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, movement);
@@ -1367,6 +1438,7 @@ namespace umbriel {
 
   bool View::tickAnimations(uint64_t nowMsec) {
     bool active = false;
+    tickPointerWobble(nowMsec);
 
     // Disable sibling size animations during a tiled resize, so they do not
     // trail the pointer while clients acknowledge successive configures.
@@ -1464,10 +1536,13 @@ namespace umbriel {
       active = active || m_borderColorAnim.animating();
     }
     syncAnimationShaders();
-    return active;
+    return active || m_wobble.active;
   }
 
   bool View::animatesOn(const Output* output) const {
+    // A grabbed window can span outputs before its workspace ownership changes.
+    if (m_wobble.active)
+      return true;
     const Workspace* workspace = m_workspace;
     if (workspace != nullptr && workspace->group() != nullptr) {
       return workspace->group()->output() == output;
@@ -1483,7 +1558,8 @@ namespace umbriel {
         || m_fade.animating()
         || m_borderColorAnim.animating()
         || m_focusDim.animating()
-        || m_resizeCrossfade.active();
+        || m_resizeCrossfade.active()
+        || m_wobble.active;
   }
 
   bool View::layoutFullscreen() const { return m_toplevel->scheduled.fullscreen; }
@@ -3216,6 +3292,7 @@ namespace umbriel {
       setSceneParent(m_workspace ? m_workspace->viewLayer(m_tiled) : m_server->xdgTree());
     }
     m_mapped = false;
+    m_wobble = {};
     m_borderLease.reset();
     m_borderPool.reset();
     m_borderSelection = {};

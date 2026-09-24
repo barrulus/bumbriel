@@ -28,6 +28,7 @@
 #include "quad_round_frag_src.h"
 #include "render/fx_renderer/decoration.h"
 #include "tex_frag_src.h"
+#include "wobble_frag_src.h"
 
 GLuint compile_shader(GLuint type, const GLchar *src) {
 	GLuint shader = glCreateShader(type);
@@ -137,6 +138,8 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 		"uniform float umbriel_direction;\n"
 		"uniform vec2 umbriel_size;\n"
 		"uniform vec4 umbriel_random_seed;\n"
+		"uniform vec2 umbriel_wobble[16];\n"
+		"uniform vec2 umbriel_render_padding;\n"
 		"#define umbriel_clamped_progress clamp(umbriel_progress, 0.0, 1.0)\n"
 		"vec4 umbriel_sample(vec2 uv) {\n"
 		"  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0);\n"
@@ -152,7 +155,7 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 		"  return texture2D(umbriel_previous_texture, p);\n"
 		"}\n#line 1\n";
 	static const char suffix[] =
-		"\nvoid main() { gl_FragColor = animation(v_texcoord); }\n";
+		"\nvoid main() { gl_FragColor = animation(v_texcoord * (1.0 + 2.0 * umbriel_render_padding) - umbriel_render_padding); }\n";
 	if (source == NULL || !wlr_renderer_is_fx(renderer)) {
 		return NULL;
 	}
@@ -197,10 +200,16 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 	shader->direction = glGetUniformLocation(shader->program, "umbriel_direction");
 	shader->size = glGetUniformLocation(shader->program, "umbriel_size");
 	shader->random_seed = glGetUniformLocation(shader->program, "umbriel_random_seed");
+	shader->wobble = glGetUniformLocation(shader->program, "umbriel_wobble");
+	shader->render_padding = glGetUniformLocation(shader->program, "umbriel_render_padding");
 	wlr_egl_restore_context(&previous);
 	return shader;
 }
 
+
+struct fx_animation_shader *fx_wobble_shader_create(struct wlr_renderer *renderer) {
+	return fx_animation_shader_create(renderer, wobble_frag_src, "interactive-wobble");
+}
 
 bool check_gl_ext(const char *exts, const char *ext) {
 	size_t extlen = strlen(ext);
