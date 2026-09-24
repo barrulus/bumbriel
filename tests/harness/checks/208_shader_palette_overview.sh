@@ -55,8 +55,13 @@ await_color 'r > 0.3 && b > 0.3 && g < 0.1' "desktop ring palette missing"
 "$UMBRIEL" settle > /dev/null
 await_color 'r > 0.3 && b > 0.3 && g < 0.1' "overview lost the ring palette"
 set_palette "#FF0000FF"
+# Config reload closes overview; reopen it before inspecting the new card nodes.
+"$UMBRIEL" msg overview-open > /dev/null
+"$UMBRIEL" settle > /dev/null
 await_color 'r > 0.3 && g < 0.1 && b < 0.1' "overview retained the old ring palette"
 sed -i 's/^palette = true$/palette = false/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" msg overview-open > /dev/null
+"$UMBRIEL" settle > /dev/null
 await_color 'b > 0.3 && g > 0.3 && r < 0.2' "overview did not clear the ring palette"
 echo "overview ring palette survives entry, follows reload and clears on opt-out"
