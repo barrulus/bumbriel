@@ -3199,6 +3199,7 @@ reads_cursor=true
 redraw="on-damage"
 [shaders.preset.ink]
 scope="window"
+palette=true
 [[shaders.preset.ink.passes]]
 shader="tint.glsl"
 buffer=true
@@ -3225,6 +3226,7 @@ duration_ms=450
   CHECK(settings.inCapture && settings.readsCursor);
   CHECK_EQ(settings.redraw, std::string("on-damage"));
   CHECK_EQ(settings.presets.size(), size_t{1});
+  CHECK(settings.presets.front().palette);
   const auto& passes = settings.presets.front().passes;
   CHECK_EQ(passes.size(), size_t{2});
   CHECK(passes[0].buffer && passes[0].source.has_value());

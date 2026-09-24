@@ -491,6 +491,7 @@ namespace umbriel {
       struct Preset {
         std::string name;
         std::string scope = "global";
+        bool palette = false;
         int cursorRadius = 0;
         std::vector<Pass> passes;
         bool operator==(const Preset&) const = default;

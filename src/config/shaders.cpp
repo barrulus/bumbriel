@@ -26,6 +26,17 @@ namespace umbriel {
     target.shader = readShaderSource(section);
   }
 
+  std::array<float, kShaderPaletteCount * 4> shaderPalette(const Config::Colors& colors) {
+    const std::array<const std::array<float, 4>*, kShaderPaletteCount> ramp{
+        &colors.accentPrimary, &colors.accentSecondary, &colors.warning, &colors.error
+    };
+    std::array<float, kShaderPaletteCount * 4> out{};
+    for (size_t entry = 0; entry < ramp.size(); ++entry) {
+      std::ranges::copy(*ramp[entry], out.begin() + static_cast<std::ptrdiff_t>(entry * 4));
+    }
+    return out;
+  }
+
   std::optional<AnimationShaderSource> readShaderSource(Section& section) {
     auto result = readAnimationShader(section, configStore().mutableDiagnostics());
     for (auto& path : result.watchPaths)
@@ -117,7 +128,9 @@ namespace umbriel {
           Config::Shaders::Preset preset;
           preset.name = std::string(name.str());
           Section keys(*table, "shaders.preset." + preset.name, diagnostics);
-          keys.text("scope", preset.scope).integer("cursor_radius", 0, 4096, preset.cursorRadius);
+          keys.text("scope", preset.scope)
+              .boolean("palette", preset.palette)
+              .integer("cursor_radius", 0, 4096, preset.cursorRadius);
           if (preset.scope != "window"
               && preset.scope != "output"
               && preset.scope != "global"

@@ -11,6 +11,8 @@ struct fx_postprocess_state;
 struct fx_postprocess_parameters {
   float time, scale;
   float cursor[2], output_size[2], region[4];
+  const float* palette;
+  int palette_count;
   // Buffer-space box; GLSL runs in logical orientation with output-normalised region UVs.
   struct wlr_box box;
   enum wl_output_transform transform;

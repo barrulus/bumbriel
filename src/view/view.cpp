@@ -2285,7 +2285,8 @@ namespace umbriel {
         ? postprocessShader(settings.overlay)
         : nullptr;
     const auto geometry = committedContentBox();
-    const auto update = [&](wlr_scene_tree* parent, wlr_scene_rect*& rect, fx_postprocess_chain* chain, bool capture) {
+    const auto update = [&](wlr_scene_tree* parent, wlr_scene_rect*& rect, fx_postprocess_chain* chain,
+                            std::string_view presetName, bool capture) {
       if (parent == nullptr)
         return;
       if (capture && !config().shaders.inCapture)
@@ -2295,6 +2296,14 @@ namespace umbriel {
       if (rect == nullptr)
         return;
       wlr_scene_rect_set_postprocess(rect, chain);
+      // The preset that named this chain owns the opt-in, so a window effect follows the scheme on its own key.
+      const auto* preset = postprocessPreset(presetName);
+      if (chain != nullptr && preset != nullptr && preset->palette) {
+        const auto palette = shaderPalette(config().colors);
+        wlr_scene_rect_set_palette(rect, palette.data(), kShaderPaletteCount);
+      } else {
+        wlr_scene_rect_set_palette(rect, nullptr, 0);
+      }
       wlr_scene_node_set_enabled(&rect->node, chain != nullptr && (capture || !m_fade.animating()));
       wlr_scene_rect_set_size(rect, geometry.width, geometry.height);
       wlr_scene_rect_set_corner_radius(rect, surfaceRadius());
@@ -2305,12 +2314,13 @@ namespace umbriel {
     };
     // Each pass samples the result below it: content filter, inward ring, then
     // the external border. Keep the same order in isolated window captures.
-    auto* chain = windowShader();
-    update(m_contentTree, m_shaderRect, chain, false);
-    update(m_contentTree, m_borderOverlayRect, overlay, false);
+    const auto windowName = windowShaderName();
+    auto* chain = postprocessShader(windowName);
+    update(m_contentTree, m_shaderRect, chain, windowName, false);
+    update(m_contentTree, m_borderOverlayRect, overlay, settings.overlay, false);
     auto* captureTree = m_captureScene != nullptr ? &m_captureScene->tree : nullptr;
-    update(captureTree, m_captureShaderRect, chain, true);
-    update(captureTree, m_captureBorderOverlayRect, overlay, true);
+    update(captureTree, m_captureShaderRect, chain, windowName, true);
+    update(captureTree, m_captureBorderOverlayRect, overlay, settings.overlay, true);
   }
 
   void View::refreshConfigChrome() {

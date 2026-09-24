@@ -19,6 +19,7 @@ struct effect_program {
   GLuint program;
   GLint proj, tex_proj, pos, size, output_size, cursor, region, time, scale;
   GLint screen, source, previous, screen_previous, buffer, source_matrix, first, linear;
+  GLint palette, palette_count;
 };
 struct effect_pass {
   struct effect_program color, buffer;
@@ -127,6 +128,8 @@ static bool compile_effect(struct effect_program* p, const struct fx_postprocess
   UNIFORM(source_matrix, "effect_source_matrix");
   UNIFORM(first, "effect_first");
   UNIFORM(linear, "effect_linear");
+  UNIFORM(palette, "umbriel_palette");
+  UNIFORM(palette_count, "umbriel_palette_count");
 #undef UNIFORM
   p->pos = glGetAttribLocation(p->program, "pos");
   return true;
@@ -403,6 +406,10 @@ bool fx_render_pass_postprocess(
       glUniform1f(p->time, parameters->time);
       glUniform1f(p->scale, parameters->scale);
       glUniform1i(p->first, i == 0);
+      const int palette_count = parameters->palette != NULL ? parameters->palette_count : 0;
+      glUniform1i(p->palette_count, palette_count);
+      if (palette_count > 0)
+        glUniform4fv(p->palette, palette_count, parameters->palette);
       glUniform1i(p->linear, pass->has_color_transform);
       glUniformMatrix3fv(p->source_matrix, 1, GL_FALSE, source_matrix);
       fx_set_proj_matrix(p->proj, projection, &local);
