@@ -5,15 +5,15 @@ and authoring details are in [Animation](../user/animation.md#custom-glsl-shader
 
 ## Configuration and compilation
 
-`readShaderSource` (`src/config/effects.cpp`) uses a `Section` reader for the `shader` file path.
-Inline GLSL is not accepted. Paths resolve relative
-to the declaring TOML file, including included files. The loader registers file
-dependencies even when missing, and includes source contents in configuration
-equality. Validation rejects blank/NUL text, nonregular files, and inputs larger
-than 256 KiB. Nonblocking file opens prevent FIFOs hanging config reload.
+Animation events bind a preset by name: `[animation.<event>] effect = "<name>"` must name an
+`[effects.preset.<name>]` with `kind = "animation"`. `readShaderSource` (`src/config/effects.cpp`) reads
+the preset's `shader` path: inline GLSL is not accepted, paths resolve relative to the declaring TOML
+file including included files, missing files stay watched, contents take part in configuration
+equality, and blank/NUL text, nonregular files, and inputs larger than 256 KiB are rejected.
+Nonblocking opens prevent FIFOs hanging config reload.
 
-The C++ scene adapter caches one program per event, exact source, and renderer.
-Startup and animation config reload prepare programs before rendering. Failures
+`EffectRegistry` (`src/scene/effect_registry.cpp`) caches one program per referenced preset, kind, exact
+source, and renderer. Startup and animation config reload prepare programs before rendering. Failures
 are cached too, avoiding per-frame compiler retries. UmbrielFX supplies a GLSL
 ES 1.00 wrapper around `vec4 animation(vec2 uv)`, normalized target sampling,
 target-local previous-result sampling, a stable four-channel random seed,

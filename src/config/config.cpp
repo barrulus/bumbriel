@@ -1260,13 +1260,6 @@ namespace umbriel {
         }
       }
 
-      const auto readShader = [&](Section& section, auto& event) {
-        auto result = readShaderSource(section, "shader", configStore().mutableDiagnostics());
-        event.shader = std::move(result.source);
-        for (auto& path : result.watchPaths) {
-          configStore().addWatchPath(std::move(path));
-        }
-      };
       const auto readCurveKey = [&](Section& section, std::string_view key, std::string_view context,
                                     AnimationCurve& target) {
         if (const toml::node* node = section.take(key)) {
@@ -1311,7 +1304,6 @@ namespace umbriel {
       };
 
       s.sub("windows_in", [&](Section& section) {
-        readShader(section, animation.windowsIn);
         readEffectSelector(
             section, "effect", "animation.windows_in.effect", EffectKind::Animation, false, animation.windowsIn.effect,
             references
@@ -1321,7 +1313,6 @@ namespace umbriel {
         readTimeline(section, "animation.windows_in", animation.windowsIn.durationMs, animation.windowsIn.curve);
       });
       s.sub("windows_out", [&](Section& section) {
-        readShader(section, animation.windowsOut);
         readEffectSelector(
             section, "effect", "animation.windows_out.effect", EffectKind::Animation, false,
             animation.windowsOut.effect, references
@@ -1331,7 +1322,6 @@ namespace umbriel {
         readTimeline(section, "animation.windows_out", animation.windowsOut.durationMs, animation.windowsOut.curve);
       });
       s.sub("windows_move", [&](Section& section) {
-        readShader(section, animation.windowsMove);
         readEffectSelector(
             section, "effect", "animation.windows_move.effect", EffectKind::Animation, false,
             animation.windowsMove.effect, references
@@ -1340,7 +1330,6 @@ namespace umbriel {
         readTimeline(section, "animation.windows_move", animation.windowsMove.durationMs, animation.windowsMove.curve);
       });
       s.sub("workspaces", [&](Section& section) {
-        readShader(section, animation.workspaces);
         readEffectSelector(
             section, "effect", "animation.workspaces.effect", EffectKind::Animation, false, animation.workspaces.effect,
             references
@@ -1349,7 +1338,6 @@ namespace umbriel {
         readTimeline(section, "animation.workspaces", animation.workspaces.durationMs, animation.workspaces.curve);
       });
       s.sub("overview", [&](Section& section) {
-        readShader(section, animation.overview);
         readEffectSelector(
             section, "effect", "animation.overview.effect", EffectKind::Animation, false, animation.overview.effect,
             references
@@ -1361,7 +1349,6 @@ namespace umbriel {
         );
       });
       s.sub("scratchpad", [&](Section& section) {
-        readShader(section, animation.scratchpad);
         readEffectSelector(
             section, "effect", "animation.scratchpad.effect", EffectKind::Animation, false, animation.scratchpad.effect,
             references
@@ -1375,7 +1362,6 @@ namespace umbriel {
         readTimeline(section, "animation.scratchpad", animation.scratchpad.durationMs, animation.scratchpad.curve);
       });
       s.sub("border", [&](Section& section) {
-        readShader(section, animation.border);
         readEffectSelector(
             section, "effect", "animation.border.effect", EffectKind::Animation, false, animation.border.effect,
             references
@@ -1384,7 +1370,6 @@ namespace umbriel {
         readTimeline(section, "animation.border", animation.border.durationMs, animation.border.curve);
       });
       s.sub("dim_unfocused", [&](Section& section) {
-        readShader(section, animation.dimUnfocused);
         readEffectSelector(
             section, "effect", "animation.dim_unfocused.effect", EffectKind::Animation, false,
             animation.dimUnfocused.effect, references
@@ -1395,7 +1380,6 @@ namespace umbriel {
         );
       });
       s.sub("layers", [&](Section& section) {
-        readShader(section, animation.layers);
         readEffectSelector(
             section, "effect", "animation.layers.effect", EffectKind::Animation, false, animation.layers.effect,
             references

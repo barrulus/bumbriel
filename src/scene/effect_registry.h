@@ -41,6 +41,10 @@ namespace umbriel {
     // The program a lifecycle fade composes through: the event's preset, or for windows_in and windows_out without
     // one, the built-in fade. Null when buffers fade individually.
     [[nodiscard]] fx_effect_shader* lifecycleShader(AnimationEvent event) const;
+    // The preset bound to an animation event through `effect =`, or null (also null for the built-in fade).
+    [[nodiscard]] const EffectPreset* animationPreset(AnimationEvent event) const;
+    // The animation clock in seconds, read only when a program needs it.
+    [[nodiscard]] float clockSeconds() const;
     // Adds `umbriel_time` when `shader` reads it, and the `[colors]` palette for palette presets.
     void fillTimeUniforms(
         fx_animation_parameters& parameters, float seconds, const EffectPreset& preset, const fx_effect_shader* shader

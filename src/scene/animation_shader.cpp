@@ -1,11 +1,8 @@
 #include "scene/animation_shader.h"
 
-#include "config/config.h"
 #include "scene/effect_registry.h"
 
 #include <algorithm>
-#include <array>
-#include <memory>
 
 extern "C" {
 #include <umbrielfx/render/effect.h>
@@ -13,13 +10,6 @@ extern "C" {
 
 namespace umbriel {
   namespace {
-    struct CacheEntry {
-      wlr_renderer* renderer = nullptr;
-      std::optional<ShaderSource> source;
-      std::shared_ptr<fx_effect_shader> shader;
-    };
-    std::array<CacheEntry, FX_ANIMATION_SLOTS> cache;
-
     static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
     static_assert(static_cast<unsigned>(AnimationEvent::Window) == FX_SLOT_WINDOW);
     static_assert(static_cast<unsigned>(AnimationEvent::BorderEffect) == FX_SLOT_BORDER_EFFECT);
@@ -41,82 +31,30 @@ namespace umbriel {
       parameters.direction = direction;
       parameters.transition_id = value.transitionId();
       std::ranges::copy(value.shaderSeed(), parameters.random_seed);
-      wlr_scene_node_set_animation(
-          node, static_cast<unsigned>(event), value.animating() ? lifecycleShader(renderer, event) : nullptr,
-          &parameters
-      );
+      EffectRegistry& registry = effectRegistry();
+      fx_effect_shader* shader = value.animating() ? lifecycleShader(renderer, event) : nullptr;
+      // A preset bound to this event gets the shared uniforms too: umbriel_time (when it reads it) and, for
+      // palette = true, the [colors] palette. The built-in fade has no preset and reads neither.
+      if (shader != nullptr) {
+        if (const EffectPreset* preset = registry.animationPreset(event)) {
+          registry.fillTimeUniforms(parameters, registry.clockSeconds(), *preset, shader);
+        }
+      }
+      wlr_scene_node_set_animation(node, static_cast<unsigned>(event), shader, &parameters);
     }
   } // namespace
 
-  fx_effect_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
-    if (fx_effect_shader* preset = effectRegistry().animationShader(event)) {
-      return preset;
-    }
-    const auto& settings = config().animation;
-    const std::optional<ShaderSource>* source = nullptr;
-    bool enabled = false;
-    const char* label = "animation";
-    auto& entry = cache[static_cast<unsigned>(event)];
-#define EVENT(id, field, name)                                                                                         \
-  case AnimationEvent::id:                                                                                             \
-    source = &settings.field.shader;                                                                                   \
-    enabled = settings.field.enabled;                                                                                  \
-    label = "animation." name;                                                                                         \
-    break
-    switch (event) {
-    case AnimationEvent::Window:
-    case AnimationEvent::Overlay:
-    case AnimationEvent::BorderEffect:
-    case AnimationEvent::Drag:
-      entry = {}; // not config-backed animation events
-      return nullptr;
-      EVENT(DimUnfocused, dimUnfocused, "dim_unfocused");
-      EVENT(Border, border, "border");
-      EVENT(WindowsMove, windowsMove, "windows_move");
-      EVENT(WindowsIn, windowsIn, "windows_in");
-      EVENT(WindowsOut, windowsOut, "windows_out");
-      EVENT(Scratchpad, scratchpad, "scratchpad");
-      EVENT(Layers, layers, "layers");
-      EVENT(Workspaces, workspaces, "workspaces");
-      EVENT(Overview, overview, "overview");
-    }
-#undef EVENT
-    if (!settings.enabled || !enabled || source == nullptr || !*source) {
-      entry = {};
-      return nullptr;
-    }
-    if (entry.renderer != renderer || entry.source != *source) {
-      entry.renderer = renderer;
-      entry.source = *source;
-      const auto& input = **source;
-      entry.shader = {
-          fx_effect_shader_create(
-              renderer, FX_EFFECT_ANIMATION, input.code.c_str(), input.file.empty() ? label : input.file.c_str()
-          ),
-          fx_effect_shader_unref
-      };
-    }
-    return entry.shader.get();
+  fx_effect_shader* animationShader(wlr_renderer* /*renderer*/, AnimationEvent event) {
+    return effectRegistry().animationShader(event);
   }
 
-  fx_effect_shader* lifecycleShader(wlr_renderer* renderer, AnimationEvent event) {
-    if (fx_effect_shader* custom = animationShader(renderer, event)) {
-      return custom;
-    }
+  fx_effect_shader* lifecycleShader(wlr_renderer* /*renderer*/, AnimationEvent event) {
     return effectRegistry().lifecycleShader(event);
   }
 
-  void prepareAnimationShaders(wlr_renderer* renderer) {
-    effectRegistry().prepare(renderer);
-    for (unsigned event = 0; event < FX_ANIMATION_SLOTS; ++event) {
-      (void)lifecycleShader(renderer, static_cast<AnimationEvent>(event));
-    }
-  }
+  void prepareAnimationShaders(wlr_renderer* renderer) { effectRegistry().prepare(renderer); }
 
-  void clearAnimationShaderCache() {
-    cache = {};
-    effectRegistry().clear();
-  }
+  void clearAnimationShaderCache() { effectRegistry().clear(); }
 
   void updateAnimationShader(
       wlr_scene_node* node, wlr_renderer* renderer, AnimationEvent event, const AnimatedValue& value, float direction

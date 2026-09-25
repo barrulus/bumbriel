@@ -2674,13 +2674,13 @@ UMBRIEL_TEST(tabletConfigDefaults) {
   CHECK(!tablet.calibrationMatrix.has_value());
 }
 
-UMBRIEL_TEST(animationShadersResolveIncludedFilesAcrossAllEventsAndTrackContentChanges) {
+UMBRIEL_TEST(animationEffectsResolveIncludedPresetsAcrossAllEventsAndTrackContentChanges) {
   const TempConfigTree tree;
   const std::array sections{"windows_in", "windows_out", "windows_move",  "workspaces", "overview",
                             "scratchpad", "border",      "dim_unfocused", "layers"};
-  std::string theme;
+  std::string theme = "[effects.preset.reveal]\nkind = 'animation'\nshader = 'effect.glsl'\n";
   for (const char* section : sections) {
-    theme += std::format("[animation.{}]\nshader = 'effect.glsl'\n", section);
+    theme += std::format("[animation.{}]\neffect = 'reveal'\n", section);
   }
   tree.write("config.toml", "[include]\nfiles = ['theme/animation.toml']\n");
   tree.write("theme/animation.toml", theme);
@@ -2690,15 +2690,17 @@ UMBRIEL_TEST(animationShadersResolveIncludedFilesAcrossAllEventsAndTrackContentC
   store.setRootPath(tree.path("config.toml"), true);
   CHECK(store.reload().success);
   const auto& animation = store.config().animation;
-  const std::array sources{&animation.windowsIn.shader,  &animation.windowsOut.shader,   &animation.windowsMove.shader,
-                           &animation.workspaces.shader, &animation.overview.shader,     &animation.scratchpad.shader,
-                           &animation.border.shader,     &animation.dimUnfocused.shader, &animation.layers.shader};
-  for (const auto* source : sources) {
-    CHECK(source->has_value());
-    if (*source) {
-      CHECK_EQ((*source)->code, std::string("first shader"));
-      CHECK((*source)->file == tree.path("theme/effect.glsl"));
-    }
+  const std::array effects{&animation.windowsIn.effect,  &animation.windowsOut.effect,   &animation.windowsMove.effect,
+                           &animation.workspaces.effect, &animation.overview.effect,     &animation.scratchpad.effect,
+                           &animation.border.effect,     &animation.dimUnfocused.effect, &animation.layers.effect};
+  for (const auto* effect : effects) {
+    CHECK_EQ(*effect, std::string("reveal"));
+  }
+  const umbriel::EffectPreset* reveal = umbriel::findEffectPreset(store.config().effects, "reveal");
+  CHECK(reveal != nullptr);
+  if (reveal != nullptr) {
+    CHECK_EQ(reveal->shader.code, std::string("first shader"));
+    CHECK(reveal->shader.file == tree.path("theme/effect.glsl"));
   }
   CHECK(!containsDiagnostic(store, "unknown key"));
   CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("theme/effect.glsl")), 1);
@@ -2706,21 +2708,30 @@ UMBRIEL_TEST(animationShadersResolveIncludedFilesAcrossAllEventsAndTrackContentC
   tree.write("theme/effect.glsl", "edited shader");
   const auto edited = store.reload();
   CHECK(edited.success);
-  CHECK(edited.effects.animation);
-  CHECK(store.config().animation.windowsIn.shader.has_value());
-  if (store.config().animation.windowsIn.shader) {
-    CHECK_EQ(store.config().animation.windowsIn.shader->code, std::string("edited shader"));
-  }
+  CHECK(edited.effects.effects);
+  CHECK(!edited.effects.animation);
+  reveal = umbriel::findEffectPreset(store.config().effects, "reveal");
+  CHECK(reveal != nullptr && reveal->shader.code == "edited shader");
 
   tree.write("theme/replacement.glsl", "replacement shader");
-  tree.write("theme/animation.toml", "[animation.windows_in]\nshader = 'replacement.glsl'\n");
+  tree.write(
+      "theme/animation.toml",
+      "[effects.preset.reveal]\nkind = 'animation'\nshader = 'replacement.glsl'\n[animation.windows_in]\neffect = "
+      "'reveal'\n"
+  );
   CHECK(store.reload().success);
   CHECK(std::ranges::find(store.watchPaths(), tree.path("theme/effect.glsl")) == store.watchPaths().end());
-  CHECK(store.config().animation.windowsIn.shader.has_value());
-  if (store.config().animation.windowsIn.shader) {
-    CHECK_EQ(store.config().animation.windowsIn.shader->code, std::string("replacement shader"));
-  }
-  CHECK(!store.config().animation.layers.shader.has_value());
+  CHECK(store.config().animation.layers.effect.empty());
+}
+
+UMBRIEL_TEST(removedAnimationShaderKeyIsUnknown) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  file.write("[animation.windows_in]\nshader = \"reveal.glsl\"\n");
+  CHECK(store.reload().success);
+  CHECK(containsDiagnostic(store, "unknown key animation.windows_in.shader"));
+  CHECK(store.config().animation.windowsIn.effect.empty());
 }
 
 UMBRIEL_TEST(animationUsesCanonicalTopLevelNamespace) {

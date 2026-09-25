@@ -2,6 +2,7 @@
 
 #include "config/config.h"
 #include "core/log.h"
+#include "server/server.h"
 
 #include <algorithm>
 
@@ -176,6 +177,14 @@ namespace umbriel {
     }
     return builtinFadeApplies(config().animation, event) ? m_builtinFade.get() : nullptr;
   }
+
+  const EffectPreset* EffectRegistry::animationPreset(AnimationEvent event) const {
+    const auto binding = config().animation.eventEffect(event);
+    return binding.effect != nullptr && !binding.effect->empty() ? findEffectPreset(config().effects, *binding.effect)
+                                                                 : nullptr;
+  }
+
+  float EffectRegistry::clockSeconds() const { return static_cast<float>(m_server->animationClockMsec()) / 1000.0F; }
 
   void EffectRegistry::fillTimeUniforms(
       fx_animation_parameters& parameters, float seconds, const EffectPreset& preset, const fx_effect_shader* shader

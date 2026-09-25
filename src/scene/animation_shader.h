@@ -8,10 +8,11 @@ struct wlr_renderer;
 struct fx_effect_shader;
 
 namespace umbriel {
-  // The configured custom shader for `event`, or null.
+  // The preset bound to `event` through `effect =`, or null.
   [[nodiscard]] fx_effect_shader* animationShader(wlr_renderer* renderer, AnimationEvent event);
-  // The program a lifecycle fade composes through: the custom shader, or for windows_in and windows_out without one, a
-  // built-in fade that applies the lifecycle alpha to the whole window at once. Null when buffers fade individually.
+  // The program a lifecycle fade composes through: the event's preset, or for windows_in and windows_out without one,
+  // a built-in fade that applies the lifecycle alpha to the whole window at once. Null when buffers fade individually;
+  // the registry compiles on preparation, never here.
   [[nodiscard]] fx_effect_shader* lifecycleShader(wlr_renderer* renderer, AnimationEvent event);
   void prepareAnimationShaders(wlr_renderer* renderer);
   void clearAnimationShaderCache();

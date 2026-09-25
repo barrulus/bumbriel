@@ -567,7 +567,6 @@ namespace umbriel {
       std::map<std::string, SpringConfig> springs;
 
       struct WindowsIn {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         // Springs derive their own length; duration_ms stays at the shared value for a duration-based curve.
@@ -579,7 +578,6 @@ namespace umbriel {
       } windowsIn;
 
       struct WindowsOut {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -590,7 +588,6 @@ namespace umbriel {
       } windowsOut;
 
       struct WindowsMove {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -599,7 +596,6 @@ namespace umbriel {
       } windowsMove;
 
       struct Workspaces {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -608,7 +604,6 @@ namespace umbriel {
       } workspaces;
 
       struct Overview {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -621,7 +616,6 @@ namespace umbriel {
       } overview;
 
       struct Scratchpad {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -635,7 +629,6 @@ namespace umbriel {
       } scratchpad;
 
       struct Border {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -644,7 +637,6 @@ namespace umbriel {
       } border;
 
       struct DimUnfocused {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = false;
         int durationMs = 250;
@@ -654,7 +646,6 @@ namespace umbriel {
       } dimUnfocused;
 
       struct Layers {
-        std::optional<ShaderSource> shader;
         std::string effect;
         bool enabled = false;
         int durationMs = 250;
