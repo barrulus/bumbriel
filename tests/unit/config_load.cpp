@@ -3480,4 +3480,48 @@ UMBRIEL_TEST(duplicateEffectPresetsAcrossIncludesAreRejected) {
   CHECK_EQ(store.generation(), generation);
 }
 
+UMBRIEL_TEST(initialDuplicateEffectPresetsKeepCompatibilityDefaults) {
+  const TempConfigTree tree;
+  const std::string preset = "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\n";
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("theme.toml", preset);
+  tree.write("config.toml", "[include]\nfiles = [\"theme.toml\"]\n" + preset);
+
+  ConfigStore& store = umbriel::configStore();
+  const uint64_t generation = store.generation();
+
+  CHECK(store.load(tree.path("config.toml").c_str()));
+  CHECK_EQ(store.generation(), generation + 1);
+  CHECK(store.config().effects.presets.empty());
+  CHECK(std::ranges::any_of(store.diagnostics(), [](const ConfigDiagnostic& diagnostic) {
+    return diagnostic.severity == ConfigDiagnostic::Severity::Error
+        && diagnostic.message.contains("effects.preset.ring is also defined in");
+  }));
+}
+
+UMBRIEL_TEST(duplicateEffectPresetsInSiblingIncludesNameTheFirstSibling) {
+  const TempConfigTree tree;
+  const std::string preset = "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\n";
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("first.toml", preset);
+  tree.write("second.toml", preset);
+  tree.write("config.toml", "[include]\nfiles = [\"first.toml\", \"second.toml\"]\n");
+
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(!store.reload().success);
+  const auto isDuplicate = [](const ConfigDiagnostic& diagnostic) {
+    return diagnostic.message.contains("is also defined in");
+  };
+  CHECK_EQ(std::ranges::count_if(store.diagnostics(), isDuplicate), std::ptrdiff_t{1});
+  const auto duplicate = std::ranges::find_if(store.diagnostics(), isDuplicate);
+  CHECK(duplicate != store.diagnostics().end());
+  if (duplicate == store.diagnostics().end()) {
+    return;
+  }
+  CHECK(duplicate->severity == ConfigDiagnostic::Severity::Error);
+  CHECK(duplicate->message.ends_with("first.toml"));
+  CHECK(duplicate->file.ends_with("second.toml"));
+}
+
 int main() { return RUN_TESTS(); }

@@ -21,7 +21,7 @@ namespace umbriel::configmerge {
     constexpr Logger kLog("config");
 
     void
-    emit(MergeResult& result, ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg) {
+    report(MergeResult& result, ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg) {
       ConfigDiagnostic diag;
       diag.severity = severity;
       diag.message = msg;
@@ -34,12 +34,20 @@ namespace umbriel::configmerge {
       }
       const std::string loc = diag.location();
       if (severity == ConfigDiagnostic::Severity::Error) {
-        result.hadError = true;
         kLog.error("{}{}", loc.empty() ? "" : loc + ": ", msg);
       } else {
         kLog.warn("{}{}", loc.empty() ? "" : loc + ": ", msg);
       }
       result.diagnostics.push_back(std::move(diag));
+    }
+
+    // Like report, but an Error also sets hadError, which fails the load even at startup.
+    void
+    emit(MergeResult& result, ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg) {
+      if (severity == ConfigDiagnostic::Severity::Error) {
+        result.hadError = true;
+      }
+      report(result, severity, src, std::move(msg));
     }
 
     std::filesystem::path canonicalKey(const std::filesystem::path& path) {
@@ -276,9 +284,10 @@ namespace umbriel::configmerge {
     toml::table
     loadAndExpand(const std::filesystem::path& path, std::set<std::filesystem::path>& visited, MergeResult& result);
 
-    // A preset defined in two files would merge key by key into one table. Refuse it, naming both files, before
+    // A preset defined in two files would merge key by key into one table. Report it, naming both files, before
     // deepMerge can hide the second definition. Called after a file's includes are expanded, so the included files'
-    // presets claim the name first and the error names the earlier file.
+    // presets claim the name first and the error names the earlier file. The Error leaves hadError unset: like a
+    // duplicate device or workspace, it rejects the configuration without refusing startup.
     void recordPresetOrigins(const std::filesystem::path& path, const toml::table& parsed, MergeResult& result) {
       const auto* effects = parsed.get_as<toml::table>("effects");
       if (effects == nullptr) {
@@ -288,11 +297,12 @@ namespace umbriel::configmerge {
       if (presets == nullptr) {
         return;
       }
-      for (const auto& [key, value] : *presets) {
+      for (const auto& entry : *presets) {
+        const toml::key& key = entry.first;
         const std::string name(key.str());
         const auto [origin, inserted] = result.presetFiles.try_emplace(name, path.string());
         if (!inserted) {
-          emit(
+          report(
               result, ConfigDiagnostic::Severity::Error, &key.source(),
               std::format("effects.preset.{} is also defined in {}", name, origin->second)
           );
