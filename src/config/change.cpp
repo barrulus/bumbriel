@@ -78,6 +78,12 @@ namespace umbriel {
       return before.windowsDrag == after.windowsDrag;
     }
 
+    bool selectsEffect(const std::vector<WindowRule>& rules) {
+      return std::ranges::any_of(rules, [](const WindowRule& rule) {
+        return rule.borderEffect.has_value() || rule.windowEffect.has_value();
+      });
+    }
+
     bool sameOutputDirectScanoutPolicy(const OutputRule* before, const OutputRule* after) {
       static const OutputRule defaults;
       const OutputRule& lhs = before != nullptr ? *before : defaults;
@@ -182,7 +188,8 @@ namespace umbriel {
     const bool effectsChanged = before.effects != after.effects
         || outputProjectionChanged(before, after, sameOutputScreenEffect)
         || !sameAnimationEffects(before.animation, after.animation)
-        || before.windowRules != after.windowRules;
+        || (before.windowRules != after.windowRules
+            && (selectsEffect(before.windowRules) || selectsEffect(after.windowRules)));
     return {
         .outputState = outputState,
         .tearingPolicy = tearingPolicy,
