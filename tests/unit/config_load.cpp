@@ -3329,6 +3329,11 @@ UMBRIEL_TEST(effectReferencesAreValidatedAfterEverySectionIsRead) {
   CHECK(containsDiagnostic(store, "ignoring effects.window (effect 'ring' is a border preset, not a window preset)"));
   CHECK(config.effects.screen.empty());
   CHECK(containsDiagnostic(store, "ignoring effects.screen (unknown effect 'nope')"));
+  CHECK_EQ(config.windowRules.size(), size_t{1});
+  CHECK_EQ(config.outputs.size(), size_t{1});
+  if (config.windowRules.size() != 1 || config.outputs.size() != 1) {
+    return;
+  }
   CHECK(!config.windowRules[0].borderEffect);
   CHECK(containsDiagnostic(store, "ignoring window_rule.border_effect (unknown effect 'nope')"));
   CHECK(config.windowRules[0].windowEffect == "");
@@ -3394,6 +3399,61 @@ UMBRIEL_TEST(effectReloadsFlagOnlyEffectDependentState) {
   CHECK(output.success);
   CHECK(output.effects.effects);
   CHECK(!output.effects.outputState);
+  CHECK_EQ(output.effects.summary(), std::string("effects"));
+}
+
+UMBRIEL_TEST(effectSelectorNonStringValueWarnsAndLeavesSettingUnset) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  file.write("[[window_rule]]\nmatch.app_id = \"^foot$\"\nborder_effect = 3\n");
+  CHECK(store.reload().success);
+  const auto& config = store.config();
+  CHECK_EQ(config.windowRules.size(), size_t{1});
+  if (config.windowRules.size() != 1) {
+    return;
+  }
+  CHECK(!config.windowRules[0].borderEffect);
+  CHECK(containsDiagnostic(store, "ignoring window_rule.border_effect (expected string)"));
+}
+
+UMBRIEL_TEST(effectSelectorOnADroppedWindowRuleRecordsNoReference) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  file.write("[[window_rule]]\nmatch.app_id = \"[\"\nborder_effect = \"off\"\n");
+  CHECK(store.reload().success);
+  const auto& config = store.config();
+  CHECK(config.windowRules.empty());
+  CHECK(containsDiagnostic(store, "invalid regex in window_rule.match.app_id"));
+  CHECK(!containsDiagnostic(store, "border_effect"));
+}
+
+UMBRIEL_TEST(duplicateOutputSectionDoesNotCorruptASurvivingScreenEffectReference) {
+  const TempConfigTree tree;
+  tree.write("vig.glsl", "vec4 screen(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write(
+      "config.toml",
+      "[effects.preset.vig]\nkind = \"screen\"\nshader = \"vig.glsl\"\n"
+      "[output.\"DP-1\"]\nscreen_effect = \"nope\"\n"
+      "[output.\"HDMI-A-1\"]\nscreen_effect = \"vig\"\n"
+      "[output.\"dp-1\"]\nenabled = true\n"
+  );
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto& config = store.config();
+  CHECK_EQ(config.outputs.size(), size_t{2});
+  const auto hdmi =
+      std::ranges::find_if(config.outputs, [](const umbriel::OutputRule& rule) { return rule.name == "HDMI-A-1"; });
+  CHECK(hdmi != config.outputs.end());
+  if (hdmi != config.outputs.end()) {
+    CHECK(hdmi->screenEffect == "vig");
+  }
+  CHECK(containsDiagnostic(store, "duplicate output section 'dp-1'"));
+  // The discarded DP-1 section's own screen_effect setting is superseded along with the rest of the section: it is
+  // never validated, so it produces no warning of its own.
+  CHECK(!containsDiagnostic(store, "screen_effect (unknown effect 'nope')"));
 }
 
 int main() { return RUN_TESTS(); }

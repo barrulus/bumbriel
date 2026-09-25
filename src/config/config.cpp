@@ -1044,27 +1044,38 @@ namespace umbriel {
       std::function<void()> clear;
     };
 
+    // Reads a string selector under `key`, reporting the section's own "(expected string)" warning through
+    // Section::text so every caller shares one wording. Returns the value and its source location, or nullopt when
+    // the key was absent or not a string.
+    std::optional<std::pair<std::string, toml::source_region>> takeEffectSelector(Section& keys, std::string_view key) {
+      const toml::node* node = keys.node(key);
+      if (node == nullptr) {
+        return std::nullopt;
+      }
+      std::string value;
+      keys.text(key, value); // claims the key and warns if it is not a string
+      if (!node->is_string()) {
+        return std::nullopt;
+      }
+      return std::make_pair(std::move(value), node->source());
+    }
+
     // Reads a string selector into `target` and records it for validation.
     void readEffectSelector(
         Section& keys, std::string_view key, std::string_view context, EffectKind kind, bool allowOff,
         std::string& target, std::vector<EffectReference>& references
     ) {
-      const toml::node* node = keys.take(key);
-      if (node == nullptr) {
+      const auto selector = takeEffectSelector(keys, key);
+      if (!selector) {
         return;
       }
-      const auto value = node->value<std::string>();
-      if (!value) {
-        warnAt(node->source(), "ignoring {} (expected string)", context);
-        return;
-      }
-      target = *value;
+      target = selector->first;
       references.push_back({
           .context = std::string(context),
-          .name = *value,
+          .name = selector->first,
           .kind = kind,
           .allowOff = allowOff,
-          .source = node->source(),
+          .source = selector->second,
           .clear = [&target] { target.clear(); },
       });
     }
@@ -1132,14 +1143,9 @@ namespace umbriel {
                 .real("speed", 0.0, 10.0, speed)
                 .boolean("animated", preset.animated);
             preset.speed = static_cast<float>(speed);
-            const toml::node* overlayNode = keys.take("overlay");
-            if (overlayNode != nullptr) {
-              if (const auto value = overlayNode->value<std::string>()) {
-                preset.overlay = *value;
-                overlay = {*value, overlayNode->source()};
-              } else {
-                warnAt(overlayNode->source(), "ignoring {}.overlay (expected string)", context);
-              }
+            overlay = takeEffectSelector(keys, "overlay");
+            if (overlay) {
+              preset.overlay = overlay->first;
             }
             keys.sub("light", [&](Section& light) {
               BorderLight settings;
@@ -1178,8 +1184,9 @@ namespace umbriel {
       });
     }
 
-    // Every recorded reference is checked against the final preset table.
-    void validateEffectReferences(const Config& loaded, std::vector<EffectReference>& references) {
+    // Every recorded reference is checked against the final preset table. `clear` mutates `loaded` through
+    // references captured while parsing, so this takes it non-const to say so.
+    void validateEffectReferences(Config& loaded, std::vector<EffectReference>& references) {
       for (EffectReference& reference : references) {
         if (const auto error =
                 effectReferenceError(loaded.effects, reference.name, reference.kind, reference.allowOff)) {
@@ -1860,6 +1867,15 @@ namespace umbriel {
       });
     }
 
+    // Finds the surviving output rule by name (case-insensitively), for a `clear` that must not depend on a vector
+    // index a later duplicate-output erase can shift.
+    OutputRule* findOutputRuleMutable(Config& loaded, const std::string& name) {
+      const auto it = std::ranges::find_if(loaded.outputs, [&](const OutputRule& rule) {
+        return outputNamesEqual(rule.name, name);
+      });
+      return it != loaded.outputs.end() ? &*it : nullptr;
+    }
+
     void readOutputs(Section& root, Config& loaded, std::vector<EffectReference>& references) {
       const toml::node* node = root.take("output");
       if (node == nullptr) {
@@ -1884,6 +1900,14 @@ namespace umbriel {
               return outputNamesEqual(rule.name, name);
             })) {
           warnAt(key.source(), "duplicate output section '{}'", name);
+          // The whole section is superseded, so drop any effect reference recorded for the discarded rule(s): it
+          // would otherwise be validated against a setting that no longer applies, or worse, land on whatever rule a
+          // later push shifts into the erased slot.
+          std::erase_if(references, [&](const EffectReference& reference) {
+            return std::ranges::any_of(loaded.outputs, [&](const OutputRule& rule) {
+              return outputNamesEqual(rule.name, name) && reference.context == "output." + rule.name + ".screen_effect";
+            });
+          });
           std::erase_if(loaded.outputs, [&](const OutputRule& rule) { return outputNamesEqual(rule.name, name); });
         }
         OutputRule rule;
@@ -1891,14 +1915,9 @@ namespace umbriel {
         keys.boolean("enabled", rule.enabled)
             .boolean("tearing", rule.allowTearing)
             .boolean("direct_scanout", rule.directScanout);
-        std::optional<std::pair<std::string, toml::source_region>> screenEffect;
-        if (const toml::node* screenEffectNode = keys.take("screen_effect")) {
-          if (const auto value = screenEffectNode->value<std::string>()) {
-            rule.screenEffect = *value;
-            screenEffect = {*value, screenEffectNode->source()};
-          } else {
-            warnAt(screenEffectNode->source(), "ignoring output.{}.screen_effect (expected string)", name);
-          }
+        const auto screenEffect = takeEffectSelector(keys, "screen_effect");
+        if (screenEffect) {
+          rule.screenEffect = screenEffect->first;
         }
         keys.sub("layout", [&](Section& layout) {
           layout.sub("scrolling", [&](Section& scrolling) {
@@ -2048,14 +2067,19 @@ namespace umbriel {
 
         loaded.outputs.push_back(std::move(rule));
         if (screenEffect) {
-          const size_t index = loaded.outputs.size() - 1;
           references.push_back({
               .context = "output." + name + ".screen_effect",
               .name = screenEffect->first,
               .kind = EffectKind::Screen,
               .allowOff = true,
               .source = screenEffect->second,
-              .clear = [&loaded, index] { loaded.outputs[index].screenEffect.reset(); },
+              // Resolved by name rather than a captured index: a later duplicate output section can erase and
+              // reinsert rules, shifting indices.
+              .clear = [&loaded, name] {
+                if (OutputRule* rule = findOutputRuleMutable(loaded, name)) {
+                  rule->screenEffect.reset();
+                }
+              },
           });
         }
       }
@@ -2341,23 +2365,13 @@ namespace umbriel {
             .integer("outer_border_width", 0, 100, rule.outerBorderWidth)
             .integer("corner_radius", 0, 100, rule.cornerRadius)
             .boolean("shadow", rule.shadow);
-        std::optional<std::pair<std::string, toml::source_region>> borderEffect;
-        if (const toml::node* n = keys.take("border_effect")) {
-          if (const auto value = n->value<std::string>()) {
-            rule.borderEffect = *value;
-            borderEffect = {*value, n->source()};
-          } else {
-            warnAt(n->source(), "ignoring window_rule.border_effect (expected string)");
-          }
+        const auto borderEffect = takeEffectSelector(keys, "border_effect");
+        if (borderEffect) {
+          rule.borderEffect = borderEffect->first;
         }
-        std::optional<std::pair<std::string, toml::source_region>> windowEffect;
-        if (const toml::node* n = keys.take("window_effect")) {
-          if (const auto value = n->value<std::string>()) {
-            rule.windowEffect = *value;
-            windowEffect = {*value, n->source()};
-          } else {
-            warnAt(n->source(), "ignoring window_rule.window_effect (expected string)");
-          }
+        const auto windowEffect = takeEffectSelector(keys, "window_effect");
+        if (windowEffect) {
+          rule.windowEffect = windowEffect->first;
         }
         if (const toml::node* n = keys.take("default_floating_size")) {
           const auto* table = n->as_table();
