@@ -301,7 +301,6 @@ struct scene_light {
   struct wlr_scene_rect* rect;
   struct scene_animation* source;
   struct fx_effect_light_cache* cache;
-  int margin; // logical
 };
 
 static void scene_light_destroy(struct wlr_addon* addon) {
@@ -1239,22 +1238,17 @@ static void scene_light_sync(struct scene_animation* animation) {
     light->cache = fx_effect_light_cache_create(shader->renderer);
   }
   const pixman_box32_t* extents = pixman_region32_extents(&bounds);
-  light->margin = (int)ceilf(parameters->light.spread * 2 + 8) + animation_expand(animation);
+  const int margin = (int)ceilf(parameters->light.spread * 2 + 8) + animation_expand(animation);
   int layer_x, layer_y;
   wlr_scene_node_coords(&effects->light_layer->node, &layer_x, &layer_y);
-  wlr_scene_node_set_position(
-      &light->rect->node, extents->x1 - light->margin - layer_x, extents->y1 - light->margin - layer_y
-  );
-  wlr_scene_rect_set_size(
-      light->rect, extents->x2 - extents->x1 + 2 * light->margin, extents->y2 - extents->y1 + 2 * light->margin
-  );
+  wlr_scene_node_set_position(&light->rect->node, extents->x1 - margin - layer_x, extents->y1 - margin - layer_y);
+  wlr_scene_rect_set_size(light->rect, extents->x2 - extents->x1 + 2 * margin, extents->y2 - extents->y1 + 2 * margin);
   pixman_region32_fini(&bounds);
 }
 
 // Re-places the lights of border slots on, above, or inside `node`, and every
 // light when `node` is the light layer.
-static void scene_lights_sync(struct wlr_scene* scene, struct wlr_scene_node* node) {
-  struct scene_effects* effects = scene_effects_get(scene, false);
+static void scene_lights_sync(struct scene_effects* effects, struct wlr_scene_node* node) {
   if (effects == NULL || effects->persistent == 0) {
     return;
   }
@@ -1413,7 +1407,8 @@ static int scene_node_effect_expand(struct wlr_scene_node* node) {
  */
 static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* damage) {
   struct wlr_scene* scene = scene_node_get_root(node);
-  scene_lights_sync(scene, node);
+  struct scene_effects* effects = scene_effects_get(scene, false);
+  scene_lights_sync(effects, node);
 
   int x, y;
   if (!wlr_scene_node_coords(node, &x, &y)) {
@@ -1423,7 +1418,7 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
       scene_node_cleanup_when_disabled(node, scene->restack_xwayland_surfaces, &scene->outputs);
 
       // The node's own, its ancestors', and its descendants' expand margins were drawn too.
-      if (scene_effects_get(scene, false) != NULL) {
+      if (effects != NULL) {
         const int own = scene_node_effect_expand(node);
         const int nested = scene_subtree_effect_expand(node);
         const int expand = own > nested ? own : nested;
@@ -1451,7 +1446,7 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
   pixman_region32_init(&update_region);
   pixman_region32_copy(&update_region, damage);
   scene_node_bounds(node, x, y, &update_region);
-  if (scene_effects_get(scene, false) != NULL) {
+  if (effects != NULL) {
     const int expand = scene_node_effect_expand(node);
     if (expand > 0) {
       wlr_region_expand(&update_region, &update_region, expand);
@@ -2948,7 +2943,10 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
   enum wl_output_transform node_transform = wlr_output_transform_compose(WL_OUTPUT_TRANSFORM_NORMAL, data->transform);
 
   struct wlr_scene* scene = data->output->scene;
-  struct scene_light* light = node->type == WLR_SCENE_NODE_RECT ? scene_light_from_node(node) : NULL;
+  struct scene_light* light =
+      node->type == WLR_SCENE_NODE_RECT && data->effects != NULL && data->effects->light_layer != NULL
+      ? scene_light_from_node(node)
+      : NULL;
   switch (node->type) {
   case WLR_SCENE_NODE_TREE:
     assert(false);

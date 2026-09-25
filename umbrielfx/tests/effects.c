@@ -725,50 +725,225 @@ static bool test_border_geometry_tree(struct fixture *fixture) {
 	return ok;
 }
 
-// Light from a border slot spills past the border box into the light layer,
-// only when the scene has one.
-static bool render_light_scene(struct fixture *fixture, bool with_layer, uint8_t margin_pixel[4], uint8_t ring_pixel[4]) {
+// A ring whose border program emits only along its left `edge` logical px.
+struct light_ring {
+	struct wlr_box box; // logical
+	int wall;           // logical
+	float scale;
+	enum wl_output_transform transform;
+	float spread;
+};
+
+static const char kLeftEdgeSource[] =
+	"uniform float edge;\n"
+	"vec4 border(vec2 uv) { return uv.x * umbriel_size.x < edge ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0); }";
+
+// The buffer pixel under logical pixel (x, y) of a 16x16 output.
+static void light_probe_at(const struct light_ring *ring, int x, int y, int *bx, int *by) {
+	struct wlr_box box = { .x = x, .y = y, .width = 1, .height = 1 };
+	struct wlr_box scaled = { .x = (int)(box.x * ring->scale), .y = (int)(box.y * ring->scale),
+		.width = (int)ring->scale, .height = (int)ring->scale };
+	wlr_box_transform(&box, &scaled, wlr_output_transform_invert(ring->transform), TEST_WIDTH, TEST_HEIGHT);
+	*bx = box.x;
+	*by = box.y;
+}
+
+// Renders `ring` over black, with a light layer when `with_layer`, and reads
+// the buffer pixels under the logical `probes`.
+static bool render_light_ring(struct fixture *fixture, const struct light_ring *ring, bool with_layer,
+		const int probes[][2], int probe_count, uint8_t out[][4]) {
 	struct wlr_scene *scene = wlr_scene_create();
 	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
 	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
 	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
 	struct wlr_scene_border *border = wlr_scene_border_create(&scene->tree, white, white);
-	wlr_scene_border_set_geometry(border, 8, 8, 2, 0,
-		(struct clipped_region){ .area = { 2, 2, 4, 4 } }, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
-	wlr_scene_node_set_position(&border->node, 4, 4);
+	wlr_scene_border_set_geometry(border, ring->box.width, ring->box.height, ring->wall, 0,
+		(struct clipped_region){ .area = { ring->wall, ring->wall,
+			ring->box.width - 2 * ring->wall, ring->box.height - 2 * ring->wall } },
+		(struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	wlr_scene_node_set_position(&border->node, ring->box.x, ring->box.y);
 	if (with_layer) {
 		wlr_scene_set_effect_light_layer(scene, wlr_scene_tree_create(&scene->tree));
 	}
-	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
-		"vec4 border(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0); }", "border-light");
+	struct fx_effect_shader *program =
+		fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER, kLeftEdgeSource, "border-light");
 	bool ok = check(program != NULL, "border program compiles");
 	struct fx_animation_parameters parameters = {
 		.progress = 1, .linear_progress = 1, .direction = 1,
-		.light = { .enabled = true, .spread = 3, .intensity = 4, .threshold = 0.1f },
+		.light = { .enabled = true, .spread = ring->spread, .intensity = 4, .threshold = 0.1f },
 	};
+	fx_parameters_add_uniform(&parameters, "edge", FX_UNIFORM_FLOAT, 1)->floats[0] = ring->wall;
 	wlr_scene_node_set_animation(&border->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+
 	struct wlr_output_state state;
-	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	wlr_output_state_init(&state);
+	wlr_output_state_set_scale(&state, ring->scale);
+	wlr_output_state_set_transform(&state, ring->transform);
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	struct wlr_swapchain *swapchain =
+		format != NULL ? wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format) : NULL;
+	struct wlr_buffer *rendered = NULL;
+	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
+	if (swapchain != NULL && wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL) {
+		rendered = wlr_buffer_lock(state.buffer);
+	}
 	ok &= check(rendered != NULL, "renders");
 	if (rendered != NULL) {
-		ok &= fixture_read_pixel(fixture, rendered, 2, 8, margin_pixel);   // 2px left of the border box
-		ok &= fixture_read_pixel(fixture, rendered, 5, 8, ring_pixel);     // inside the wall
+		for (int i = 0; i < probe_count; i++) {
+			int x, y;
+			light_probe_at(ring, probes[i][0], probes[i][1], &x, &y);
+			ok &= fixture_read_pixel(fixture, rendered, x, y, out[i]);
+		}
 		wlr_buffer_unlock(rendered);
 	}
+	wlr_swapchain_destroy(swapchain);
 	wlr_output_state_finish(&state);
 	fx_effect_shader_unref(program);
 	wlr_scene_node_destroy(&scene->tree.node);
 	return ok;
 }
 
+// Light from a border slot spills past the border box on the emitting side
+// only, into the light layer, only when the scene has one. The glow keeps its
+// place on a scaled output and the same logical profile on a rotated one.
 static bool test_border_light(struct fixture *fixture) {
-	uint8_t margin[4], ring[4], dark_margin[4], dark_ring[4];
-	bool ok = render_light_scene(fixture, true, margin, ring);
-	ok &= render_light_scene(fixture, false, dark_margin, dark_ring);
-	ok &= check(ring[2] > 250 && dark_ring[2] > 250, "the ring itself is red with and without light");
-	ok &= check(margin[2] > 20, "light spills red past the border box");
-	ok &= check(margin[2] < ring[2], "the spill is dimmer than the ring");
-	ok &= check(dark_margin[2] < 5 && dark_margin[1] < 5, "without a light layer nothing spills");
+	enum { SPILL, RING, FAR, ABOVE, CORNER, PROBES };
+	uint8_t lit[PROBES][4], dark[PROBES][4];
+	const struct light_ring square = { .box = { 4, 4, 8, 8 }, .wall = 2, .scale = 1, .spread = 3 };
+	// 2 px left of the ring, inside its left wall, 2 px right of the ring.
+	const int square_probes[FAR + 1][2] = { { 2, 8 }, { 5, 8 }, { 13, 8 } };
+	bool ok = render_light_ring(fixture, &square, true, square_probes, FAR + 1, lit);
+	ok &= render_light_ring(fixture, &square, false, square_probes, FAR + 1, dark);
+	ok &= check(lit[RING][2] > 250 && dark[RING][2] > 250, "the emitting wall is red with and without light");
+	ok &= check(lit[SPILL][2] > 20, "light spills red past the emitting side");
+	ok &= check(lit[SPILL][2] < lit[RING][2], "the spill is dimmer than the ring");
+	ok &= check(lit[FAR][2] < 8, "no light past the side that emits nothing");
+	ok &= check(dark[SPILL][2] < 5 && dark[SPILL][1] < 5, "without a light layer nothing spills");
+
+	// The same buffer layout at scale 2: a 4x4 logical ring with 1 px walls.
+	const struct light_ring scaled = { .box = { 2, 2, 4, 4 }, .wall = 1, .scale = 2, .spread = 3 };
+	const int scaled_probes[FAR + 1][2] = { { 1, 4 }, { 2, 4 }, { 7, 4 } };
+	ok &= render_light_ring(fixture, &scaled, true, scaled_probes, FAR + 1, lit);
+	ok &= check(lit[RING][2] > 250, "the scaled emitting wall is red");
+	ok &= check(lit[SPILL][2] > 20 && lit[SPILL][2] < lit[RING][2], "light spills past the scaled ring's emitting side");
+	ok &= check(lit[FAR][2] < 8, "no light past the scaled ring's dark side");
+
+	// A wide ring glows the same on a 90-degree output as on a normal one.
+	const struct light_ring wide = { .box = { 2, 6, 12, 4 }, .wall = 1, .scale = 1, .spread = 4 };
+	struct light_ring rotated = wide;
+	rotated.transform = WL_OUTPUT_TRANSFORM_90;
+	const int wide_probes[PROBES][2] = { { 1, 8 }, { 2, 8 }, { 15, 8 }, { 2, 3 }, { 0, 4 } };
+	ok &= render_light_ring(fixture, &wide, true, wide_probes, PROBES, lit);
+	ok &= render_light_ring(fixture, &rotated, true, wide_probes, PROBES, dark);
+	ok &= check(dark[RING][2] > 250, "the rotated emitting wall is red");
+	ok &= check(lit[SPILL][2] > 12 && dark[SPILL][2] > 12, "light spills past the wide ring's emitting side");
+	ok &= check(lit[FAR][2] < 8 && dark[FAR][2] < 8, "no light past the wide ring's dark side");
+	bool same = true;
+	for (int i = 0; i < PROBES; i++) {
+		same &= abs(lit[i][2] - dark[i][2]) <= 4;
+	}
+	ok &= check(same, "the rotated glow matches the normal one");
+	return ok;
+}
+
+// The single light proxy in `layer`, or NULL when it holds none.
+static struct wlr_scene_rect *light_proxy(struct wlr_scene_tree *layer) {
+	if (wl_list_length(&layer->children) != 1) {
+		return NULL;
+	}
+	struct wlr_scene_node *node = wl_container_of(layer->children.next, node, link);
+	return node->type == WLR_SCENE_NODE_RECT ? wlr_scene_rect_from_node(node) : NULL;
+}
+
+static bool light_proxy_is(struct wlr_scene_tree *layer, int x, int y, int width, int height) {
+	struct wlr_scene_rect *rect = light_proxy(layer);
+	return rect != NULL && rect->node.x == x && rect->node.y == y && rect->width == width && rect->height == height;
+}
+
+static uint8_t light_spill_red(struct fixture *fixture, struct wlr_scene_output *scene_output, int x, int y) {
+	uint8_t pixel[4] = { 0 };
+	wlr_scene_output_damage_whole_for_test(scene_output);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	if (rendered != NULL) {
+		fixture_read_pixel(fixture, rendered, x, y, pixel);
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	return pixel[2];
+}
+
+// A view-like border tree in a window tree below the light layer. The proxy
+// covers the tree's bounds plus ceil(spread * 2 + 8) logical px, follows its
+// placement, and exists only while the rules of the light layer allow it.
+static bool test_border_light_lifecycle(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_tree *window = wlr_scene_tree_create(&scene->tree);
+	struct wlr_scene_tree *layer = wlr_scene_tree_create(&scene->tree);
+	struct wlr_scene_tree *frame = wlr_scene_tree_create(window);
+	wlr_scene_node_set_position(&frame->node, 4, 4);
+	struct wlr_scene_border *border = wlr_scene_border_create(frame, white, white);
+	const struct clipped_region hole = { .area = { 2, 2, 4, 4 } };
+	wlr_scene_border_set_geometry(border, 8, 8, 2, 0, hole, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	struct fx_effect_shader *program =
+		fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER, kLeftEdgeSource, "border-light-lifecycle");
+	bool ok = check(program != NULL, "border program compiles");
+	struct fx_animation_parameters parameters = {
+		.progress = 1, .linear_progress = 1, .direction = 1,
+		.light = { .enabled = true, .spread = 3, .intensity = 4, .threshold = 0.1f },
+	};
+	fx_parameters_add_uniform(&parameters, "edge", FX_UNIFORM_FLOAT, 1)->floats[0] = 2;
+	wlr_scene_set_effect_light_layer(scene, layer);
+	wlr_scene_node_set_animation(&frame->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+	ok &= check(light_proxy_is(layer, -10, -10, 36, 36), "the proxy covers the bounds plus the margin");
+	ok &= check(light_spill_red(fixture, scene_output, 2, 8) > 20, "the proxy draws the light");
+
+	wlr_scene_border_set_geometry(border, 10, 8, 2, 0, hole, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	ok &= check(light_proxy_is(layer, -10, -10, 38, 36), "the proxy follows a resized border child");
+	wlr_scene_node_set_position(&window->node, 1, 0);
+	ok &= check(light_proxy_is(layer, -9, -10, 38, 36), "the proxy follows a moved ancestor");
+
+	struct wlr_scene_border *snapshot = wlr_scene_border_create(window, white, white);
+	wlr_scene_border_set_geometry(snapshot, 8, 8, 2, 0, hole, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	wlr_scene_node_copy_animations_for_snapshot(&snapshot->node, &frame->node);
+	ok &= check(light_proxy(layer) != NULL, "a snapshot adds no light");
+	wlr_scene_node_destroy(&snapshot->node);
+
+	const struct fx_animation_parameters opening = { .transition_id = 1 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOWS_IN, program, &opening);
+	ok &= check(wl_list_empty(&layer->children), "a transient ancestor suppresses the light");
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOWS_IN, NULL, NULL);
+	ok &= check(light_proxy_is(layer, -9, -10, 38, 36), "the light returns when the ancestor settles");
+
+	wlr_scene_node_raise_to_top(&window->node);
+	ok &= check(wl_list_empty(&layer->children), "a border above the light layer emits nothing");
+	ok &= check(light_spill_red(fixture, scene_output, 3, 8) < 5, "nothing spills from above the layer");
+	wlr_scene_node_raise_to_top(&layer->node);
+	ok &= check(light_proxy(layer) != NULL, "raising the layer restores the light");
+
+	struct wlr_scene_tree *other = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_set_effect_light_layer(scene, other);
+	ok &= check(wl_list_empty(&layer->children), "switching layers empties the old one");
+	ok &= check(light_proxy_is(other, -9, -10, 38, 36), "the new layer holds the proxy");
+	wlr_scene_set_effect_light_layer(scene, NULL);
+	ok &= check(wl_list_empty(&other->children), "unregistering the layer removes the proxy");
+	ok &= check(light_spill_red(fixture, scene_output, 3, 8) < 5, "no light without a layer");
+
+	wlr_scene_set_effect_light_layer(scene, other);
+	ok &= check(light_proxy(other) != NULL, "registering again restores the proxy");
+	wlr_scene_node_destroy(&other->node);
+	wlr_scene_node_set_position(&window->node, 2, 0);
+	wlr_scene_node_set_animation(&frame->node, FX_SLOT_BORDER_EFFECT, NULL, NULL);
+	wlr_scene_set_effect_light_layer(scene, layer);
+	ok &= check(wl_list_empty(&layer->children), "no proxy without a border slot");
+	wlr_scene_node_set_animation(&frame->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+	ok &= check(light_proxy(layer) != NULL, "a new border slot gets a proxy");
+
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
 	return ok;
 }
 
@@ -812,6 +987,8 @@ int main(int argc, char *argv[]) {
 		ok = test_border_geometry_tree(&fixture);
 	} else if (strcmp(argv[1], "border-light") == 0) {
 		ok = test_border_light(&fixture);
+	} else if (strcmp(argv[1], "border-light-lifecycle") == 0) {
+		ok = test_border_light_lifecycle(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

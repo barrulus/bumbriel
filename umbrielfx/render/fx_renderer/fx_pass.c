@@ -779,19 +779,32 @@ static bool ensure_light_program(struct fx_renderer* renderer) {
   return true;
 }
 
-static bool light_target_init(GLuint* texture, GLuint* framebuffer, int width, int height, GLenum type) {
-  glGenTextures(1, texture);
-  glBindTexture(GL_TEXTURE_2D, *texture);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, type, NULL);
-  glBindTexture(GL_TEXTURE_2D, 0);
-  glGenFramebuffers(1, framebuffer);
-  glBindFramebuffer(GL_FRAMEBUFFER, *framebuffer);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *texture, 0);
-  return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+// A half float target that is not renderable is retried as RGBA8, and `type`
+// stays RGBA8 for the targets after it.
+static bool light_target_init(GLuint* texture, GLuint* framebuffer, int width, int height, GLenum* type) {
+  while (true) {
+    glGenTextures(1, texture);
+    glBindTexture(GL_TEXTURE_2D, *texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, *type, NULL);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glGenFramebuffers(1, framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, *framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *texture, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+      return true;
+    }
+    if (*type != GL_HALF_FLOAT_OES) {
+      return false;
+    }
+    glDeleteFramebuffers(1, framebuffer);
+    glDeleteTextures(1, texture);
+    *framebuffer = *texture = 0;
+    *type = GL_UNSIGNED_BYTE;
+  }
 }
 
 static void light_cache_forget(struct fx_effect_light_cache* cache) {
@@ -811,12 +824,23 @@ static void light_cache_release(struct fx_effect_light_cache* cache) {
   light_cache_forget(cache);
 }
 
+// Releases the GL objects in the renderer's context and stops tracking the renderer.
+static void light_cache_detach(struct fx_effect_light_cache* cache) {
+  struct wlr_egl_context previous;
+  if (wlr_egl_make_current(cache->renderer->egl, &previous)) {
+    light_cache_release(cache);
+    wlr_egl_restore_context(&previous);
+  } else {
+    light_cache_forget(cache);
+  }
+  wl_list_remove(&cache->renderer_destroy.link);
+  cache->renderer = NULL;
+}
+
+// The renderer's context is still alive while its destroy signal runs.
 static void light_cache_renderer_destroy(struct wl_listener* listener, void* data) {
   struct fx_effect_light_cache* cache = wl_container_of(listener, cache, renderer_destroy);
-  // The context releases the GL objects; never touch their names again.
-  light_cache_forget(cache);
-  cache->renderer = NULL;
-  wl_list_remove(&cache->renderer_destroy.link);
+  light_cache_detach(cache);
 }
 
 struct fx_effect_light_cache* fx_effect_light_cache_create(struct fx_renderer* renderer) {
@@ -835,12 +859,7 @@ void fx_effect_light_cache_destroy(struct fx_effect_light_cache* cache) {
     return;
   }
   if (cache->renderer != NULL) {
-    struct wlr_egl_context previous;
-    if (wlr_egl_make_current(cache->renderer->egl, &previous)) {
-      light_cache_release(cache);
-      wlr_egl_restore_context(&previous);
-    }
-    wl_list_remove(&cache->renderer_destroy.link);
+    light_cache_detach(cache);
   }
   free(cache);
 }
@@ -867,14 +886,10 @@ light_cache_prepare(struct fx_effect_light_cache* cache, int width, int height, 
   cache->emission_height = height;
   cache->margin = margin;
   cache->levels = levels;
-  cache->failed = true;
-  const GLenum type = cache->renderer->exts.OES_texture_half_float_linear ? GL_HALF_FLOAT_OES : GL_UNSIGNED_BYTE;
-  if (!light_target_init(&cache->emission_texture, &cache->emission_framebuffer, width, height, type)) {
-    wlr_log(WLR_ERROR, "Cannot allocate effect light buffers; keeping the plain border");
-    return false;
-  }
+  GLenum type = cache->renderer->exts.OES_texture_half_float_linear ? GL_HALF_FLOAT_OES : GL_UNSIGNED_BYTE;
+  bool ok = light_target_init(&cache->emission_texture, &cache->emission_framebuffer, width, height, &type);
   const int w = (full_width + 1) / 2, h = (full_height + 1) / 2;
-  for (int i = 0; i <= levels; i++) {
+  for (int i = 0; ok && i <= levels; i++) {
     cache->widths[i] = (w + (1 << i) - 1) >> i;
     cache->heights[i] = (h + (1 << i) - 1) >> i;
     if (cache->widths[i] < 1) {
@@ -883,13 +898,13 @@ light_cache_prepare(struct fx_effect_light_cache* cache, int width, int height, 
     if (cache->heights[i] < 1) {
       cache->heights[i] = 1;
     }
-    if (!light_target_init(&cache->textures[i], &cache->framebuffers[i], cache->widths[i], cache->heights[i], type)) {
-      wlr_log(WLR_ERROR, "Cannot allocate effect light buffers; keeping the plain border");
-      return false;
-    }
+    ok = light_target_init(&cache->textures[i], &cache->framebuffers[i], cache->widths[i], cache->heights[i], &type);
   }
-  cache->failed = false;
-  return true;
+  cache->failed = !ok;
+  if (!ok) {
+    wlr_log(WLR_ERROR, "Cannot allocate effect light buffers; keeping the plain border");
+  }
+  return ok;
 }
 
 static void light_blur(
@@ -928,9 +943,10 @@ static void emit_light(
   if (cache->renderer != renderer || !ensure_light_program(renderer) || box->width <= 0 || box->height <= 0) {
     return;
   }
-  const float scale = logical_box->width > 0 ? (float)box->width / logical_box->width : 1;
+  const float scale = animation_box_scale(box, logical_box);
   const float spread_px = light->spread * scale;
-  const int margin = (int)ceilf(spread_px * 2 + 8);
+  // The proxy's logical margin in buffer px, so the pyramid and the proxy cover one rectangle.
+  const int margin = (int)ceilf(ceilf(light->spread * 2 + 8) * scale);
   if (!light_cache_prepare(cache, box->width, box->height, margin, spread_px)) {
     fx_framebuffer_bind(pass->buffer);
     return;
