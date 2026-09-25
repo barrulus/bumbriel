@@ -4,6 +4,7 @@
 #include "scene/animation_shader.h"
 #include "scene/effect_ledger.h"
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -43,7 +44,9 @@ namespace umbriel {
     [[nodiscard]] fx_effect_shader* lifecycleShader(AnimationEvent event) const;
     // The preset bound to an animation event through `effect =`, or null (also null for the built-in fade).
     [[nodiscard]] const EffectPreset* animationPreset(AnimationEvent event) const;
-    // The animation clock in seconds, read only when a program needs it.
+    // The animation clock in seconds, read only when a program needs it. Measured from an epoch
+    // taken on the first call, so the millisecond count backing it can exceed a float's exact
+    // integer range without the returned value losing precision.
     [[nodiscard]] float clockSeconds() const;
     // Adds `umbriel_time` when `shader` reads it, and the `[colors]` palette for palette presets.
     void fillTimeUniforms(
@@ -68,9 +71,17 @@ namespace umbriel {
     std::map<std::string, Entry, std::less<>> m_programs;
     std::shared_ptr<fx_effect_shader> m_builtinFade;
     EffectLedger m_ledger;
+    mutable uint64_t m_clockEpochMsec = 0;
+    mutable bool m_clockEpochSet = false;
   };
 
   // The Server's registry. Set in Server's constructor before any view exists.
   [[nodiscard]] EffectRegistry& effectRegistry();
+
+  // Seconds elapsed from `epochMsec` to `nowMsec`, computed in double precision so the result keeps
+  // sub-millisecond resolution long after the raw millisecond count exceeds a float's exact range.
+  [[nodiscard]] inline float effectClockSeconds(uint64_t nowMsec, uint64_t epochMsec) {
+    return static_cast<float>(static_cast<double>(nowMsec - epochMsec) / 1000.0);
+  }
 
 } // namespace umbriel

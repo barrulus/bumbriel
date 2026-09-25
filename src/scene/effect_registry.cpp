@@ -184,7 +184,16 @@ namespace umbriel {
                                                                  : nullptr;
   }
 
-  float EffectRegistry::clockSeconds() const { return static_cast<float>(m_server->animationClockMsec()) / 1000.0F; }
+  float EffectRegistry::clockSeconds() const {
+    const uint64_t now = m_server->animationClockMsec();
+    if (!m_clockEpochSet) {
+      // The server isn't constructed far enough for animationClockMsec() to be safe from this
+      // registry's own constructor, so the epoch is taken lazily on first use instead.
+      m_clockEpochMsec = now;
+      m_clockEpochSet = true;
+    }
+    return effectClockSeconds(now, m_clockEpochMsec);
+  }
 
   void EffectRegistry::fillTimeUniforms(
       fx_animation_parameters& parameters, float seconds, const EffectPreset& preset, const fx_effect_shader* shader

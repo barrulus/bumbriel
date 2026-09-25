@@ -2,6 +2,9 @@
 
 #include "check.h"
 #include "scene/effect_ledger.h"
+#include "scene/effect_registry.h"
+
+#include <cstdint>
 
 using umbriel::EffectKind;
 using umbriel::EffectPreset;
@@ -61,6 +64,20 @@ UMBRIEL_TEST(offIsOnlyValidWhereAnOverrideCanDisableTheDefault) {
       umbriel::effectReferenceError(effects, "off", EffectKind::Border, false).value_or(""),
       std::string("unknown effect 'off'")
   );
+}
+
+UMBRIEL_TEST(clockSecondsKeepsMillisecondResolutionPastAFloatsExactRange) {
+  // A raw millisecond count this large already exceeds a float's exact integer range (2^24, ~4.7
+  // hours): a plain `static_cast<float>(msec) / 1000.0F` on it collapses a 1 ms step to nothing.
+  // Measuring from an epoch keeps the value handed to clockSeconds() small, so the same step survives.
+  constexpr uint64_t epoch = 7ULL * 24 * 3600 * 1000;
+  const float naiveAt = static_cast<float>(epoch + 1) / 1000.0F;
+  const float naiveBefore = static_cast<float>(epoch) / 1000.0F;
+  CHECK_EQ(naiveAt, naiveBefore);
+
+  const float at = umbriel::effectClockSeconds(epoch + 1, epoch);
+  const float before = umbriel::effectClockSeconds(epoch, epoch);
+  CHECK(at != before);
 }
 
 UMBRIEL_TEST(inertPresetsKeepTheirNameWithoutSource) {
