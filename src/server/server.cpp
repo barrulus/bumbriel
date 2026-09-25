@@ -33,7 +33,7 @@
 #include "xwayland/supervisor.h"
 
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 
 #include <algorithm>

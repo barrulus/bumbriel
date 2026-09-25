@@ -5,7 +5,7 @@
 #include "scene/color.h"
 
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 
 // clang-format off

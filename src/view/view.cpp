@@ -14,7 +14,7 @@
 #include "scene/surface_blur.h"
 #include "server/server.h"
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 #include "view/maximize.h"
 #include "view/xdg_size.h"

@@ -621,7 +621,7 @@ bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
 }
 
 static void draw_animation_texture(
-    struct fx_gles_render_pass* pass, struct wlr_texture* wlr_texture, struct fx_animation_shader* shader,
+    struct fx_gles_render_pass* pass, struct wlr_texture* wlr_texture, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* source_box,
     const struct wlr_box* logical_box, enum wl_output_transform transform, const pixman_region32_t* clip,
     struct wlr_texture* previous_texture, const struct wlr_box* previous_source_box, const float projection[9],
@@ -709,7 +709,7 @@ static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pas
 }
 
 void fx_render_pass_end_animation_with_history(
-    struct fx_gles_render_pass* pass, struct fx_animation_shader* shader,
+    struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
     struct fx_animation_history* history, struct wlr_output* output, bool update_history
@@ -832,7 +832,7 @@ fallback:
 }
 
 void fx_render_pass_end_animation(
-    struct fx_gles_render_pass* pass, struct fx_animation_shader* shader,
+    struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* clip
 ) {
@@ -865,8 +865,8 @@ bool fx_render_pass_end_animation_shadow(
     renderer->animation_shadow_attempted = true;
     // Two bounded separable passes, independent of shadow softness. The
     // analytic shadow also uses sigma = softness / 2 and a finite extent.
-    renderer->animation_shadow_horizontal = fx_animation_shader_create(
-        &renderer->wlr_renderer,
+    renderer->animation_shadow_horizontal = fx_effect_shader_create(
+        &renderer->wlr_renderer, FX_EFFECT_ANIMATION,
         "uniform vec2 shadow_step;\n"
         "vec4 animation(vec2 uv) {\n"
         " float a = 0.0; float total = 0.0;\n"
@@ -880,8 +880,8 @@ bool fx_render_pass_end_animation_shadow(
         "}\n",
         "internal shadow horizontal"
     );
-    renderer->animation_shadow_vertical = fx_animation_shader_create(
-        &renderer->wlr_renderer,
+    renderer->animation_shadow_vertical = fx_effect_shader_create(
+        &renderer->wlr_renderer, FX_EFFECT_ANIMATION,
         "uniform vec2 shadow_step; uniform vec2 shadow_offset;\n"
         "uniform sampler2D shadow_mask; uniform vec4 shadow_color;\n"
         "uniform bool shadow_nearest;\n"
@@ -912,8 +912,8 @@ bool fx_render_pass_end_animation_shadow(
         "internal shadow vertical"
     );
   }
-  struct fx_animation_shader* horizontal = renderer->animation_shadow_horizontal;
-  struct fx_animation_shader* vertical = renderer->animation_shadow_vertical;
+  struct fx_effect_shader* horizontal = renderer->animation_shadow_horizontal;
+  struct fx_effect_shader* vertical = renderer->animation_shadow_vertical;
   // Keep the caster's framebuffer reserved while allocating the horizontal
   // pass, otherwise the depth-indexed pool would clear the texture we sample.
   struct wlr_texture* caster = pass->animation_textures[pass->animation_depth - 1];

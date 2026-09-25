@@ -7,7 +7,7 @@
 #include <wayland-server-protocol.h>
 
 struct fx_animation_parameters;
-struct fx_animation_shader;
+struct fx_effect_shader;
 struct fx_gles_render_pass;
 struct wlr_box;
 struct wlr_output;
@@ -22,7 +22,7 @@ void fx_animation_history_reset(struct fx_animation_history* history);
 void fx_animation_history_move(struct fx_animation_history* destination, struct fx_animation_history* source);
 
 void fx_render_pass_end_animation_with_history(
-    struct fx_gles_render_pass* pass, struct fx_animation_shader* shader,
+    struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
     struct fx_animation_history* history, struct wlr_output* output, bool update_history

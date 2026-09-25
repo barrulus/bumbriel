@@ -7,7 +7,7 @@
 #include "render/fx_renderer/shaders.h"
 #include "render/fx_renderer/fx_renderer.h"
 #include "render/egl.h"
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 
 // shaders
 #include "GLES2/gl2.h"
@@ -83,7 +83,7 @@ error:
 }
 
 static void animation_renderer_destroy(struct wl_listener *listener, void *data) {
-	struct fx_animation_shader *shader = wl_container_of(listener, shader, destroy);
+	struct fx_effect_shader *shader = wl_container_of(listener, shader, destroy);
 	// Context destruction releases the GL program. Scene and config references
 	// may outlive that context, but may never use its object names again.
 	shader->renderer = NULL;
@@ -91,21 +91,21 @@ static void animation_renderer_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&shader->destroy.link);
 }
 
-struct fx_animation_shader *fx_animation_shader_ref(struct fx_animation_shader *shader) {
+struct fx_effect_shader *fx_effect_shader_ref(struct fx_effect_shader *shader) {
 	if (shader != NULL) {
 		shader->references++;
 	}
 	return shader;
 }
 
-void fx_animation_shader_set_shape_preserving(struct fx_animation_shader *shader,
+void fx_effect_shader_set_shape_preserving(struct fx_effect_shader *shader,
 		bool shape_preserving) {
 	if (shader != NULL) {
 		shader->shape_preserving = shape_preserving;
 	}
 }
 
-void fx_animation_shader_unref(struct fx_animation_shader *shader) {
+void fx_effect_shader_unref(struct fx_effect_shader *shader) {
 	if (shader == NULL || --shader->references != 0) {
 		return;
 	}
@@ -120,8 +120,9 @@ void fx_animation_shader_unref(struct fx_animation_shader *shader) {
 	free(shader);
 }
 
-struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *renderer,
-		const char *source, const char *label) {
+struct fx_effect_shader *fx_effect_shader_create(struct wlr_renderer *renderer,
+		enum fx_effect_kind kind, const char *source, const char *label) {
+	(void)kind;
 	static const char preamble[] =
 		"precision highp float;\n"
 		"varying vec2 v_texcoord;\n"
@@ -158,7 +159,7 @@ struct fx_animation_shader *fx_animation_shader_create(struct wlr_renderer *rend
 	if (!wlr_egl_make_current(fx->egl, &previous)) {
 		return NULL;
 	}
-	struct fx_animation_shader *shader = calloc(1, sizeof(*shader));
+	struct fx_effect_shader *shader = calloc(1, sizeof(*shader));
 	char *fragment = malloc(sizeof(preamble) + sizeof(previous_sample) +
 		strlen(source) + sizeof(suffix));
 	if (shader == NULL || fragment == NULL) {

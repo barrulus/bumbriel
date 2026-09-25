@@ -3,7 +3,7 @@
 #include "overview/preview_geometry.h"
 #include "scene/animation_shader.h"
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 
 #include "config/config.h"

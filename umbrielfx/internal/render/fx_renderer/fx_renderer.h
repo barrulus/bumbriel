@@ -237,8 +237,8 @@ struct fx_renderer {
 	} shaders;
 
 	bool animation_shadow_attempted;
-	struct fx_animation_shader *animation_shadow_horizontal;
-	struct fx_animation_shader *animation_shadow_vertical;
+	struct fx_effect_shader *animation_shadow_horizontal;
+	struct fx_effect_shader *animation_shadow_vertical;
 
 	struct wl_list buffers; // fx_framebuffer.link
 	struct wl_list textures; // fx_texture.link

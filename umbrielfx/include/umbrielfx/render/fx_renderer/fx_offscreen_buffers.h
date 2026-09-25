@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/util/addon.h>
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 
 /**
  * Per-output renderer framebuffers. Each buffer is allocated on first use and

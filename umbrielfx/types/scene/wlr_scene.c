@@ -133,7 +133,7 @@ struct scene_animation {
   struct wl_list link;
   struct wlr_scene_node* node;
   struct wlr_scene* scene;
-  struct fx_animation_shader* shaders[FX_ANIMATION_SLOTS];
+  struct fx_effect_shader* shaders[FX_ANIMATION_SLOTS];
   struct fx_animation_parameters parameters[FX_ANIMATION_SLOTS];
   struct fx_animation_history histories[FX_ANIMATION_SLOTS];
   bool output_clip_enabled;
@@ -208,7 +208,7 @@ void wlr_scene_shadow_set_animation_source(
 static void scene_animation_destroy(struct wlr_addon* addon) {
   struct scene_animation* animation = wl_container_of(addon, animation, addon);
   for (unsigned i = 0; i < FX_ANIMATION_SLOTS; i++) {
-    fx_animation_shader_unref(animation->shaders[i]);
+    fx_effect_shader_unref(animation->shaders[i]);
     fx_animation_history_finish(&animation->histories[i]);
   }
   wl_list_remove(&animation->link);
@@ -1098,7 +1098,7 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
 }
 
 void wlr_scene_node_set_animation(
-    struct wlr_scene_node* node, unsigned slot, struct fx_animation_shader* shader,
+    struct wlr_scene_node* node, unsigned slot, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters
 ) {
   assert(slot < FX_ANIMATION_SLOTS);
@@ -1119,7 +1119,7 @@ void wlr_scene_node_set_animation(
     wlr_addon_init(&animation->addon, &node->addons, &scene_animation_impl, &scene_animation_impl);
     wl_list_insert(&scene_animations, &animation->link);
   }
-  struct fx_animation_shader* previous = animation->shaders[slot];
+  struct fx_effect_shader* previous = animation->shaders[slot];
   const bool same_transition = previous != NULL
       && shader != NULL
       && parameters != NULL
@@ -1144,8 +1144,8 @@ void wlr_scene_node_set_animation(
   if (previous != shader || restarted) {
     fx_animation_history_reset(&animation->histories[slot]);
   }
-  animation->shaders[slot] = fx_animation_shader_ref(shader);
-  fx_animation_shader_unref(previous);
+  animation->shaders[slot] = fx_effect_shader_ref(shader);
+  fx_effect_shader_unref(previous);
   if (parameters != NULL || shader != NULL) {
     animation->parameters[slot] = next;
   }
@@ -1201,13 +1201,15 @@ void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destinat
   }
   for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
     if (animation->shaders[slot] != NULL) {
-      const unsigned destination_slot = slot >= 4 ? 3 : slot;
+      // Outer lifecycle slots (closing and above) become the opening slot; every other slot keeps its index.
+      const unsigned destination_slot = slot >= FX_SLOT_WINDOWS_OUT ? FX_SLOT_WINDOWS_IN : slot;
       wlr_scene_node_set_animation(
           destination, destination_slot, animation->shaders[slot], &animation->parameters[slot]
       );
       struct scene_animation* copy = scene_animation_get(destination);
       if (copy != NULL) {
         copy->parameters[destination_slot] = animation->parameters[slot];
+        copy->parameters[destination_slot].light.enabled = false;
         fx_animation_history_move(&copy->histories[destination_slot], &animation->histories[slot]);
       }
     }
@@ -2891,7 +2893,7 @@ static bool render_animation_shadow(struct render_list_entry* entry, const struc
       continue;
     }
     for (unsigned i = 0; i < FX_ANIMATION_SLOTS && !animated; i++) {
-      const struct fx_animation_shader* shader = effect->shaders[i];
+      const struct fx_effect_shader* shader = effect->shaders[i];
       animated = shader != NULL && shader->renderer == pass->buffer->renderer && !shader->shape_preserving;
     }
     if (animated) {
@@ -2972,7 +2974,7 @@ static void render_animated_range(
     bool captured[FX_ANIMATION_SLOTS] = {0};
     bool captured_any = false;
     for (int slot = FX_ANIMATION_SLOTS - 1; slot >= 0; slot--) {
-      struct fx_animation_shader* shader = animation->shaders[slot];
+      struct fx_effect_shader* shader = animation->shaders[slot];
       if (shader != NULL && shader->renderer == pass->buffer->renderer) {
         captured[slot] = fx_render_pass_begin_animation(pass);
         captured_any |= captured[slot];

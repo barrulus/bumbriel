@@ -7,7 +7,7 @@
 #include <memory>
 
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 
 namespace umbriel {
@@ -15,7 +15,7 @@ namespace umbriel {
     struct CacheEntry {
       wlr_renderer* renderer = nullptr;
       std::optional<AnimationShaderSource> source;
-      std::shared_ptr<fx_animation_shader> shader;
+      std::shared_ptr<fx_effect_shader> shader;
     };
     std::array<CacheEntry, FX_ANIMATION_SLOTS> cache;
 
@@ -27,21 +27,27 @@ namespace umbriel {
 })";
     struct BuiltinEntry {
       wlr_renderer* renderer = nullptr;
-      std::shared_ptr<fx_animation_shader> shader;
+      std::shared_ptr<fx_effect_shader> shader;
     };
     BuiltinEntry builtinFade;
 
-    fx_animation_shader* builtinFadeShader(wlr_renderer* renderer) {
+    fx_effect_shader* builtinFadeShader(wlr_renderer* renderer) {
       if (builtinFade.renderer != renderer) {
         builtinFade.renderer = renderer;
         builtinFade.shader = {
-            fx_animation_shader_create(renderer, kBuiltinFade, "animation.builtin_fade"), fx_animation_shader_unref
+            fx_effect_shader_create(renderer, FX_EFFECT_ANIMATION, kBuiltinFade, "animation.builtin_fade"),
+            fx_effect_shader_unref
         };
-        fx_animation_shader_set_shape_preserving(builtinFade.shader.get(), true);
+        fx_effect_shader_set_shape_preserving(builtinFade.shader.get(), true);
       }
       return builtinFade.shader.get();
     }
     static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
+    static_assert(static_cast<unsigned>(AnimationEvent::Window) == FX_SLOT_WINDOW);
+    static_assert(static_cast<unsigned>(AnimationEvent::BorderEffect) == FX_SLOT_BORDER_EFFECT);
+    static_assert(static_cast<unsigned>(AnimationEvent::Drag) == FX_SLOT_DRAG);
+    static_assert(static_cast<unsigned>(AnimationEvent::WindowsIn) == FX_SLOT_WINDOWS_IN);
+    static_assert(static_cast<unsigned>(AnimationEvent::WindowsOut) == FX_SLOT_WINDOWS_OUT);
 
     template <typename Value>
     void update(
@@ -64,11 +70,12 @@ namespace umbriel {
     }
   } // namespace
 
-  fx_animation_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
+  fx_effect_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
     const auto& settings = config().animation;
     const std::optional<AnimationShaderSource>* source = nullptr;
     bool enabled = false;
     const char* label = "animation";
+    auto& entry = cache[static_cast<unsigned>(event)];
 #define EVENT(id, field, name)                                                                                         \
   case AnimationEvent::id:                                                                                             \
     source = &settings.field.shader;                                                                                   \
@@ -76,6 +83,12 @@ namespace umbriel {
     label = "animation." name;                                                                                         \
     break
     switch (event) {
+    case AnimationEvent::Window:
+    case AnimationEvent::Overlay:
+    case AnimationEvent::BorderEffect:
+    case AnimationEvent::Drag:
+      entry = {}; // not config-backed animation events
+      return nullptr;
       EVENT(DimUnfocused, dimUnfocused, "dim_unfocused");
       EVENT(Border, border, "border");
       EVENT(WindowsMove, windowsMove, "windows_move");
@@ -87,7 +100,6 @@ namespace umbriel {
       EVENT(Overview, overview, "overview");
     }
 #undef EVENT
-    auto& entry = cache[static_cast<unsigned>(event)];
     if (!settings.enabled || !enabled || source == nullptr || !*source) {
       entry = {};
       return nullptr;
@@ -97,15 +109,17 @@ namespace umbriel {
       entry.source = *source;
       const auto& input = **source;
       entry.shader = {
-          fx_animation_shader_create(renderer, input.code.c_str(), input.file.empty() ? label : input.file.c_str()),
-          fx_animation_shader_unref
+          fx_effect_shader_create(
+              renderer, FX_EFFECT_ANIMATION, input.code.c_str(), input.file.empty() ? label : input.file.c_str()
+          ),
+          fx_effect_shader_unref
       };
     }
     return entry.shader.get();
   }
 
-  fx_animation_shader* lifecycleShader(wlr_renderer* renderer, AnimationEvent event) {
-    if (fx_animation_shader* custom = animationShader(renderer, event)) {
+  fx_effect_shader* lifecycleShader(wlr_renderer* renderer, AnimationEvent event) {
+    if (fx_effect_shader* custom = animationShader(renderer, event)) {
       return custom;
     }
     const auto& settings = config().animation;

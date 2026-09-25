@@ -9,7 +9,7 @@
 
 struct fx_renderer;
 
-struct fx_animation_shader {
+struct fx_effect_shader {
 	struct fx_renderer *renderer;
 	unsigned references;
 	struct wl_listener destroy;
