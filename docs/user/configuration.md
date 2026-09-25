@@ -75,7 +75,8 @@ Included files are applied in list order. The including file is applied last:
 Every file must contain valid TOML. Duplicate device or workspace selectors, and
 effect presets defined in two files, are errors even when they come from
 different files: at startup Umbriel uses the default configuration and shows an
-error banner, and a reload keeps the previous configuration.
+error banner (unless the configuration sets `[drm]`, which refuses to start),
+and a reload keeps the previous configuration.
 
 If any included file defines `[drm]`, also declare `[drm]` in the main file.
 This prevents an incomplete GPU exclusion policy from loading when an include
