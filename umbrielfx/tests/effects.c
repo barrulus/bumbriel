@@ -127,9 +127,10 @@ static bool test_uniforms(struct fixture *fixture) {
 	fx_effect_shader_unref(palette);
 
 	// An oversized count against a declared array must be rejected wholesale
-	// (logged once, ignored), not clamped down to the declared size.
+	// (logged once, ignored), not clamped down to the declared size. Both
+	// elements are read so every driver reports the declared active size.
 	struct fx_effect_shader *oversized = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
-		"uniform vec4 pal[2];\nvec4 animation(vec2 uv) { return pal[0]; }", "oversized-count");
+		"uniform vec4 pal[2];\nvec4 animation(vec2 uv) { return uv.x < 2.0 ? pal[0] : pal[1]; }", "oversized-count");
 	ok &= check(oversized != NULL, "oversized-count program compiles");
 	struct fx_animation_parameters exact = { .progress = 1, .linear_progress = 1, .direction = 1 };
 	struct fx_uniform *pal_exact = fx_parameters_add_uniform(&exact, "pal", FX_UNIFORM_VEC4, 2);
