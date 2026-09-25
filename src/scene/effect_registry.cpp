@@ -25,28 +25,27 @@ namespace umbriel {
     struct EventBinding {
       const std::string* effect = nullptr;
       bool enabled = false;
-      const char* name = "";
     };
     EventBinding eventBinding(const Config::Animation& settings, AnimationEvent event) {
       switch (event) {
       case AnimationEvent::DimUnfocused:
-        return {&settings.dimUnfocused.effect, settings.dimUnfocused.enabled, "dim_unfocused"};
+        return {&settings.dimUnfocused.effect, settings.dimUnfocused.enabled};
       case AnimationEvent::Border:
-        return {&settings.border.effect, settings.border.enabled, "border"};
+        return {&settings.border.effect, settings.border.enabled};
       case AnimationEvent::WindowsMove:
-        return {&settings.windowsMove.effect, settings.windowsMove.enabled, "windows_move"};
+        return {&settings.windowsMove.effect, settings.windowsMove.enabled};
       case AnimationEvent::WindowsIn:
-        return {&settings.windowsIn.effect, settings.windowsIn.enabled, "windows_in"};
+        return {&settings.windowsIn.effect, settings.windowsIn.enabled};
       case AnimationEvent::WindowsOut:
-        return {&settings.windowsOut.effect, settings.windowsOut.enabled, "windows_out"};
+        return {&settings.windowsOut.effect, settings.windowsOut.enabled};
       case AnimationEvent::Scratchpad:
-        return {&settings.scratchpad.effect, settings.scratchpad.enabled, "scratchpad"};
+        return {&settings.scratchpad.effect, settings.scratchpad.enabled};
       case AnimationEvent::Layers:
-        return {&settings.layers.effect, settings.layers.enabled, "layers"};
+        return {&settings.layers.effect, settings.layers.enabled};
       case AnimationEvent::Workspaces:
-        return {&settings.workspaces.effect, settings.workspaces.enabled, "workspaces"};
+        return {&settings.workspaces.effect, settings.workspaces.enabled};
       case AnimationEvent::Overview:
-        return {&settings.overview.effect, settings.overview.enabled, "overview"};
+        return {&settings.overview.effect, settings.overview.enabled};
       case AnimationEvent::Window:
       case AnimationEvent::Overlay:
       case AnimationEvent::BorderEffect:
@@ -54,6 +53,15 @@ namespace umbriel {
         return {};
       }
       return {};
+    }
+
+    // Slide keeps per-buffer alpha: its opacity curve differs from the lifecycle progress.
+    bool builtinFadeApplies(const Config::Animation& settings, AnimationEvent event) {
+      return settings.enabled
+          && ((event == AnimationEvent::WindowsIn && settings.windowsIn.enabled && settings.windowsIn.style != "slide")
+              || (event == AnimationEvent::WindowsOut
+                  && settings.windowsOut.enabled
+                  && settings.windowsOut.style != "slide"));
     }
 
     fx_effect_kind toFxKind(EffectKind kind) {
@@ -110,7 +118,7 @@ namespace umbriel {
     }
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; ++slot) {
       const EventBinding binding = eventBinding(settings.animation, static_cast<AnimationEvent>(slot));
-      if (binding.effect != nullptr) {
+      if (binding.effect != nullptr && settings.animation.enabled && binding.enabled) {
         add(*binding.effect);
       }
     }
@@ -123,8 +131,9 @@ namespace umbriel {
   }
 
   void EffectRegistry::compile(const EffectPreset& preset) {
-    Entry& entry = m_programs[preset.name];
-    if (entry.shader != nullptr && entry.kind == preset.kind && entry.code == preset.shader.code) {
+    auto [slot, inserted] = m_programs.try_emplace(preset.name);
+    Entry& entry = slot->second;
+    if (!inserted && entry.kind == preset.kind && entry.code == preset.shader.code) {
       return;
     }
     entry.kind = preset.kind;
@@ -162,10 +171,8 @@ namespace umbriel {
         compile(*preset);
       }
     }
-    // Slide keeps per-buffer alpha: its opacity curve differs from the lifecycle progress.
-    const bool fadeNeeded = settings.animation.enabled
-        && ((settings.animation.windowsIn.enabled && settings.animation.windowsIn.style != "slide")
-            || (settings.animation.windowsOut.enabled && settings.animation.windowsOut.style != "slide"));
+    const bool fadeNeeded = builtinFadeApplies(settings.animation, AnimationEvent::WindowsIn)
+        || builtinFadeApplies(settings.animation, AnimationEvent::WindowsOut);
     if (fadeNeeded && m_builtinFade == nullptr) {
       m_builtinFade = {
           fx_effect_shader_create(m_renderer, FX_EFFECT_ANIMATION, kBuiltinFade, "animation.builtin_fade"),
@@ -199,13 +206,7 @@ namespace umbriel {
     if (fx_effect_shader* custom = animationShader(event)) {
       return custom;
     }
-    const Config::Animation& settings = config().animation;
-    const bool builtin = settings.enabled
-        && ((event == AnimationEvent::WindowsIn && settings.windowsIn.enabled && settings.windowsIn.style != "slide")
-            || (event == AnimationEvent::WindowsOut
-                && settings.windowsOut.enabled
-                && settings.windowsOut.style != "slide"));
-    return builtin ? m_builtinFade.get() : nullptr;
+    return builtinFadeApplies(config().animation, event) ? m_builtinFade.get() : nullptr;
   }
 
   void EffectRegistry::fillTimeUniforms(
