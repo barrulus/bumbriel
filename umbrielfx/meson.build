@@ -262,6 +262,7 @@ if build_tests
     'transient-policy',
     'margin-damage',
     'border-geometry',
+    'border-geometry-tree',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

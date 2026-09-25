@@ -672,15 +672,18 @@ static void draw_animation_texture(
       shader->expand, logical_box->width > 0 ? (float)expand / logical_box->width : 0.0f,
       logical_box->height > 0 ? (float)expand / logical_box->height : 0.0f
   );
-  if (geometry != NULL) {
+  // Uniforms persist on a shared program, so a draw without geometry binds no hole.
+  if (shader->kind == FX_EFFECT_BORDER) {
+    static const struct fx_effect_geometry no_hole = {0};
+    const struct fx_effect_geometry* border = geometry != NULL ? geometry : &no_hole;
     struct fx_uniform hole = {.name = "umbriel_border_hole", .type = FX_UNIFORM_VEC4, .count = 1};
-    hole.floats[0] = logical_box->width > 0 ? (float)geometry->hole.x / logical_box->width : 0;
-    hole.floats[1] = logical_box->height > 0 ? (float)geometry->hole.y / logical_box->height : 0;
-    hole.floats[2] = logical_box->width > 0 ? (float)geometry->hole.width / logical_box->width : 0;
-    hole.floats[3] = logical_box->height > 0 ? (float)geometry->hole.height / logical_box->height : 0;
+    hole.floats[0] = logical_box->width > 0 ? (float)border->hole.x / logical_box->width : 0;
+    hole.floats[1] = logical_box->height > 0 ? (float)border->hole.y / logical_box->height : 0;
+    hole.floats[2] = logical_box->width > 0 ? (float)border->hole.width / logical_box->width : 0;
+    hole.floats[3] = logical_box->height > 0 ? (float)border->hole.height / logical_box->height : 0;
     fx_effect_shader_bind_uniform(shader, &hole);
     struct fx_uniform radius = {.name = "umbriel_border_radius", .type = FX_UNIFORM_VEC4, .count = 1};
-    memcpy(radius.floats, geometry->radius, sizeof(geometry->radius));
+    memcpy(radius.floats, border->radius, sizeof(border->radius));
     fx_effect_shader_bind_uniform(shader, &radius);
   }
   glUniform1f(shader->scale, animation_box_scale(box, logical_box));
@@ -752,7 +755,7 @@ static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pas
   return pass->animation_textures[pass->animation_depth];
 }
 
-// Filled by the light pass.
+// No-op.
 static void emit_light(
     struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite, struct wlr_texture* texture,
     struct wlr_texture* previous_texture, const struct wlr_box* previous_box, const struct wlr_box* box,

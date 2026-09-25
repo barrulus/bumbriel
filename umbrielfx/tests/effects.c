@@ -666,6 +666,60 @@ static bool test_border_geometry(struct fixture *fixture) {
 		wlr_buffer_unlock(rendered);
 	}
 	wlr_output_state_finish(&state);
+	// Drawn again without geometry, the program sees no hole: the centre the
+	// last composite cut is painted.
+	uint8_t centre[4];
+	ok &= render_animation(fixture, program, &parameters, 0, centre);
+	ok &= check(centre[0] > 250 && centre[3] > 250, "a draw without geometry does not reuse the previous hole");
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
+// A view's border tree: the ring sits at a negative offset inside the tree, a
+// sibling widens the tree's bounds past the ring, and the slot expands the
+// drawn box. Absolute layout (16x16 output):
+//   tree at (4,4); 1x1 rect child at (-3,-3) -> bounds start at (1,1)
+//   12x13 border child at (-2,-2) -> (2,2); hole {2,3,8,8} -> x [4,12), y [5,13)
+//   bottom-right hole radius 4, every other corner square; expand 2
+static bool test_border_geometry_tree(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_tree *tree = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_node_set_position(&tree->node, 4, 4);
+	struct wlr_scene_rect *sibling = wlr_scene_rect_create(tree, 1, 1, white);
+	wlr_scene_node_set_position(&sibling->node, -3, -3);
+	struct wlr_scene_border *border = wlr_scene_border_create(tree, white, white);
+	wlr_scene_border_set_geometry(border, 12, 13, 2, 0,
+		(struct clipped_region){ .area = { 2, 3, 8, 8 }, .corners = { .bottom_right = 4 } },
+		(struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	wlr_scene_node_set_position(&border->node, -2, -2);
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		"vec4 border(vec2 uv) { return vec4(0.0, 0.0, 1.0, 1.0) * step(0.0, umbriel_border_distance(uv)); }",
+		"border-geometry-tree");
+	bool ok = check(program != NULL, "border program compiles");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1, .expand = 2 };
+	wlr_scene_node_set_animation(&tree->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "renders");
+	if (rendered != NULL) {
+		uint8_t offset[4], shift[4], inside[4], rounded[4], square[4];
+		ok &= fixture_read_pixel(fixture, rendered, 3, 9, offset);
+		ok &= fixture_read_pixel(fixture, rendered, 2, 9, shift);
+		ok &= fixture_read_pixel(fixture, rendered, 11, 9, inside);
+		ok &= fixture_read_pixel(fixture, rendered, 11, 12, rounded);
+		ok &= fixture_read_pixel(fixture, rendered, 4, 5, square);
+		ok &= check(offset[0] > 250, "the hole starts at the ring's offset within the tree bounds");
+		ok &= check(shift[0] > 250, "the hole moves with the expanded drawn box");
+		ok &= check(inside[0] < 5, "the hole's right column is cut");
+		ok &= check(rounded[0] > 250, "the bottom-right hole corner is rounded");
+		ok &= check(square[0] < 5, "the top-left hole corner stays square");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
 	fx_effect_shader_unref(program);
 	wlr_scene_node_destroy(&scene->tree.node);
 	return ok;
@@ -707,6 +761,8 @@ int main(int argc, char *argv[]) {
 		ok = test_margin_damage(&fixture);
 	} else if (strcmp(argv[1], "border-geometry") == 0) {
 		ok = test_border_geometry(&fixture);
+	} else if (strcmp(argv[1], "border-geometry-tree") == 0) {
+		ok = test_border_geometry_tree(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;
