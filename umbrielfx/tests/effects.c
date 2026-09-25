@@ -860,17 +860,26 @@ static bool light_proxy_is(struct wlr_scene_tree *layer, int x, int y, int width
 	return rect != NULL && rect->node.x == x && rect->node.y == y && rect->width == width && rect->height == height;
 }
 
-static uint8_t light_spill_red(struct fixture *fixture, struct wlr_scene_output *scene_output, int x, int y) {
+// The red channel at (x, y) after a whole-damage frame, or -1 when the frame
+// could not be rendered, so a "no light" check cannot pass on a failed render.
+static int light_spill_red(struct fixture *fixture, struct wlr_scene_output *scene_output, int x, int y) {
 	uint8_t pixel[4] = { 0 };
 	wlr_scene_output_damage_whole_for_test(scene_output);
 	struct wlr_output_state state;
 	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	int red = -1;
 	if (rendered != NULL) {
 		fixture_read_pixel(fixture, rendered, x, y, pixel);
 		wlr_buffer_unlock(rendered);
+		red = pixel[2];
 	}
 	wlr_output_state_finish(&state);
-	return pixel[2];
+	return red;
+}
+
+static bool light_spill_absent(struct fixture *fixture, struct wlr_scene_output *scene_output, int x, int y) {
+	const int red = light_spill_red(fixture, scene_output, x, y);
+	return red >= 0 && red < 5;
 }
 
 // A view-like border tree in a window tree below the light layer. The proxy
@@ -920,7 +929,7 @@ static bool test_border_light_lifecycle(struct fixture *fixture) {
 
 	wlr_scene_node_raise_to_top(&window->node);
 	ok &= check(wl_list_empty(&layer->children), "a border above the light layer emits nothing");
-	ok &= check(light_spill_red(fixture, scene_output, 3, 8) < 5, "nothing spills from above the layer");
+	ok &= check(light_spill_absent(fixture, scene_output, 3, 8), "nothing spills from above the layer");
 	wlr_scene_node_raise_to_top(&layer->node);
 	ok &= check(light_proxy(layer) != NULL, "raising the layer restores the light");
 
@@ -930,7 +939,7 @@ static bool test_border_light_lifecycle(struct fixture *fixture) {
 	ok &= check(light_proxy_is(other, -9, -10, 38, 36), "the new layer holds the proxy");
 	wlr_scene_set_effect_light_layer(scene, NULL);
 	ok &= check(wl_list_empty(&other->children), "unregistering the layer removes the proxy");
-	ok &= check(light_spill_red(fixture, scene_output, 3, 8) < 5, "no light without a layer");
+	ok &= check(light_spill_absent(fixture, scene_output, 3, 8), "no light without a layer");
 
 	wlr_scene_set_effect_light_layer(scene, other);
 	ok &= check(light_proxy(other) != NULL, "registering again restores the proxy");
