@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/animation_event.h"
 #include "core/animation.h"
 
 struct wlr_scene_node;
@@ -7,23 +8,6 @@ struct wlr_renderer;
 struct fx_effect_shader;
 
 namespace umbriel {
-  // Stable inner-to-outer composition order for effects sharing a target. Values equal the FX_SLOT_* indices.
-  enum class AnimationEvent : unsigned {
-    Window,
-    Overlay,
-    BorderEffect,
-    Border,
-    DimUnfocused,
-    WindowsMove,
-    Drag,
-    WindowsIn,
-    WindowsOut,
-    Scratchpad,
-    Layers,
-    Workspaces,
-    Overview
-  };
-
   // The configured custom shader for `event`, or null.
   [[nodiscard]] fx_effect_shader* animationShader(wlr_renderer* renderer, AnimationEvent event);
   // The program a lifecycle fade composes through: the custom shader, or for windows_in and windows_out without one, a

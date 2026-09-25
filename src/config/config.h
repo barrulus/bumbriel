@@ -1,11 +1,11 @@
 #pragma once
+#include "config/animation_event.h"
 #include "config/config_diag.h"
 #include "config/effects.h"
 #include "config/keybind_parse.h"
 #include "config/value_parse.h"
 #include "core/animation.h"
 #include "layout/layout.h"
-#include "scene/animation_shader.h"
 
 #include <array>
 #include <cstddef>
