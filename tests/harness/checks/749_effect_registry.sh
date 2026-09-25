@@ -7,10 +7,12 @@ readonly BASE="$UMBRIEL_RUNTIME_DIR/registry-base.toml"
 readonly USED="$UMBRIEL_RUNTIME_DIR/used.glsl"
 readonly BROKEN="$UMBRIEL_RUNTIME_DIR/broken.glsl"
 readonly IDLE="$UMBRIEL_RUNTIME_DIR/idle.glsl"
+readonly SHOWN="$UMBRIEL_RUNTIME_DIR/shown.glsl"
 cp "$UMBRIEL_CONFIG" "$BASE"
 echo 'vec4 screen(vec2 uv) { return umbriel_sample(uv); }' > "$USED"
 echo 'this is not GLSL' > "$BROKEN"
 echo 'vec4 animation(vec2 uv) { return umbriel_sample(uv); }' > "$IDLE"
+echo 'vec4 animation(vec2 uv) { return umbriel_sample(uv) * umbriel_clamped_progress; }' > "$SHOWN"
 
 write_config() {
   cp "$BASE" "$UMBRIEL_CONFIG"
@@ -27,6 +29,9 @@ shader = "$BROKEN"
 [effects.preset.idle]
 kind = "animation"
 shader = "$IDLE"
+[effects.preset.shown]
+kind = "animation"
+shader = "$SHOWN"
 [animation.layers]
 enabled = false
 effect = "idle"
@@ -64,4 +69,8 @@ expect "repaired preset compilations" "$(compiled screen "$BROKEN")" 2
 expect "repaired preset diagnostics" "$(diagnosed broken screen)" 1
 
 expect "compilations of a preset only a disabled event names" "$(compiled animation "$IDLE")" 0
+expect "compilations of a preset no event names" "$(compiled animation "$SHOWN")" 0
+
+write_config '[animation.windows_move]' 'effect = "shown"'
+expect "compilations of a preset an enabled event names" "$(compiled animation "$SHOWN")" 1
 echo "only enabled references compiled, programs and failures retained across reload, repairs recompiled"
