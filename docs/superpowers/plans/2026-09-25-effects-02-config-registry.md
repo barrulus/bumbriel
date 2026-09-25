@@ -869,7 +869,7 @@ Expected: FAIL — the second load succeeds (TOML tables merge silently).
 ```
 (add `#include <map>`).
 
-`src/config/config_merge.cpp`, in `expandFile` right after the file is pushed to `loadedFiles` and before `readInclude`:
+`src/config/config_merge.cpp`, in `expandFile` after the file's own `[include]` targets have been expanded and before its `deepMerge` (an included file registers its presets first, so the including file's duplicate is the one reported, naming the included file):
 
 ```cpp
   // A preset defined in two files would merge key by key into one table. Refuse
