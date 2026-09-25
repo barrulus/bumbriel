@@ -32,11 +32,17 @@ curve = "linear"
 enabled = false
 [animation.windows_move]
 enabled = false
+[effects.preset.border_border]
+kind = "animation"
+shader = "border.glsl"
 [animation.border]
 enabled = true
-shader = "border.glsl"
-[animation.windows_out]
+effect = "border_border"
+[effects.preset.windows_out_identity]
+kind = "animation"
 shader = "identity.glsl"
+[animation.windows_out]
+effect = "windows_out_identity"
 [[window_rule]]
 match.title = "^border-a$"
 default_floating = true

@@ -26,10 +26,16 @@ transform = "90"
 [animation]
 duration_ms = 4000
 curve = "linear"
-[animation.windows_in]
+[effects.preset.windows_in_fixture_1]
+kind = "animation"
 shader = "fixture-1.glsl"
-[animation.overview]
+[animation.windows_in]
+effect = "windows_in_fixture_1"
+[effects.preset.overview_fixture_2]
+kind = "animation"
 shader = "fixture-2.glsl"
+[animation.overview]
+effect = "overview_fixture_2"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL_UNMAP_CLIENT" shader-composition 700 700 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
@@ -87,11 +93,14 @@ fi
 cat "$BASE" > "$UMBRIEL_CONFIG"
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
-[animation.windows_in]
+[effects.preset.windows_in_fixture_3]
+kind = "animation"
 shader = "fixture-3.glsl"
+[animation.windows_in]
+effect = "windows_in_fixture_3"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
-if ! grep -q "Animation shader .*rejected; using built-in animation" "$UMBRIEL_LOG"; then
+if ! grep -q "effect preset 'windows_in_fixture_3' (animation) failed to compile; rendering plainly" "$UMBRIEL_LOG"; then
   echo "invalid GLSL did not produce the expected fallback diagnostic"
   exit 1
 fi

@@ -18,9 +18,12 @@ duration_ms = 300
 curve = "linear"
 [animation.windows_in]
 enabled = false
+[effects.preset.${1}_fixture_1]
+kind = "animation"
+shader = "fixture-1.glsl"
 [animation.$1]
 enabled = true
-shader = "fixture-1.glsl"
+effect = "${1}_fixture_1"
 EOF
   "$UMBRIEL" msg config-reload > /dev/null
   "$UMBRIEL" clock-advance 1000

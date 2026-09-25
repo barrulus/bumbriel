@@ -41,17 +41,23 @@ default_width_fraction = 0.5
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_duration_close_green]
+kind = "animation"
+shader = "duration-close-green.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = 1200 # close-duration
 curve = "linear"
-shader = "duration-close-green.glsl"
+effect = "windows_out_duration_close_green"
 
+[effects.preset.windows_move_duration_move_blue]
+kind = "animation"
+shader = "duration-move-blue.glsl"
 [animation.windows_move]
 enabled = true
 duration_ms = 600 # move-duration
 curve = "linear"
-shader = "duration-move-blue.glsl"
+effect = "windows_move_duration_move_blue"
 
 [animation.workspaces]
 enabled = false

@@ -8,21 +8,30 @@ GLSL
 readonly BASE="$UMBRIEL_RUNTIME_DIR/lifetime-base.toml"
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/lifetime.png"
 readonly SOURCE="${UMBRIEL_CONFIG%/*}/lifetime.glsl"
-readonly EXAMPLES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/shaders" && pwd)"
+readonly EXAMPLES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects/animation" && pwd)"
 cp "$UMBRIEL_CONFIG" "$BASE"
-cp "$EXAMPLES/reveal.glsl" "$SOURCE"
+cp "$EXAMPLES/reveal/shader.glsl" "$SOURCE"
 cat >> "$UMBRIEL_CONFIG" <<EOF
 
 [animation]
 duration_ms = 2400
 curve = "linear"
+[effects.preset.windows_in_lifetime]
+kind = "animation"
+shader = "lifetime.glsl"
 [animation.windows_in]
 style = "none"
-shader = "lifetime.glsl"
+effect = "windows_in_lifetime"
+[effects.preset.windows_move_squash]
+kind = "animation"
+shader = "$EXAMPLES/squash/shader.glsl"
 [animation.windows_move]
-shader = "$EXAMPLES/squash.glsl"
-[animation.windows_out]
+effect = "windows_move_squash"
+[effects.preset.windows_out_fixture_1]
+kind = "animation"
 shader = "fixture-1.glsl"
+[animation.windows_out]
+effect = "windows_out_fixture_1"
 # Centre sampling right after map assumes the window is already at full size; a tiled window grows into its slot.
 [[window_rule]]
 match.title = "^shader-(example|retained|new-program)$"
@@ -124,7 +133,7 @@ if ! (( blue > 130 && red > 50 && red < 120 && green < 180 )); then
   echo "disabling animations did not restore ordinary client pixels: $red $green $blue"
   exit 1
 fi
-if grep -q 'Animation shader .*rejected' "$UMBRIEL_LOG"; then
+if grep -q 'failed to compile; rendering plainly' "$UMBRIEL_LOG"; then
   echo "a bundled example or lifetime shader failed compilation"
   exit 1
 fi

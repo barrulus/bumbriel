@@ -38,11 +38,14 @@ workspace_axis = "horizontal"
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_workspace_close_stripe]
+kind = "animation"
+shader = "workspace-close-stripe.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = 4000
 curve = "linear"
-shader = "workspace-close-stripe.glsl"
+effect = "windows_out_workspace_close_stripe"
 
 [animation.windows_move]
 enabled = false

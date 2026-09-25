@@ -60,17 +60,23 @@ center_underfull_strip = false
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_phased_close]
+kind = "animation"
+shader = "phased-close.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = $OUT_MS
 curve = "linear"
-shader = "phased-close.glsl"
+effect = "windows_out_phased_close"
 
+[effects.preset.windows_move_move_marker]
+kind = "animation"
+shader = "move-marker.glsl"
 [animation.windows_move]
 enabled = true
 duration_ms = $MOVE_MS
 curve = "snappy"
-shader = "move-marker.glsl"
+effect = "windows_move_move_marker"
 
 [animation.workspaces]
 enabled = false

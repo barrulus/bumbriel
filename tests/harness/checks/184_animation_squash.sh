@@ -2,16 +2,19 @@
 # Hold layout still while the opening timeline exercises the bundled shader.
 # Its middle frame must compress the client, then restore the same edge pixels.
 set -euo pipefail
-readonly SHADER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/shaders" && pwd)/squash.glsl"
+readonly SHADER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects/animation" && pwd)/squash/shader.glsl"
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/squash.png"
 cat >> "$UMBRIEL_CONFIG" <<EOF
 
 [animation]
 duration_ms = 2400
 curve = "linear"
+[effects.preset.windows_in_SHADER]
+kind = "animation"
+shader = "$SHADER"
 [animation.windows_in]
 style = "none"
-shader = "$SHADER"
+effect = "windows_in_SHADER"
 [animation.windows_move]
 enabled = false
 [appearance]

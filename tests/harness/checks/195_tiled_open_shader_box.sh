@@ -31,21 +31,27 @@ enabled = false
 [layout]
 mode = "master"
 
+[effects.preset.windows_in_open]
+kind = "animation"
+shader = "open.glsl"
 [animation.windows_in]
 enabled = true
 duration_ms = 1000
 curve = "linear"
 style = "none"
-shader = "open.glsl"
+effect = "windows_in_open"
 
 [animation.windows_out]
 enabled = false
 
+[effects.preset.windows_move_move]
+kind = "animation"
+shader = "move.glsl"
 [animation.windows_move]
 enabled = true
 duration_ms = 1000
 curve = "linear"
-shader = "move.glsl"
+effect = "windows_move_move"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

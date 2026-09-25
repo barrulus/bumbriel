@@ -36,15 +36,21 @@ enabled = true
 duration_ms = 600
 style = "fade"
 
+[effects.preset.windows_out_overview_close]
+kind = "animation"
+shader = "overview-close.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = 1000
-shader = "overview-close.glsl"
+effect = "windows_out_overview_close"
 
+[effects.preset.windows_move_overview_move]
+kind = "animation"
+shader = "overview-move.glsl"
 [animation.windows_move]
 enabled = true
 duration_ms = 1600
-shader = "overview-move.glsl"
+effect = "windows_move_overview_move"
 
 [colors]
 backdrop = "#000000FF"

@@ -27,8 +27,11 @@ curve = "linear"
 [animation.windows_in]
 style = "popin"
 
-[animation.windows_move]
+[effects.preset.windows_move_layout_motion]
+kind = "animation"
 shader = "layout-motion.glsl"
+[animation.windows_move]
+effect = "windows_move_layout_motion"
 
 [appearance]
 border_width = 2

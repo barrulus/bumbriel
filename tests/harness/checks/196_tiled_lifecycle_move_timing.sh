@@ -32,12 +32,15 @@ duration_ms = 1600
 curve = "linear"
 style = "fade"
 
+[effects.preset.windows_out_transparent]
+kind = "animation"
+shader = "transparent.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = 1600
 curve = "linear"
 style = "fade"
-shader = "transparent.glsl"
+effect = "windows_out_transparent"
 
 [animation.windows_move]
 enabled = true
