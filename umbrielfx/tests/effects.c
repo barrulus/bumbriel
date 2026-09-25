@@ -280,6 +280,9 @@ static bool test_persistent_scene(struct fixture *fixture) {
 		wlr_buffer_unlock(rendered);
 	}
 	wlr_output_state_finish(&state);
+	struct fx_offscreen_buffers *captured = fx_offscreen_buffers_try_get(fixture->output);
+	ok &= check(captured != NULL && captured->animation_buffers[0] != NULL,
+		"the window slot's capture holds an animation buffer");
 
 	// With the slot removed nothing keeps the scene's effect list: the next
 	// render must not re-add offscreen buffers (a second render succeeds and the

@@ -319,16 +319,6 @@ static struct scene_animation* scene_animation_get(struct wlr_scene_node* node) 
   return animation;
 }
 
-static bool scene_has_animations(struct wlr_scene* scene) {
-  struct scene_effects* effects = scene_effects_get(scene, false);
-  return effects != NULL && effects->transient > 0;
-}
-
-static bool scene_has_persistent_effects(struct wlr_scene* scene) {
-  struct scene_effects* effects = scene_effects_get(scene, false);
-  return effects != NULL && effects->persistent > 0;
-}
-
 // The nearest self-or-ancestor carrying any populated slot. Callers guard
 // with the scene counts so the walk never runs on an effect-free scene.
 static struct scene_animation* effect_over_node(struct wlr_scene_node* node) {
@@ -621,12 +611,14 @@ create_corner_location_region(struct fx_corner_radii corners, int x, int y, int 
   return corner_region;
 }
 
-static void scene_node_opaque_region(struct wlr_scene_node* node, int x, int y, pixman_region32_t* opaque) {
-  struct wlr_scene* scene = scene_node_get_root(node);
-  // Transient animations keep the conservative scene-wide policy. A persistent
-  // effect only exempts its own subtree: the program may expose pixels its
-  // input would have covered.
-  if (scene_has_animations(scene) || (scene_has_persistent_effects(scene) && effect_over_node(node) != NULL)) {
+// `effects` is the scene's effect state, already looked up by the caller (NULL
+// when the scene has none). Transient animations keep the conservative
+// scene-wide policy. A persistent effect only exempts its own subtree: the
+// program may expose pixels its input would have covered.
+static void scene_node_opaque_region(
+    const struct scene_effects* effects, struct wlr_scene_node* node, int x, int y, pixman_region32_t* opaque
+) {
+  if (effects != NULL && (effects->transient > 0 || (effects->persistent > 0 && effect_over_node(node) != NULL))) {
     return;
   }
   int width, height;
@@ -711,6 +703,7 @@ static void scene_node_opaque_region(struct wlr_scene_node* node, int x, int y, 
 }
 
 struct scene_update_data {
+  const struct scene_effects* effects;
   pixman_region32_t* visible;
   const pixman_region32_t* update_region;
   struct wlr_box update_box;
@@ -756,6 +749,9 @@ struct render_data {
   struct render_list_entry* entries;
   int entry_count;
   bool shadow_capture;
+  // The scene's effect state for this frame, NULL when it has none.
+  struct scene_effects* effects;
+  bool transient_effects;
   // A persistent effect draws on this output this frame: veto scanout and keep effect buffers.
   bool persistent_visible;
 };
@@ -1042,7 +1038,7 @@ scene_node_update_iterator(struct wlr_scene_node* node, int lx, int ly, const st
   if (data->calculate_visibility) {
     pixman_region32_t opaque;
     pixman_region32_init(&opaque);
-    scene_node_opaque_region(node, lx, ly, &opaque);
+    scene_node_opaque_region(data->effects, node, lx, ly, &opaque);
     if (acc_clip != NULL) {
       // Clipped away opaque content must not cull nodes below it.
       pixman_region32_intersect_rect(&opaque, &opaque, acc_clip->x, acc_clip->y, acc_clip->width, acc_clip->height);
@@ -1102,6 +1098,7 @@ static void scene_update_region(struct wlr_scene* scene, const pixman_region32_t
 
   struct pixman_box32* region_box = pixman_region32_extents(update_region);
   struct scene_update_data data = {
+      .effects = scene_effects_get(scene, false),
       .visible = &visible,
       .update_region = update_region,
       .update_box =
@@ -1354,7 +1351,7 @@ void wlr_scene_node_set_animation(
       || was_transient != animation->transient
       || was_persistent != animation->persistent;
   const bool transient_now = animation->transient;
-  struct scene_effects* effects = scene_effects_get(scene, false);
+  struct scene_effects* effects = scene_effects_get(animation->scene, false);
   if (effects != NULL) {
     scene_effects_recount(effects);
   }
@@ -2661,7 +2658,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
 
   pixman_region32_t opaque;
   pixman_region32_init(&opaque);
-  scene_node_opaque_region(node, x, y, &opaque);
+  scene_node_opaque_region(data->effects, node, x, y, &opaque);
   logical_to_buffer_coords(&opaque, data, false);
   pixman_region32_subtract(&opaque, &render_region, &opaque);
 
@@ -3112,12 +3109,11 @@ static bool render_animation_shadow(struct render_list_entry* entry, const struc
   // shadow. Capture only the window's own effects, never those ancestors twice.
   // Shape-preserving effects leave the analytic shadow correct as it is.
   bool animated = false;
-  struct scene_effects* effects = scene_effects_get(data->output->scene, false);
-  if (effects == NULL) {
+  if (data->effects == NULL) {
     return false;
   }
   struct scene_animation* effect;
-  wl_list_for_each(effect, &effects->animations, link) {
+  wl_list_for_each(effect, &data->effects->animations, link) {
     if (!node_belongs_to(effect->node, source)) {
       continue;
     }
@@ -3707,19 +3703,22 @@ static bool construct_render_list_iterator(
     }
   }
 
-  pixman_region32_t visible;
-  pixman_region32_init(&visible);
-  pixman_region32_copy(&visible, &node->visible);
-  if (data->persistent_effects) {
-    const int expand = scene_node_effect_expand(node);
-    if (expand > 0) {
-      wlr_region_expand(&visible, &visible, expand);
-    }
-  }
   pixman_region32_t intersection;
   pixman_region32_init(&intersection);
-  pixman_region32_intersect_rect(&intersection, &visible, data->box.x, data->box.y, data->box.width, data->box.height);
-  pixman_region32_fini(&visible);
+  const int expand = data->persistent_effects ? scene_node_effect_expand(node) : 0;
+  if (expand > 0) {
+    pixman_region32_t visible;
+    pixman_region32_init(&visible);
+    wlr_region_expand(&visible, &node->visible, expand);
+    pixman_region32_intersect_rect(
+        &intersection, &visible, data->box.x, data->box.y, data->box.width, data->box.height
+    );
+    pixman_region32_fini(&visible);
+  } else {
+    pixman_region32_intersect_rect(
+        &intersection, &node->visible, data->box.x, data->box.y, data->box.width, data->box.height
+    );
+  }
   if (pixman_region32_empty(&intersection)) {
     pixman_region32_fini(&intersection);
     return false;
@@ -3826,7 +3825,7 @@ static enum scene_direct_scanout_result scene_entry_try_direct_scanout(
 
   if (!scene_output->scene->direct_scanout
       || !scene_output->direct_scanout_enabled
-      || scene_has_animations(scene_output->scene)
+      || data->transient_effects
       || data->persistent_visible) {
     return SCANOUT_INELIGIBLE;
   }
@@ -4187,6 +4186,10 @@ persistent_effect_box(struct scene_animation* animation, const struct render_dat
   pixman_region32_t bounds;
   pixman_region32_init(&bounds);
   scene_node_bounds(animation->node, lx, ly, &bounds);
+  if (pixman_region32_empty(&bounds)) {
+    pixman_region32_fini(&bounds);
+    return false;
+  }
   const pixman_box32_t* extents = pixman_region32_extents(&bounds);
   const int expand = animation_expand(animation);
   *box = (struct wlr_box){
@@ -4200,8 +4203,7 @@ persistent_effect_box(struct scene_animation* animation, const struct render_dat
     return false;
   }
   transform_output_box(box, data);
-  // Clipped to the buffer: damage never grows past it, so an unclipped box
-  // that leaves the output could never be covered.
+  // Clipped to the buffer so commit and render damage stay inside it.
   struct wlr_box buffer_box = {.width = data->trans_width, .height = data->trans_height};
   if (data->transform & WL_OUTPUT_TRANSFORM_90) {
     buffer_box.width = data->trans_height;
@@ -4296,6 +4298,8 @@ bool wlr_scene_output_build_state(
       .scale = output->scale,
       .logical = {.x = scene_output->x, .y = scene_output->y},
       .output = scene_output,
+      .effects = effects,
+      .transient_effects = transient_effects,
   };
 
   int resolution_width, resolution_height;
@@ -4625,7 +4629,7 @@ bool wlr_scene_output_build_state(
       // rendering in that black rect region, consider the node's visibility.
       pixman_region32_t opaque;
       pixman_region32_init(&opaque);
-      scene_node_opaque_region(entry->node, entry->x, entry->y, &opaque);
+      scene_node_opaque_region(effects, entry->node, entry->x, entry->y, &opaque);
       pixman_region32_intersect(&opaque, &opaque, &entry->node->visible);
       pixman_region32_translate(&opaque, -scene_output->x, -scene_output->y);
       logical_to_buffer_coords(&opaque, &render_data, false);
