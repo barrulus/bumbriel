@@ -240,6 +240,67 @@ static bool test_renderer_destroy(struct fixture *fixture) {
 	return ok;
 }
 
+// A persistent slot on one node must not disturb an unrelated node's culling
+// and must draw only inside its own bounds. Layout (16x16 output):
+//   background: opaque blue rect covering everything
+//   effect node: opaque rect 4x4 at (2,2) with a persistent (window slot) program returning green
+//   bystander: opaque red rect 4x4 at (10,10), no effect
+static bool test_persistent_scene(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float blue[4] = { 0, 0, 1, 1 }, red[4] = { 1, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	struct wlr_scene_rect *background = wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+	struct wlr_scene_rect *effect = wlr_scene_rect_create(&scene->tree, 4, 4, white);
+	wlr_scene_node_set_position(&effect->node, 2, 2);
+	struct wlr_scene_rect *bystander = wlr_scene_rect_create(&scene->tree, 4, 4, red);
+	wlr_scene_node_set_position(&bystander->node, 10, 10);
+	struct fx_effect_shader *green = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }", "persistent-scene");
+	bool ok = check(green != NULL, "window program compiles");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&effect->node, FX_SLOT_WINDOW, green, &parameters);
+	// Only the effect's own subtree stops culling: the bystander still hides
+	// the background beneath it.
+	ok &= check(pixman_region32_contains_point(&background->node.visible, 3, 3, NULL),
+		"the background stays visible under the effect node");
+	ok &= check(!pixman_region32_contains_point(&background->node.visible, 12, 12, NULL),
+		"the bystander still culls the background");
+
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "scene renders with a persistent slot");
+	if (rendered != NULL) {
+		uint8_t at_effect[4], at_bystander[4], at_background[4];
+		ok &= fixture_read_pixel(fixture, rendered, 3, 3, at_effect);
+		ok &= fixture_read_pixel(fixture, rendered, 12, 12, at_bystander);
+		ok &= fixture_read_pixel(fixture, rendered, 8, 2, at_background);
+		ok &= check(at_effect[1] > 250 && at_effect[2] < 5, "the persistent program paints its node");
+		ok &= check(at_bystander[2] > 250 && at_bystander[1] < 5, "an unrelated node is untouched");
+		ok &= check(at_background[0] > 250, "the background outside the node is untouched");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+
+	// With the slot removed nothing keeps the scene's effect list: the next
+	// render must not re-add offscreen buffers (a second render succeeds and the
+	// output's fx_offscreen_buffers hold no animation buffers).
+	wlr_scene_node_set_animation(&effect->node, FX_SLOT_WINDOW, NULL, NULL);
+	struct wlr_output_state again;
+	struct wlr_buffer *plain = fixture_render_scene(fixture, scene_output, &again);
+	ok &= check(plain != NULL, "scene renders after the slot is removed");
+	struct fx_offscreen_buffers *fbos = fx_offscreen_buffers_try_get(fixture->output);
+	ok &= check(fbos == NULL || fbos->animation_buffers[0] == NULL, "animation buffers are released without effects");
+	if (plain != NULL) wlr_buffer_unlock(plain);
+	wlr_output_state_finish(&again);
+
+	// Scene teardown finishes the root's effect state before the nodes that
+	// still carry slots.
+	wlr_scene_node_set_animation(&effect->node, FX_SLOT_WINDOW, green, &parameters);
+	fx_effect_shader_unref(green);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -262,6 +323,8 @@ int main(int argc, char *argv[]) {
 		ok = test_expand(&fixture);
 	} else if (strcmp(argv[1], "renderer-destroy") == 0) {
 		ok = test_renderer_destroy(&fixture);
+	} else if (strcmp(argv[1], "persistent-scene") == 0) {
+		ok = test_persistent_scene(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;
