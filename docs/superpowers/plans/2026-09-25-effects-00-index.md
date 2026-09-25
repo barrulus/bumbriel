@@ -170,7 +170,7 @@ struct ShaderSource { std::string code; std::filesystem::path file; bool operato
 struct ShaderReadResult { std::optional<ShaderSource> source; std::vector<std::filesystem::path> watchPaths; };
 inline constexpr std::size_t kShaderSourceLimit = 256 * 1024;
 inline constexpr std::string_view kEffectOff = "off";
-[[nodiscard]] ShaderReadResult readShaderSource(Section& section, std::vector<ConfigDiagnostic>& diagnostics);
+[[nodiscard]] ShaderReadResult readShaderSource(Section& section, std::string_view key, std::vector<ConfigDiagnostic>& diagnostics);
 struct BorderLight { int spread = 80; float intensity = 1.0F; float threshold = 0.5F; bool operator==(const BorderLight&) const = default; };
 struct EffectPreset { std::string name; EffectKind kind = EffectKind::Animation; ShaderSource shader; bool palette = false; int padding = 0; float speed = 1.0F; bool animated = true; std::string overlay; std::optional<BorderLight> light; int radius = 0; bool operator==(const EffectPreset&) const = default; };
 struct Effects { std::vector<EffectPreset> presets; std::string border, window, screen, cursor; int maxFps = 0; bool inCapture = false; bool operator==(const Effects&) const = default; };

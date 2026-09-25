@@ -889,7 +889,7 @@ Expected: FAIL — the second load succeeds (TOML tables merge silently).
     }
   }
 ```
-`emit` with `Severity::Error` sets `hadError`, which `parseInto` turns into `Fatal`; a reload keeps the previous configuration.
+`recordPresetOrigins` records the conflict as a `Severity::Error` diagnostic in `MergeResult` without setting `hadError`; `parseInto` reports it through the `errorAt` path, so startup continues with defaults and a banner (`DefaultsAllowed`, as for duplicate device and workspace names) and a reload keeps the previous configuration.
 
 - [ ] **Step 4: Run the tests and `validate-config`**
 
