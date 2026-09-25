@@ -1302,7 +1302,9 @@ static void scene_effect_damage_subtree(struct wlr_scene_node* node) {
 // its enabled descendants. A node that is not drawn has nothing to damage.
 static void scene_effect_damage_margins(struct wlr_scene_node* node) {
   int x, y;
-  if (scene_effects_get(scene_node_get_root(node), false) == NULL || !wlr_scene_node_coords(node, &x, &y)) {
+  // The root goes down with its outputs; nothing is left to damage.
+  if (node->parent == NULL || scene_effects_get(scene_node_get_root(node), false) == NULL
+      || !wlr_scene_node_coords(node, &x, &y)) {
     return;
   }
   scene_effect_damage_subtree(node);

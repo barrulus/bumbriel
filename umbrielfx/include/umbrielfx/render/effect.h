@@ -6,11 +6,11 @@
 #include <string.h>
 #include <wlr/util/box.h>
 
+struct wlr_output_state;
 struct wlr_renderer;
 struct wlr_scene;
 struct wlr_scene_node;
 struct wlr_scene_output;
-struct wlr_output_state;
 struct wlr_scene_shadow;
 struct wlr_scene_tree;
 struct fx_effect_shader;
