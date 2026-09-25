@@ -710,8 +710,13 @@ install_data(
   'examples/config.toml',
   install_dir: get_option('datadir') / 'umbriel',
 )
-install_data(
-  'examples/shaders/reveal.glsl',
-  'examples/shaders/squash.glsl',
-  install_dir: get_option('datadir') / 'umbriel' / 'shaders',
-)
+# Bundled effect presets: each directory holds the preset's shader and an
+# effect.toml that defines it without selecting it. Users include the TOML and
+# select the name. Kept as data, not embedded: they are examples to copy.
+foreach effect : ['animation/reveal', 'animation/squash']
+  install_data(
+    'examples/effects' / effect / 'shader.glsl',
+    'examples/effects' / effect / 'effect.toml',
+    install_dir: get_option('datadir') / 'umbriel' / 'effects' / effect,
+  )
+endforeach
