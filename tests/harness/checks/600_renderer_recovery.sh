@@ -5,6 +5,11 @@ set -euo pipefail
 
 readonly LOG_MARK=$(($(wc -l < "$UMBRIEL_LOG") + 1))
 
+if [[ $(grep -c "Compiling animation shader: animation.builtin_fade" "$UMBRIEL_LOG") -ne 1 ]]; then
+  echo "the built-in fade did not compile exactly once at startup"
+  exit 1
+fi
+
 "$UMBRIEL" renderer-recover > /dev/null
 
 recovered=false
@@ -19,6 +24,11 @@ done
 if [[ $recovered != true ]]; then
   echo "renderer recovery did not complete"
   tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | tail -n 20
+  exit 1
+fi
+
+if [[ $(grep -c "Compiling animation shader: animation.builtin_fade" "$UMBRIEL_LOG") -ne 2 ]]; then
+  echo "the built-in fade did not recompile exactly once after the first recovery"
   exit 1
 fi
 
@@ -45,12 +55,21 @@ effect = "rebind"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" renderer-recover > /dev/null
+recovered_again=false
 for _ in $(seq 100); do
   if [[ $(tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -c "renderer recreated") -ge 2 ]]; then
+    recovered_again=true
     break
   fi
   sleep 0.02
 done
+
+if [[ $recovered_again != true ]]; then
+  echo "second renderer recovery did not complete"
+  tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | tail -n 20
+  exit 1
+fi
+
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/recovery.png"
 "$UMBRIEL" clock-freeze
 "$UMBRIEL_UNMAP_CLIENT" recovery-fade 600 400 > "$UMBRIEL_RUNTIME_DIR/recovery-fade.log" 2>&1 &

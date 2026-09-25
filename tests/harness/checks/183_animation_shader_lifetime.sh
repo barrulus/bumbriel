@@ -22,11 +22,10 @@ shader = "lifetime.glsl"
 [animation.windows_in]
 style = "none"
 effect = "windows_in_lifetime"
-[effects.preset.windows_move_squash]
-kind = "animation"
-shader = "$EXAMPLES/squash/shader.glsl"
+[include]
+files = ["$EXAMPLES/squash/effect.toml"]
 [animation.windows_move]
-effect = "windows_move_squash"
+effect = "squash"
 [effects.preset.windows_out_fixture_1]
 kind = "animation"
 shader = "fixture-1.glsl"
