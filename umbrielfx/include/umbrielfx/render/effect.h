@@ -10,6 +10,7 @@ struct wlr_renderer;
 struct wlr_scene;
 struct wlr_scene_node;
 struct wlr_scene_output;
+struct wlr_output_state;
 struct wlr_scene_shadow;
 struct wlr_scene_tree;
 struct fx_effect_shader;
@@ -165,6 +166,13 @@ void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destinat
 // opacity. The association is automatically cleared when either node dies.
 void wlr_scene_shadow_set_animation_source(
     struct wlr_scene_shadow* shadow, struct wlr_scene_node* source, const float color[4]
+);
+
+// Exist for tests/effects.c: damage the whole output, and acknowledge a built
+// state's damage the way a commit of its buffer does.
+void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_output);
+void wlr_scene_output_acknowledge_damage_for_test(
+    struct wlr_scene_output* scene_output, const struct wlr_output_state* state
 );
 
 #endif

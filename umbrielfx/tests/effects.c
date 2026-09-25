@@ -5,6 +5,7 @@
 #include "render/fx_renderer/effect.h"
 #include "umbrielfx/render/effect.h"
 #include "umbrielfx/render/pass.h"
+#include <wlr/util/transform.h>
 
 static const char *const kSources[] = {
 	[FX_EFFECT_ANIMATION] = "vec4 animation(vec2 uv) { return vec4(uv.x, umbriel_clamped_progress, 0.0, 1.0); }",
@@ -149,14 +150,7 @@ static bool test_uniforms(struct fixture *fixture) {
 	ok &= check(pixel[2] > 250 && pixel[1] < 5, "an oversized count is rejected, leaving the previous binding intact");
 	fx_effect_shader_unref(oversized);
 
-	// A uniform name at or beyond the cache's name limit must be skipped
-	// entirely during caching, not truncated into a shorter, wrong name. The
-	// 40-character name here shares its first 31 (FX_UNIFORM_NAME_MAX - 1)
-	// characters with a real, differently-typed uniform declared first: a
-	// truncate-and-cache bug would alias the two under one name and record
-	// the long uniform's vec4 type against the short uniform's float
-	// location, making a correct float bind to the short name look like a
-	// type mismatch.
+	// A name too long for the cache is skipped, never cached as a truncated alias of a real uniform.
 	struct fx_effect_shader *long_name = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
 		"uniform vec4 abcdefghijklmnopqrstuvwxyz0123456789ABCD;\n"
 		"uniform float abcdefghijklmnopqrstuvwxyz01234;\n"
@@ -169,10 +163,6 @@ static bool test_uniforms(struct fixture *fixture) {
 		"a 40-character uniform name is not cached under a truncated alias");
 	ok &= check(fx_effect_shader_reads(long_name, "abcdefghijklmnopqrstuvwxyz01234"),
 		"the real 31-character uniform sharing that prefix is still cached under its own name");
-	// GL's active-uniform enumeration order is implementation-defined, so a
-	// truncate-and-cache bug could file the 40-character uniform's entry
-	// either before or after the real 31-character one; either way the name
-	// must appear in the cache exactly once, with the real uniform's type.
 	unsigned name_matches = 0;
 	for (unsigned i = 0; i < long_name->uniform_count; i++) {
 		if (strcmp(long_name->uniforms[i].name, "abcdefghijklmnopqrstuvwxyz01234") == 0) {
@@ -192,36 +182,107 @@ static bool test_uniforms(struct fixture *fixture) {
 	ok &= render_animation(fixture, long_name, &named, 0, pixel);
 	ok &= check(pixel[2] > 250 && pixel[3] > 250, "binding the real short uniform by name is not blocked by the skipped long alias");
 	fx_effect_shader_unref(long_name);
+
+	// Hand-built entries whose count exceeds their own storage are rejected, leaving the previous binding.
+	struct fx_effect_shader *bounded = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"uniform int steps[8]; uniform vec4 tints[9];\n"
+		"vec4 animation(vec2 uv) { return vec4(tints[0].rgb * float(steps[0]), 1.0); }", "bounded-count");
+	ok &= check(bounded != NULL, "bounded-count program compiles");
+	struct fx_animation_parameters fitting = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *fitting_steps = fx_parameters_add_uniform(&fitting, "steps", FX_UNIFORM_INT, 1);
+	struct fx_uniform *fitting_tints = fx_parameters_add_uniform(&fitting, "tints", FX_UNIFORM_VEC4, 1);
+	ok &= check(fitting_steps != NULL && fitting_tints != NULL, "fitting entries fit");
+	if (fitting_steps != NULL && fitting_tints != NULL) {
+		fitting_steps->ints[0] = 1;
+		fitting_tints->floats[0] = 1.0f; fitting_tints->floats[3] = 1.0f; // red
+	}
+	ok &= render_animation(fixture, bounded, &fitting, 0, pixel);
+	ok &= check(pixel[2] > 250 && pixel[1] < 5, "fitting int and vec4 array entries bind");
+	struct fx_animation_parameters too_many_ints = fitting;
+	too_many_ints.uniforms[0].count = 5;   // ints[] holds 4
+	too_many_ints.uniforms[0].ints[0] = 0;
+	ok &= render_animation(fixture, bounded, &too_many_ints, 0, pixel);
+	ok &= check(pixel[2] > 250, "an INT entry with count > 4 is rejected");
+	struct fx_animation_parameters too_many_floats = fitting;
+	too_many_floats.uniforms[1].count = 9;   // 36 floats; floats[] holds 32
+	too_many_floats.uniforms[1].floats[0] = 0.0f; too_many_floats.uniforms[1].floats[1] = 1.0f; // green
+	ok &= render_animation(fixture, bounded, &too_many_floats, 0, pixel);
+	ok &= check(pixel[2] > 250 && pixel[1] < 5, "a float entry past FX_UNIFORM_FLOATS_MAX is rejected");
+	fx_effect_shader_unref(bounded);
 	return ok;
+}
+
+// Clears `target`, captures a green rect over `box` (buffer coordinates), and
+// composites `shader` over it with `expand`.
+static bool render_expand(struct fixture *fixture, struct wlr_buffer *target, struct fx_effect_shader *shader,
+		const struct wlr_box *box, const struct wlr_box *logical_box, enum wl_output_transform transform, int expand) {
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(fixture->renderer, target, NULL);
+	if (!check(pass != NULL, "pass")) {
+		return false;
+	}
+	struct fx_gles_render_pass *fx_pass = fx_get_render_pass(pass);
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options) {
+		.box = { .width = TEST_WIDTH, .height = TEST_HEIGHT }, .color = { 0 }, .blend_mode = WLR_RENDER_BLEND_MODE_NONE });
+	bool ok = check(fx_render_pass_init_offscreen_buffers(pass, fixture->output), "offscreen buffers");
+	ok &= check(fx_render_pass_begin_animation(fx_pass), "capture begins");
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options) {
+		.box = *box, .color = { .r = 0, .g = 1, .b = 0, .a = 1 }, .blend_mode = WLR_RENDER_BLEND_MODE_NONE });
+	fx_render_pass_end_animation(fx_pass, shader, &parameters, box, logical_box, transform, NULL, expand);
+	ok &= check(wlr_render_pass_submit(pass), "submit");
+	return ok;
+}
+
+static bool painted(struct fixture *fixture, struct wlr_buffer *target, int x, int y) {
+	uint8_t pixel[4];
+	return fixture_read_pixel(fixture, target, x, y, pixel) && pixel[2] > 250 && pixel[3] > 250;
+}
+
+static bool blank(struct fixture *fixture, struct wlr_buffer *target, int x, int y) {
+	uint8_t pixel[4];
+	return fixture_read_pixel(fixture, target, x, y, pixel) && pixel[2] < 5 && pixel[3] < 5;
 }
 
 static bool test_expand(struct fixture *fixture) {
 	// Solid red everywhere the program is drawn: with expand, red must reach past the node box.
 	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
 		"vec4 animation(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0) * umbriel_expand.x * 4.0 + umbriel_sample(uv) * 0.0; }", "expand");
-	if (!check(shader != NULL, "expand program compiles")) {
+	struct fx_effect_shader *scaled = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return vec4(umbriel_scale, 0.0, 0.0, 1.0) + umbriel_sample(uv) * 0.0; }", "expand-scale");
+	struct wlr_buffer *target = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, TEST_WIDTH, TEST_HEIGHT);
+	if (!check(shader != NULL && scaled != NULL && target != NULL, "expand programs compile and the target exists")) {
+		fx_effect_shader_unref(shader);
+		fx_effect_shader_unref(scaled);
+		wlr_buffer_drop(target);
 		return false;
 	}
-	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
-	struct wlr_buffer *target = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, TEST_WIDTH, TEST_HEIGHT);
-	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(fixture->renderer, target, NULL);
-	struct fx_gles_render_pass *fx_pass = fx_get_render_pass(pass);
-	bool ok = check(fx_render_pass_init_offscreen_buffers(pass, fixture->output), "offscreen buffers");
-	ok &= check(fx_render_pass_begin_animation(fx_pass), "capture begins");
-	const struct wlr_box box = { .x = 6, .y = 6, .width = 4, .height = 4 };
-	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options) {
-		.box = box, .color = { .r = 0, .g = 1, .b = 0, .a = 1 }, .blend_mode = WLR_RENDER_BLEND_MODE_NONE });
 	// expand = 2 logical px on an unscaled target: the drawn box is 8x8 at (4,4), so umbriel_expand.x == 0.25.
-	fx_render_pass_end_animation(fx_pass, shader, &parameters, &box, &box, WL_OUTPUT_TRANSFORM_NORMAL, NULL, 2);
-	ok &= check(wlr_render_pass_submit(pass), "submit");
-	uint8_t inside[4], margin[4], outside[4];
-	ok &= fixture_read_pixel(fixture, target, 8, 8, inside);
-	ok &= fixture_read_pixel(fixture, target, 4, 4, margin);
-	ok &= fixture_read_pixel(fixture, target, 2, 2, outside);
-	ok &= check(inside[2] > 250 && margin[2] > 250, "the program paints the node box and its expand margin");
-	ok &= check(outside[2] < 5 && outside[3] < 5, "nothing is drawn past the expanded box");
+	const struct wlr_box box = { .x = 6, .y = 6, .width = 4, .height = 4 };
+	bool ok = render_expand(fixture, target, shader, &box, &box, WL_OUTPUT_TRANSFORM_NORMAL, 2);
+	ok &= check(painted(fixture, target, 8, 8) && painted(fixture, target, 4, 4),
+		"the program paints the node box and its expand margin");
+	ok &= check(blank(fixture, target, 2, 2), "nothing is drawn past the expanded box");
+
+	// An 8x4 node at (4,6) on a 90-degree output: its buffer box is 4x8, and the
+	// 2 px margin holds on both buffer axes with umbriel_scale == 1.
+	const struct wlr_box logical = { .x = 4, .y = 6, .width = 8, .height = 4 };
+	struct wlr_box rotated;
+	wlr_box_transform(&rotated, &logical, wlr_output_transform_invert(WL_OUTPUT_TRANSFORM_90), TEST_WIDTH, TEST_HEIGHT);
+	ok &= render_expand(fixture, target, scaled, &rotated, &logical, WL_OUTPUT_TRANSFORM_90, 2);
+	const int left = rotated.x - 2, right = rotated.x + rotated.width + 1;
+	const int top = rotated.y - 2, bottom = rotated.y + rotated.height + 1;
+	const int mid_x = rotated.x + rotated.width / 2, mid_y = rotated.y + rotated.height / 2;
+	ok &= check(painted(fixture, target, mid_x, mid_y), "the rotated node box is painted with umbriel_scale 1");
+	ok &= check(painted(fixture, target, left, mid_y) && painted(fixture, target, right, mid_y),
+		"the rotated margin covers 2 px on the buffer x axis");
+	ok &= check(painted(fixture, target, mid_x, top) && painted(fixture, target, mid_x, bottom),
+		"the rotated margin covers 2 px on the buffer y axis");
+	ok &= check(blank(fixture, target, left - 1, mid_y) && blank(fixture, target, right + 1, mid_y)
+		&& blank(fixture, target, mid_x, top - 1) && blank(fixture, target, mid_x, bottom + 1),
+		"nothing is drawn past the rotated expanded box");
 	wlr_buffer_drop(target);
 	fx_effect_shader_unref(shader);
+	fx_effect_shader_unref(scaled);
 	return ok;
 }
 
@@ -304,6 +365,275 @@ static bool test_persistent_scene(struct fixture *fixture) {
 	return ok;
 }
 
+// A persistent window effect reads its input under an opaque node above it.
+// Layout: blue background, a white 8x8 effect node at (4,4) whose window slot
+// mirrors it horizontally, and an opaque red 8x8 rect at (8,4) over its right half.
+static bool test_occlusion(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float blue[4] = { 0, 0, 1, 1 }, red[4] = { 1, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+	struct wlr_scene_rect *effect = wlr_scene_rect_create(&scene->tree, 8, 8, white);
+	wlr_scene_node_set_position(&effect->node, 4, 4);
+	struct wlr_scene_rect *cover = wlr_scene_rect_create(&scene->tree, 8, 8, red);
+	wlr_scene_node_set_position(&cover->node, 8, 4);
+	struct fx_effect_shader *mirror = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return umbriel_sample(vec2(1.0 - uv.x, uv.y)); }", "occlusion");
+	bool ok = check(mirror != NULL, "mirror program compiles");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&effect->node, FX_SLOT_WINDOW, mirror, &parameters);
+	ok &= check(pixman_region32_contains_point(&effect->node.visible, 10, 8, NULL),
+		"the covered half stays in the effect node's visible region");
+
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "scene renders");
+	if (rendered != NULL) {
+		uint8_t mirrored[4], covered[4];
+		ok &= fixture_read_pixel(fixture, rendered, 5, 8, mirrored);
+		ok &= fixture_read_pixel(fixture, rendered, 10, 8, covered);
+		ok &= check(mirrored[0] > 250 && mirrored[1] > 250 && mirrored[2] > 250,
+			"the covered input is captured and mirrored into the left half");
+		ok &= check(covered[2] > 250 && covered[0] < 5 && covered[1] < 5, "the red rect still covers the right half");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(mirror);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
+static struct wlr_swapchain *create_swapchain(struct fixture *fixture) {
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	return format != NULL ? wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format) : NULL;
+}
+
+// Builds a frame on `swapchain`, which outlives the frame so buffer age limits
+// render damage, and acknowledges its damage as a commit would. The caller
+// unlocks the returned buffer and finishes `state`.
+static struct wlr_buffer *render_frame(struct wlr_scene_output *scene_output, struct wlr_swapchain *swapchain,
+		struct wlr_output_state *state) {
+	wlr_output_state_init(state);
+	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
+	if (!wlr_scene_output_build_state(scene_output, state, &options) || state->buffer == NULL) {
+		return NULL;
+	}
+	wlr_scene_output_acknowledge_damage_for_test(scene_output, state);
+	return wlr_buffer_lock(state->buffer);
+}
+
+// One whole-damage frame per swapchain buffer, so the next frame carries only its own damage.
+static bool warm_up(struct wlr_scene_output *scene_output, struct wlr_swapchain *swapchain) {
+	bool ok = true;
+	for (int i = 0; i < 4; i++) {
+		wlr_scene_output_damage_whole_for_test(scene_output);
+		struct wlr_output_state state;
+		struct wlr_buffer *buffer = render_frame(scene_output, swapchain, &state);
+		ok &= buffer != NULL;
+		if (buffer != NULL) {
+			wlr_buffer_unlock(buffer);
+		}
+		wlr_output_state_finish(&state);
+	}
+	return check(ok, "warm-up frames render");
+}
+
+// Renders one frame and checks its commit damage extents against (x1,y1)-(x2,y2), x2/y2 exclusive.
+static bool frame_damage_is(struct wlr_scene_output *scene_output, struct wlr_swapchain *swapchain,
+		int x1, int y1, int x2, int y2, const char *message) {
+	struct wlr_output_state state;
+	struct wlr_buffer *buffer = render_frame(scene_output, swapchain, &state);
+	const pixman_box32_t *extents = pixman_region32_extents(&state.damage);
+	bool ok = buffer != NULL && (state.committed & WLR_OUTPUT_STATE_DAMAGE)
+		&& extents->x1 == x1 && extents->y1 == y1 && extents->x2 == x2 && extents->y2 == y2;
+	if (!ok) {
+		fprintf(stderr, "  damage (%d,%d)-(%d,%d), expected (%d,%d)-(%d,%d)\n",
+			extents->x1, extents->y1, extents->x2, extents->y2, x1, y1, x2, y2);
+	}
+	if (buffer != NULL) {
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	return check(ok, message);
+}
+
+static const char kGainSource[] = "uniform float gain;\nvec4 window(vec2 uv) { return umbriel_sample(uv) * gain; }";
+
+// A persistent parameter change damages only its own node's box.
+static bool test_damage_confinement(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW, kGainSource, "gain");
+	if (!check(swapchain != NULL && shader != NULL, "swapchain and gain program")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(shader);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float white[4] = { 1, 1, 1, 1 };
+	struct wlr_scene_rect *rect = wlr_scene_rect_create(&scene->tree, 6, 6, white);
+	wlr_scene_node_set_position(&rect->node, 5, 5);
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *gain = fx_parameters_add_uniform(&parameters, "gain", FX_UNIFORM_FLOAT, 1);
+	gain->floats[0] = 1.0f;
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_WINDOW, shader, &parameters);
+	bool ok = warm_up(scene_output, swapchain);
+	gain->floats[0] = 0.5f;
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_WINDOW, shader, &parameters);
+	ok &= frame_damage_is(scene_output, swapchain, 5, 5, 11, 11, "a uniform change damages only the effect box");
+	fx_effect_shader_unref(shader);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
+// Damage touching a persistent effect box grows to the whole box, and on to
+// every box the grown damage touches.
+static bool test_whole_box_invalidation(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW, kGainSource, "gain");
+	if (!check(swapchain != NULL && shader != NULL, "swapchain and gain program")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(shader);
+		return false;
+	}
+	const float white[4] = { 1, 1, 1, 1 }, red[4] = { 1, 0, 0, 1 };
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *gain = fx_parameters_add_uniform(&parameters, "gain", FX_UNIFORM_FLOAT, 1);
+	gain->floats[0] = 1.0f;
+
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	struct wlr_scene_rect *rect = wlr_scene_rect_create(&scene->tree, 6, 6, white);
+	wlr_scene_node_set_position(&rect->node, 5, 5);
+	struct wlr_scene_rect *marker = wlr_scene_rect_create(&scene->tree, 1, 1, red);
+	wlr_scene_node_set_position(&marker->node, 6, 6);
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_WINDOW, shader, &parameters);
+	bool ok = warm_up(scene_output, swapchain);
+	wlr_scene_node_set_position(&marker->node, 7, 7);
+	ok &= frame_damage_is(scene_output, swapchain, 5, 5, 11, 11, "damage inside an effect box covers the whole box");
+	wlr_scene_node_destroy(&scene->tree.node);
+
+	// A at (2,2) and B at (6,6), both 6x6, overlap at (6,6)-(8,8); the marker at (3,3) is in A only.
+	scene = wlr_scene_create();
+	scene_output = wlr_scene_output_create(scene, fixture->output);
+	struct wlr_scene_rect *a = wlr_scene_rect_create(&scene->tree, 6, 6, white);
+	wlr_scene_node_set_position(&a->node, 2, 2);
+	struct wlr_scene_rect *b = wlr_scene_rect_create(&scene->tree, 6, 6, white);
+	wlr_scene_node_set_position(&b->node, 6, 6);
+	marker = wlr_scene_rect_create(&scene->tree, 1, 1, red);
+	wlr_scene_node_set_position(&marker->node, 3, 3);
+	wlr_scene_node_set_animation(&a->node, FX_SLOT_WINDOW, shader, &parameters);
+	wlr_scene_node_set_animation(&b->node, FX_SLOT_WINDOW, shader, &parameters);
+	ok &= warm_up(scene_output, swapchain);
+	const float green[4] = { 0, 1, 0, 1 };
+	wlr_scene_rect_set_color(marker, green);
+	ok &= frame_damage_is(scene_output, swapchain, 2, 2, 12, 12, "damage in A grows through A to the overlapping B");
+	wlr_scene_node_destroy(&scene->tree.node);
+	fx_effect_shader_unref(shader);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
+// A transient slot keeps whole-output damage every frame and never culls what its node covers.
+static bool test_transient_policy(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *identity = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return umbriel_sample(uv); }", "transient-identity");
+	struct fx_effect_shader *clear = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return umbriel_sample(uv) * 0.0; }", "transient-clear");
+	bool ok = check(swapchain != NULL && identity != NULL && clear != NULL, "swapchain and transient programs");
+	if (!ok) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(identity);
+		fx_effect_shader_unref(clear);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float blue[4] = { 0, 0, 1, 1 }, red[4] = { 1, 0, 0, 1 };
+	struct wlr_scene_rect *background = wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+	struct wlr_scene_rect *rect = wlr_scene_rect_create(&scene->tree, 8, 8, red);
+	wlr_scene_node_set_position(&rect->node, 4, 4);
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1, .transition_id = 1 };
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_WINDOWS_IN, identity, &parameters);
+	ok &= warm_up(scene_output, swapchain);
+	ok &= frame_damage_is(scene_output, swapchain, 0, 0, TEST_WIDTH, TEST_HEIGHT,
+		"an unchanged frame with a transient slot is damaged whole");
+	ok &= check(pixman_region32_contains_point(&background->node.visible, 8, 8, NULL),
+		"the background under the transient node is not culled");
+
+	// A program that drops its input shows whatever was drawn beneath the node.
+	parameters.transition_id = 2;
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_WINDOWS_IN, clear, &parameters);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = render_frame(scene_output, swapchain, &state);
+	ok &= check(rendered != NULL, "transient frame renders");
+	if (rendered != NULL) {
+		uint8_t under[4];
+		ok &= fixture_read_pixel(fixture, rendered, 8, 8, under);
+		ok &= check(under[0] > 250 && under[2] < 5, "the covered background was drawn into the target");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(identity);
+	fx_effect_shader_unref(clear);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
+enum margin_removal { MARGIN_DISABLE, MARGIN_DISABLE_PARENT, MARGIN_DESTROY };
+
+// Disabling or destroying a node damages its drawn box including the expand margin.
+static bool test_margin_damage(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return umbriel_sample(uv); }", "margin");
+	bool ok = check(swapchain != NULL && shader != NULL, "swapchain and drag program");
+	if (!ok) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(shader);
+		return false;
+	}
+	static const char *const kNames[] = {
+		[MARGIN_DISABLE] = "disabling the node damages its expand margin",
+		[MARGIN_DISABLE_PARENT] = "disabling an ancestor damages a descendant's expand margin",
+		[MARGIN_DESTROY] = "destroying the node damages its expand margin",
+	};
+	for (int removal = MARGIN_DISABLE; removal <= MARGIN_DESTROY; removal++) {
+		struct wlr_scene *scene = wlr_scene_create();
+		struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+		struct wlr_scene_tree *parent = wlr_scene_tree_create(&scene->tree);
+		const float white[4] = { 1, 1, 1, 1 };
+		struct wlr_scene_rect *rect = wlr_scene_rect_create(parent, 6, 6, white);
+		wlr_scene_node_set_position(&rect->node, 5, 5);
+		struct fx_animation_parameters parameters = {
+			.progress = 1, .linear_progress = 1, .direction = 1, .transition_id = 1, .expand = 3 };
+		wlr_scene_node_set_animation(&rect->node, FX_SLOT_DRAG, shader, &parameters);
+		ok &= warm_up(scene_output, swapchain);
+		// A disabled node's slot is cleared too, so the frame carries no transient whole-output damage.
+		switch (removal) {
+		case MARGIN_DISABLE:
+			wlr_scene_node_set_enabled(&rect->node, false);
+			wlr_scene_node_set_animation(&rect->node, FX_SLOT_DRAG, NULL, NULL);
+			break;
+		case MARGIN_DISABLE_PARENT:
+			wlr_scene_node_set_enabled(&parent->node, false);
+			wlr_scene_node_set_animation(&rect->node, FX_SLOT_DRAG, NULL, NULL);
+			break;
+		case MARGIN_DESTROY:
+			wlr_scene_node_destroy(&rect->node);
+			break;
+		}
+		ok &= frame_damage_is(scene_output, swapchain, 2, 2, 14, 14, kNames[removal]);
+		wlr_scene_node_destroy(&scene->tree.node);
+	}
+	fx_effect_shader_unref(shader);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -328,6 +658,16 @@ int main(int argc, char *argv[]) {
 		ok = test_renderer_destroy(&fixture);
 	} else if (strcmp(argv[1], "persistent-scene") == 0) {
 		ok = test_persistent_scene(&fixture);
+	} else if (strcmp(argv[1], "occlusion") == 0) {
+		ok = test_occlusion(&fixture);
+	} else if (strcmp(argv[1], "damage-confinement") == 0) {
+		ok = test_damage_confinement(&fixture);
+	} else if (strcmp(argv[1], "whole-box-invalidation") == 0) {
+		ok = test_whole_box_invalidation(&fixture);
+	} else if (strcmp(argv[1], "transient-policy") == 0) {
+		ok = test_transient_policy(&fixture);
+	} else if (strcmp(argv[1], "margin-damage") == 0) {
+		ok = test_margin_damage(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

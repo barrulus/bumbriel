@@ -3467,6 +3467,29 @@ static void scene_output_update_geometry(struct wlr_scene_output* scene_output, 
   );
 }
 
+// A committed buffer acknowledges its damage, or all pending damage when it carries none.
+static void
+scene_output_acknowledge_damage(struct wlr_scene_output* scene_output, const struct wlr_output_state* state) {
+  if (state->committed & WLR_OUTPUT_STATE_DAMAGE) {
+    pixman_region32_subtract(
+        &scene_output->pending_commit_damage, &scene_output->pending_commit_damage, &state->damage
+    );
+  } else {
+    pixman_region32_fini(&scene_output->pending_commit_damage);
+    pixman_region32_init(&scene_output->pending_commit_damage);
+  }
+}
+
+void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_output) {
+  scene_output_damage_whole(scene_output);
+}
+
+void wlr_scene_output_acknowledge_damage_for_test(
+    struct wlr_scene_output* scene_output, const struct wlr_output_state* state
+) {
+  scene_output_acknowledge_damage(scene_output, state);
+}
+
 static void scene_output_handle_commit(struct wl_listener* listener, void* data) {
   struct wlr_scene_output* scene_output = wl_container_of(listener, scene_output, output_commit);
   struct wlr_output_event_commit* event = data;
@@ -3476,14 +3499,7 @@ static void scene_output_handle_commit(struct wl_listener* listener, void* data)
   // will be acknowledged by the backend so we don't need to keep track of it
   // anymore
   if (state->committed & WLR_OUTPUT_STATE_BUFFER) {
-    if (state->committed & WLR_OUTPUT_STATE_DAMAGE) {
-      pixman_region32_subtract(
-          &scene_output->pending_commit_damage, &scene_output->pending_commit_damage, &state->damage
-      );
-    } else {
-      pixman_region32_fini(&scene_output->pending_commit_damage);
-      pixman_region32_init(&scene_output->pending_commit_damage);
-    }
+    scene_output_acknowledge_damage(scene_output, state);
   }
 
   bool force_update =

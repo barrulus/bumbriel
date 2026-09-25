@@ -249,7 +249,19 @@ if build_tests
     link_with: umbrielfx_lib,
     build_by_default: false,
   )
-  foreach case_name : ['kinds', 'reads', 'uniforms', 'expand', 'renderer-destroy', 'persistent-scene']
+  foreach case_name : [
+    'kinds',
+    'reads',
+    'uniforms',
+    'expand',
+    'renderer-destroy',
+    'persistent-scene',
+    'occlusion',
+    'damage-confinement',
+    'whole-box-invalidation',
+    'transient-policy',
+    'margin-damage',
+  ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach
 
