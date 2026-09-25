@@ -124,6 +124,74 @@ static bool test_uniforms(struct fixture *fixture) {
 	ok &= render_animation(fixture, palette, &none, 0, pixel);
 	ok &= check(pixel[3] < 5, "without a palette the lookup is transparent black");
 	fx_effect_shader_unref(palette);
+
+	// An oversized count against a declared array must be rejected wholesale
+	// (logged once, ignored), not clamped down to the declared size.
+	struct fx_effect_shader *oversized = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"uniform vec4 pal[2];\nvec4 animation(vec2 uv) { return pal[0]; }", "oversized-count");
+	ok &= check(oversized != NULL, "oversized-count program compiles");
+	struct fx_animation_parameters exact = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *pal_exact = fx_parameters_add_uniform(&exact, "pal", FX_UNIFORM_VEC4, 2);
+	ok &= check(pal_exact != NULL, "a count matching the declared array size fits");
+	if (pal_exact != NULL) {
+		pal_exact->floats[0] = 1.0f; pal_exact->floats[1] = 0.0f; pal_exact->floats[2] = 0.0f; pal_exact->floats[3] = 1.0f; // red
+		pal_exact->floats[4] = 0.0f; pal_exact->floats[5] = 0.0f; pal_exact->floats[6] = 1.0f; pal_exact->floats[7] = 1.0f; // blue
+	}
+	ok &= render_animation(fixture, oversized, &exact, 0, pixel);
+	ok &= check(pixel[2] > 250 && pixel[0] < 5, "pal[0] binds red when count matches the declared array size");
+	struct fx_animation_parameters over = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *pal_over = fx_parameters_add_uniform(&over, "pal", FX_UNIFORM_VEC4, 4);
+	ok &= check(pal_over != NULL, "a count larger than the declared array size still fits fx_uniform storage");
+	if (pal_over != NULL) {
+		pal_over->floats[0] = 0.0f; pal_over->floats[1] = 1.0f; pal_over->floats[2] = 0.0f; pal_over->floats[3] = 1.0f; // green
+	}
+	ok &= render_animation(fixture, oversized, &over, 0, pixel);
+	ok &= check(pixel[2] > 250 && pixel[1] < 5, "an oversized count is rejected, leaving the previous binding intact");
+	fx_effect_shader_unref(oversized);
+
+	// A uniform name at or beyond the cache's name limit must be skipped
+	// entirely during caching, not truncated into a shorter, wrong name. The
+	// 40-character name here shares its first 31 (FX_UNIFORM_NAME_MAX - 1)
+	// characters with a real, differently-typed uniform declared first: a
+	// truncate-and-cache bug would alias the two under one name and record
+	// the long uniform's vec4 type against the short uniform's float
+	// location, making a correct float bind to the short name look like a
+	// type mismatch.
+	struct fx_effect_shader *long_name = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"uniform vec4 abcdefghijklmnopqrstuvwxyz0123456789ABCD;\n"
+		"uniform float abcdefghijklmnopqrstuvwxyz01234;\n"
+		"vec4 animation(vec2 uv) {\n"
+		"  return vec4(abcdefghijklmnopqrstuvwxyz01234, 0.0, 0.0, 1.0) + abcdefghijklmnopqrstuvwxyz0123456789ABCD;\n"
+		"}",
+		"long-name");
+	ok &= check(long_name != NULL, "long-uniform-name program compiles");
+	ok &= check(!fx_effect_shader_reads(long_name, "abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+		"a 40-character uniform name is not cached under a truncated alias");
+	ok &= check(fx_effect_shader_reads(long_name, "abcdefghijklmnopqrstuvwxyz01234"),
+		"the real 31-character uniform sharing that prefix is still cached under its own name");
+	// GL's active-uniform enumeration order is implementation-defined, so a
+	// truncate-and-cache bug could file the 40-character uniform's entry
+	// either before or after the real 31-character one; either way the name
+	// must appear in the cache exactly once, with the real uniform's type.
+	unsigned name_matches = 0;
+	for (unsigned i = 0; i < long_name->uniform_count; i++) {
+		if (strcmp(long_name->uniforms[i].name, "abcdefghijklmnopqrstuvwxyz01234") == 0) {
+			name_matches++;
+			ok &= check(long_name->uniforms[i].type == GL_FLOAT,
+				"the cached entry for the 31-character name keeps its declared float type");
+		}
+	}
+	ok &= check(name_matches == 1,
+		"the 31-character name is cached exactly once, not aliased by the truncated 40-character name");
+	struct fx_animation_parameters named = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *short_uniform = fx_parameters_add_uniform(&named, "abcdefghijklmnopqrstuvwxyz01234", FX_UNIFORM_FLOAT, 1);
+	ok &= check(short_uniform != NULL, "the 31-character name fits fx_uniform storage");
+	if (short_uniform != NULL) {
+		short_uniform->floats[0] = 1.0f;
+	}
+	ok &= render_animation(fixture, long_name, &named, 0, pixel);
+	ok &= check(pixel[2] > 250 && pixel[3] > 250, "binding the real short uniform by name is not blocked by the skipped long alias");
+	fx_effect_shader_unref(long_name);
 	return ok;
 }
 

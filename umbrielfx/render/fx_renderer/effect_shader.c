@@ -193,17 +193,29 @@ void fx_effect_shader_unref(struct fx_effect_shader* shader) {
 static void cache_uniforms(struct fx_effect_shader* shader) {
   GLint active = 0;
   glGetProgramiv(shader->program, GL_ACTIVE_UNIFORMS, &active);
+  // glGetActiveUniform truncates a name into the buffer and reports the
+  // truncated length, never bufSize or more, so a name that does not fit the
+  // cache entry must be measured in a larger scratch buffer first.
+  char scratch[256];
   for (GLint i = 0; i < active && shader->uniform_count < FX_EFFECT_UNIFORM_CACHE; i++) {
     struct fx_effect_uniform* uniform = &shader->uniforms[shader->uniform_count];
     GLsizei length = 0;
-    glGetActiveUniform(shader->program, (GLuint)i, sizeof(uniform->name), &length, &uniform->size, &uniform->type, uniform->name);
-    if (length <= 0 || length >= (GLsizei)sizeof(uniform->name)) {
+    GLint size = 0;
+    GLenum type = 0;
+    glGetActiveUniform(shader->program, (GLuint)i, sizeof(scratch), &length, &size, &type, scratch);
+    if (length <= 0) {
       continue;
     }
-    char* bracket = strchr(uniform->name, '[');
+    char* bracket = strchr(scratch, '[');
     if (bracket != NULL) {
       *bracket = '\0';
     }
+    if (strlen(scratch) >= sizeof(uniform->name)) {
+      continue;
+    }
+    uniform->size = size;
+    uniform->type = type;
+    strcpy(uniform->name, scratch);
     uniform->location = glGetUniformLocation(shader->program, uniform->name);
     if (uniform->location < 0) {
       continue;
@@ -248,8 +260,8 @@ void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct
   if (cached == NULL) {
     return;
   }
-  const GLsizei count = (GLsizei)(uniform->count > (unsigned)cached->size ? (unsigned)cached->size : uniform->count);
-  if (cached->type != gl_type(uniform->type) || count == 0) {
+  const GLsizei count = (GLsizei)uniform->count;
+  if (cached->type != gl_type(uniform->type) || count == 0 || uniform->count > (unsigned)cached->size) {
     if (!cached->warned) {
       cached->warned = true;
       wlr_log(WLR_ERROR, "Effect uniform '%s' does not match the program's declaration; ignoring it", uniform->name);
