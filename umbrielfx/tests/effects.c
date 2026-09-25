@@ -725,6 +725,53 @@ static bool test_border_geometry_tree(struct fixture *fixture) {
 	return ok;
 }
 
+// Light from a border slot spills past the border box into the light layer,
+// only when the scene has one.
+static bool render_light_scene(struct fixture *fixture, bool with_layer, uint8_t margin_pixel[4], uint8_t ring_pixel[4]) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_border *border = wlr_scene_border_create(&scene->tree, white, white);
+	wlr_scene_border_set_geometry(border, 8, 8, 2, 0,
+		(struct clipped_region){ .area = { 2, 2, 4, 4 } }, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	wlr_scene_node_set_position(&border->node, 4, 4);
+	if (with_layer) {
+		wlr_scene_set_effect_light_layer(scene, wlr_scene_tree_create(&scene->tree));
+	}
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		"vec4 border(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0); }", "border-light");
+	bool ok = check(program != NULL, "border program compiles");
+	struct fx_animation_parameters parameters = {
+		.progress = 1, .linear_progress = 1, .direction = 1,
+		.light = { .enabled = true, .spread = 3, .intensity = 4, .threshold = 0.1f },
+	};
+	wlr_scene_node_set_animation(&border->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "renders");
+	if (rendered != NULL) {
+		ok &= fixture_read_pixel(fixture, rendered, 2, 8, margin_pixel);   // 2px left of the border box
+		ok &= fixture_read_pixel(fixture, rendered, 5, 8, ring_pixel);     // inside the wall
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
+static bool test_border_light(struct fixture *fixture) {
+	uint8_t margin[4], ring[4], dark_margin[4], dark_ring[4];
+	bool ok = render_light_scene(fixture, true, margin, ring);
+	ok &= render_light_scene(fixture, false, dark_margin, dark_ring);
+	ok &= check(ring[2] > 250 && dark_ring[2] > 250, "the ring itself is red with and without light");
+	ok &= check(margin[2] > 20, "light spills red past the border box");
+	ok &= check(margin[2] < ring[2], "the spill is dimmer than the ring");
+	ok &= check(dark_margin[2] < 5 && dark_margin[1] < 5, "without a light layer nothing spills");
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -763,6 +810,8 @@ int main(int argc, char *argv[]) {
 		ok = test_border_geometry(&fixture);
 	} else if (strcmp(argv[1], "border-geometry-tree") == 0) {
 		ok = test_border_geometry_tree(&fixture);
+	} else if (strcmp(argv[1], "border-light") == 0) {
+		ok = test_border_light(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

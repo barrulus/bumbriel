@@ -161,6 +161,11 @@ bool wlr_scene_node_set_animation_output_clip(struct wlr_scene_node* node, const
 // never copies.
 void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destination, struct wlr_scene_node* source);
 
+// Border slots with light enabled screen-blend their emission into `layer`,
+// which must be a child of the scene root. Borders stacked above the layer
+// emit nothing. NULL removes the layer and every light in it.
+void wlr_scene_set_effect_light_layer(struct wlr_scene* scene, struct wlr_scene_tree* layer);
+
 // Keep the shadow in its stacking layer, but derive its animated silhouette
 // from source. Color is the unattenuated shadow color; source alpha supplies
 // opacity. The association is automatically cleared when either node dies.

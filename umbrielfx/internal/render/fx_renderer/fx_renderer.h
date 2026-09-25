@@ -240,6 +240,12 @@ struct fx_renderer {
 	struct fx_effect_shader *animation_shadow_horizontal;
 	struct fx_effect_shader *animation_shadow_vertical;
 
+	// Linked on first use.
+	GLuint effect_light_program;
+	GLint effect_light_proj, effect_light_tex_proj, effect_light_pos, effect_light_tex, effect_light_gain,
+		effect_light_linear, effect_light_emission, effect_light_source_linear, effect_light_threshold,
+		effect_light_source_region;
+
 	struct wl_list buffers; // fx_framebuffer.link
 	struct wl_list textures; // fx_texture.link
 	struct wl_list offscreen_buffers; // fx_offscreen_buffers.link

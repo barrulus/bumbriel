@@ -1,3 +1,4 @@
+#include "effect_light_frag_src.h"
 #include "render/color.h"
 #include "render/egl.h"
 #include "render/fx_renderer/animation_history.h"
@@ -11,6 +12,7 @@
 #include "umbrielfx/types/fx/blur_data.h"
 #include "util/matrix.h"
 
+#include <GLES2/gl2ext.h>
 #include <assert.h>
 #include <drm_fourcc.h>
 #include <math.h>
@@ -755,12 +757,260 @@ static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pas
   return pass->animation_textures[pass->animation_depth];
 }
 
-// No-op.
+static bool ensure_light_program(struct fx_renderer* renderer) {
+  if (renderer->effect_light_program != 0) {
+    return true;
+  }
+  renderer->effect_light_program = link_program(effect_light_frag_src);
+  if (renderer->effect_light_program == 0) {
+    return false;
+  }
+  GLuint p = renderer->effect_light_program;
+  renderer->effect_light_proj = glGetUniformLocation(p, "proj");
+  renderer->effect_light_tex_proj = glGetUniformLocation(p, "tex_proj");
+  renderer->effect_light_pos = glGetAttribLocation(p, "pos");
+  renderer->effect_light_tex = glGetUniformLocation(p, "tex");
+  renderer->effect_light_gain = glGetUniformLocation(p, "gain");
+  renderer->effect_light_linear = glGetUniformLocation(p, "linear");
+  renderer->effect_light_emission = glGetUniformLocation(p, "emission");
+  renderer->effect_light_source_linear = glGetUniformLocation(p, "source_linear");
+  renderer->effect_light_threshold = glGetUniformLocation(p, "threshold");
+  renderer->effect_light_source_region = glGetUniformLocation(p, "source_region");
+  return true;
+}
+
+static bool light_target_init(GLuint* texture, GLuint* framebuffer, int width, int height, GLenum type) {
+  glGenTextures(1, texture);
+  glBindTexture(GL_TEXTURE_2D, *texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, type, NULL);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glGenFramebuffers(1, framebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, *framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *texture, 0);
+  return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+}
+
+static void light_cache_forget(struct fx_effect_light_cache* cache) {
+  memset(cache->framebuffers, 0, sizeof(cache->framebuffers));
+  memset(cache->textures, 0, sizeof(cache->textures));
+  cache->emission_framebuffer = cache->emission_texture = 0;
+  cache->emission_width = cache->emission_height = 0;
+  cache->valid = false;
+  cache->failed = false;
+}
+
+static void light_cache_release(struct fx_effect_light_cache* cache) {
+  glDeleteFramebuffers(1, &cache->emission_framebuffer);
+  glDeleteTextures(1, &cache->emission_texture);
+  glDeleteFramebuffers(FX_LIGHT_LEVELS + 1, cache->framebuffers);
+  glDeleteTextures(FX_LIGHT_LEVELS + 1, cache->textures);
+  light_cache_forget(cache);
+}
+
+static void light_cache_renderer_destroy(struct wl_listener* listener, void* data) {
+  struct fx_effect_light_cache* cache = wl_container_of(listener, cache, renderer_destroy);
+  // The context releases the GL objects; never touch their names again.
+  light_cache_forget(cache);
+  cache->renderer = NULL;
+  wl_list_remove(&cache->renderer_destroy.link);
+}
+
+struct fx_effect_light_cache* fx_effect_light_cache_create(struct fx_renderer* renderer) {
+  struct fx_effect_light_cache* cache = calloc(1, sizeof(*cache));
+  if (cache == NULL) {
+    return NULL;
+  }
+  cache->renderer = renderer;
+  cache->renderer_destroy.notify = light_cache_renderer_destroy;
+  wl_signal_add(&renderer->wlr_renderer.events.destroy, &cache->renderer_destroy);
+  return cache;
+}
+
+void fx_effect_light_cache_destroy(struct fx_effect_light_cache* cache) {
+  if (cache == NULL) {
+    return;
+  }
+  if (cache->renderer != NULL) {
+    struct wlr_egl_context previous;
+    if (wlr_egl_make_current(cache->renderer->egl, &previous)) {
+      light_cache_release(cache);
+      wlr_egl_restore_context(&previous);
+    }
+    wl_list_remove(&cache->renderer_destroy.link);
+  }
+  free(cache);
+}
+
+// Allocates (or reuses) the emission texture and pyramid for a drawn box of
+// `width` x `height` buffer pixels with `margin` around it. Half float when the
+// renderer can filter it, so screen-blended light does not band. A failed
+// allocation is not retried until the size changes.
+static bool
+light_cache_prepare(struct fx_effect_light_cache* cache, int width, int height, int margin, float spread_px) {
+  const int full_width = width + 2 * margin;
+  const int full_height = height + 2 * margin;
+  const float radius = spread_px * 0.5f;
+  int levels = (int)ceilf(log2f(radius / 3 + 1));
+  levels = levels < 1 ? 1 : (levels > FX_LIGHT_LEVELS ? FX_LIGHT_LEVELS : levels);
+  if (cache->emission_width == width
+      && cache->emission_height == height
+      && cache->margin == margin
+      && cache->levels == levels) {
+    return !cache->failed;
+  }
+  light_cache_release(cache);
+  cache->emission_width = width;
+  cache->emission_height = height;
+  cache->margin = margin;
+  cache->levels = levels;
+  cache->failed = true;
+  const GLenum type = cache->renderer->exts.OES_texture_half_float_linear ? GL_HALF_FLOAT_OES : GL_UNSIGNED_BYTE;
+  if (!light_target_init(&cache->emission_texture, &cache->emission_framebuffer, width, height, type)) {
+    wlr_log(WLR_ERROR, "Cannot allocate effect light buffers; keeping the plain border");
+    return false;
+  }
+  const int w = (full_width + 1) / 2, h = (full_height + 1) / 2;
+  for (int i = 0; i <= levels; i++) {
+    cache->widths[i] = (w + (1 << i) - 1) >> i;
+    cache->heights[i] = (h + (1 << i) - 1) >> i;
+    if (cache->widths[i] < 1) {
+      cache->widths[i] = 1;
+    }
+    if (cache->heights[i] < 1) {
+      cache->heights[i] = 1;
+    }
+    if (!light_target_init(&cache->textures[i], &cache->framebuffers[i], cache->widths[i], cache->heights[i], type)) {
+      wlr_log(WLR_ERROR, "Cannot allocate effect light buffers; keeping the plain border");
+      return false;
+    }
+  }
+  cache->failed = false;
+  return true;
+}
+
+static void light_blur(
+    struct fx_effect_light_cache* cache, int source, int target, struct blur_shader* shader, float offset, bool down
+) {
+  glBindFramebuffer(GL_FRAMEBUFFER, cache->framebuffers[target]);
+  glViewport(0, 0, cache->widths[target], cache->heights[target]);
+  glUseProgram(shader->program);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, cache->textures[source]);
+  glUniform1i(shader->tex, 0);
+  glUniform1f(shader->radius, offset);
+  const float ws = cache->widths[source], hs = cache->heights[source];
+  glUniform2f(shader->halfpixel, 0.5f / ws, 0.5f / hs);
+  glUniform4f(shader->sample_bounds, 0.5f / ws, 0.5f / hs, 1 - 0.5f / ws, 1 - 0.5f / hs);
+  float projection[9];
+  matrix_projection(projection, cache->widths[target], cache->heights[target], WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  const struct wlr_box box = {.width = cache->widths[target], .height = cache->heights[target]};
+  set_proj_matrix(shader->proj, projection, &box);
+  // The Kawase shaders expect the level ratio in the UV scale.
+  const struct wlr_fbox uv = {.width = down ? 0.5 : 2, .height = down ? 0.5 : 2};
+  set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+  render(&box, NULL, shader->pos_attrib);
+}
+
+// Renders the slot's program a second time into the emission texture, then
+// thresholds it into level 0 and blurs the pyramid. Restores the pass target.
 static void emit_light(
     struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite, struct wlr_texture* texture,
     struct wlr_texture* previous_texture, const struct wlr_box* previous_box, const struct wlr_box* box,
     const struct wlr_box* logical_box, const struct fx_effect_geometry* geometry
-) {}
+) {
+  struct fx_effect_light_cache* cache = composite->light;
+  struct fx_renderer* renderer = pass->buffer->renderer;
+  const struct fx_effect_light* light = &composite->parameters->light;
+  if (cache->renderer != renderer || !ensure_light_program(renderer) || box->width <= 0 || box->height <= 0) {
+    return;
+  }
+  const float scale = logical_box->width > 0 ? (float)box->width / logical_box->width : 1;
+  const float spread_px = light->spread * scale;
+  const int margin = (int)ceilf(spread_px * 2 + 8);
+  if (!light_cache_prepare(cache, box->width, box->height, margin, spread_px)) {
+    fx_framebuffer_bind(pass->buffer);
+    return;
+  }
+  // 1. Program into the emission texture, unblended, no history write.
+  glBindFramebuffer(GL_FRAMEBUFFER, cache->emission_framebuffer);
+  glViewport(0, 0, box->width, box->height);
+  glDisable(GL_SCISSOR_TEST);
+  glClearColor(0, 0, 0, 0);
+  glClear(GL_COLOR_BUFFER_BIT);
+  float projection[9];
+  matrix_projection(projection, box->width, box->height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  const struct wlr_box local = {.width = box->width, .height = box->height};
+  draw_animation_texture(
+      pass, texture, composite->shader, composite->parameters, &local, box, logical_box, composite->expand, geometry,
+      composite->transform, NULL, previous_texture, previous_box, projection, false, false
+  );
+  // 2. Threshold into level 0 (half resolution, margin around).
+  glBindFramebuffer(GL_FRAMEBUFFER, cache->framebuffers[0]);
+  glViewport(0, 0, cache->widths[0], cache->heights[0]);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glUseProgram(renderer->effect_light_program);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, cache->emission_texture);
+  glUniform1i(renderer->effect_light_tex, 0);
+  glUniform1i(renderer->effect_light_emission, true);
+  glUniform1i(renderer->effect_light_source_linear, pass->has_color_transform);
+  glUniform1f(renderer->effect_light_threshold, light->threshold);
+  const float full_w = box->width + 2.0f * margin, full_h = box->height + 2.0f * margin;
+  glUniform4f(
+      renderer->effect_light_source_region, margin / full_w, margin / full_h, box->width / full_w, box->height / full_h
+  );
+  float level_projection[9];
+  matrix_projection(level_projection, cache->widths[0], cache->heights[0], WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  const struct wlr_box level = {.width = cache->widths[0], .height = cache->heights[0]};
+  set_proj_matrix(renderer->effect_light_proj, level_projection, &level);
+  const struct wlr_fbox unit = {.width = 1, .height = 1};
+  set_tex_matrix(renderer->effect_light_tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &unit);
+  glDisable(GL_BLEND);
+  render(&level, NULL, renderer->effect_light_pos);
+  // 3. Kawase down then up.
+  const float offset = (spread_px * 0.5f) / (3 * ((1 << cache->levels) - 1));
+  for (int i = 1; i <= cache->levels; i++) {
+    light_blur(cache, i - 1, i, &renderer->shaders.blur1, offset, true);
+  }
+  for (int i = cache->levels; i > 0; i--) {
+    light_blur(cache, i, i - 1, &renderer->shaders.blur2, offset, false);
+  }
+  glBindTexture(GL_TEXTURE_2D, 0);
+  cache->valid = true;
+  glEnable(GL_BLEND);
+  fx_framebuffer_bind(pass->buffer);
+  glViewport(0, 0, pass->buffer->buffer->width, pass->buffer->buffer->height);
+}
+
+void fx_render_pass_add_effect_light(
+    struct fx_gles_render_pass* pass, struct fx_effect_light_cache* cache, const struct fx_effect_light* light,
+    const struct wlr_box* box, const pixman_region32_t* clip
+) {
+  struct fx_renderer* renderer = pass->buffer->renderer;
+  if (cache == NULL || !cache->valid || cache->renderer != renderer || !ensure_light_program(renderer)) {
+    return;
+  }
+  glUseProgram(renderer->effect_light_program);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, cache->textures[0]);
+  glUniform1i(renderer->effect_light_tex, 0);
+  glUniform1i(renderer->effect_light_emission, false);
+  glUniform1f(renderer->effect_light_gain, light->intensity);
+  glUniform1i(renderer->effect_light_linear, pass->has_color_transform);
+  set_proj_matrix(renderer->effect_light_proj, pass->projection_matrix, box);
+  const struct wlr_fbox uv = {.width = 1, .height = 1};
+  set_tex_matrix(renderer->effect_light_tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
+  glEnable(GL_BLEND);
+  glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_COLOR, GL_ZERO, GL_ONE);
+  render_pass_mark_updated(pass, box, clip);
+  render(box, clip, renderer->effect_light_pos);
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
 
 void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite) {
   struct fx_effect_shader* shader = composite->shader;

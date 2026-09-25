@@ -144,6 +144,7 @@ foreach shader : [
   'box_shadow.frag',
   'common.vert',
   'corner_alpha.frag',
+  'effect_light.frag',
   'gradient.frag',
   'output.frag',
   'quad.frag',
@@ -263,6 +264,7 @@ if build_tests
     'margin-damage',
     'border-geometry',
     'border-geometry-tree',
+    'border-light',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

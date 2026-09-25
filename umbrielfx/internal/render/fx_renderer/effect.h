@@ -53,7 +53,27 @@ struct fx_effect_geometry {
   float radius[4]; // tl, tr, br, bl logical px
 };
 
-struct fx_effect_light_cache;
+#define FX_LIGHT_LEVELS 6
+
+// A border slot's emission and its blur pyramid, rebuilt each time the slot composites.
+struct fx_effect_light_cache {
+  struct fx_renderer* renderer;
+  struct wl_listener renderer_destroy;
+  GLuint emission_texture, emission_framebuffer;
+  int emission_width, emission_height;
+  GLuint textures[FX_LIGHT_LEVELS + 1], framebuffers[FX_LIGHT_LEVELS + 1];
+  int widths[FX_LIGHT_LEVELS + 1], heights[FX_LIGHT_LEVELS + 1], levels;
+  int margin; // buffer px around the emission
+  bool valid, failed;
+};
+
+struct fx_effect_light_cache* fx_effect_light_cache_create(struct fx_renderer* renderer);
+void fx_effect_light_cache_destroy(struct fx_effect_light_cache* cache);
+// Screen-blends the blurred emission over `box` (the proxy's buffer box), clipped.
+void fx_render_pass_add_effect_light(
+    struct fx_gles_render_pass* pass, struct fx_effect_light_cache* cache, const struct fx_effect_light* light,
+    const struct wlr_box* box, const pixman_region32_t* clip
+);
 
 struct fx_effect_composite {
   struct fx_effect_shader* shader;
