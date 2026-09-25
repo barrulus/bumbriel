@@ -333,6 +333,7 @@ static struct scene_animation* effect_over_node(struct wlr_scene_node* node) {
 
 static void scene_buffer_set_buffer(struct wlr_scene_buffer* scene_buffer, struct wlr_buffer* buffer);
 static void scene_buffer_set_texture(struct wlr_scene_buffer* scene_buffer, struct wlr_texture* texture);
+static void scene_effect_damage_margins(struct wlr_scene_node* node);
 
 void wlr_scene_node_destroy(struct wlr_scene_node* node) {
   if (node == NULL) {
@@ -343,6 +344,9 @@ void wlr_scene_node_destroy(struct wlr_scene_node* node) {
   // in case the destroy signal would like to remove children before they
   // are recursively destroyed.
   wl_signal_emit_mutable(&node->events.destroy, NULL);
+  // Effect margins are damaged while the slots still exist: finishing the
+  // addons drops them before the disable damage below.
+  scene_effect_damage_margins(node);
   wlr_addon_set_finish(&node->addons);
 
   wlr_scene_node_set_enabled(node, false);
@@ -749,7 +753,8 @@ struct render_data {
   struct render_list_entry* entries;
   int entry_count;
   bool shadow_capture;
-  // The scene's effect state for this frame, NULL when it has none.
+  // The scene's effect state for this frame, NULL when it has none. Nothing may
+  // add or remove slots while entries render: output_sample listeners run then.
   struct scene_effects* effects;
   bool transient_effects;
   // A persistent effect draws on this output this frame: veto scanout and keep effect buffers.
@@ -1022,8 +1027,15 @@ scene_node_update_iterator(struct wlr_scene_node* node, int lx, int ly, const st
   struct wlr_box box = {.x = lx, .y = ly};
   scene_node_get_size(node, &box.width, &box.height);
 
+  // Occluders never cull a persistent effect's input, which its program may sample anywhere.
+  // A fully covered window with a persistent effect keeps its output membership and frame callbacks.
+  struct scene_animation* animation = NULL;
+  if (data->effects != NULL && data->effects->persistent > 0) {
+    animation = effect_over_node(node);
+  }
+  const bool keep_input = animation != NULL && animation->persistent;
   pixman_region32_subtract(&node->visible, &node->visible, data->update_region);
-  pixman_region32_union(&node->visible, &node->visible, data->visible);
+  pixman_region32_union(&node->visible, &node->visible, keep_input ? data->update_region : data->visible);
   pixman_region32_intersect_rect(&node->visible, &node->visible, lx, ly, box.width, box.height);
 
   if (acc_clip != NULL) {
@@ -1149,6 +1161,26 @@ scene_node_cleanup_when_disabled(struct wlr_scene_node* node, bool xwayland_rest
 #endif
 }
 
+// The largest expand among the enabled descendants of `node`.
+static int scene_subtree_effect_expand(struct wlr_scene_node* node) {
+  if (node->type != WLR_SCENE_NODE_TREE) {
+    return 0;
+  }
+  int expand = 0;
+  struct wlr_scene_node* child;
+  wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+    if (!child->enabled) {
+      continue;
+    }
+    struct scene_animation* animation = scene_animation_get(child);
+    const int own = animation != NULL ? animation_expand(animation) : 0;
+    const int nested = scene_subtree_effect_expand(child);
+    expand = own > expand ? own : expand;
+    expand = nested > expand ? nested : expand;
+  }
+  return expand;
+}
+
 static int scene_node_effect_expand(struct wlr_scene_node* node) {
   int expand = 0;
   for (; node != NULL; node = node->parent != NULL ? &node->parent->node : NULL) {
@@ -1184,6 +1216,16 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
     // disabled.
     if (damage) {
       scene_node_cleanup_when_disabled(node, scene->restack_xwayland_surfaces, &scene->outputs);
+
+      // The node's own, its ancestors', and its descendants' expand margins were drawn too.
+      if (scene_effects_get(scene, false) != NULL) {
+        const int own = scene_node_effect_expand(node);
+        const int nested = scene_subtree_effect_expand(node);
+        const int expand = own > nested ? own : nested;
+        if (expand > 0) {
+          wlr_region_expand(damage, damage, expand);
+        }
+      }
 
       scene_update_region(scene, damage);
       scene_damage_outputs(scene, damage);
@@ -1238,6 +1280,32 @@ static void scene_effect_damage(struct wlr_scene_node* node, int min_expand) {
   }
   scene_damage_outputs(scene_node_get_root(node), &bounds);
   pixman_region32_fini(&bounds);
+}
+
+static void scene_effect_damage_subtree(struct wlr_scene_node* node) {
+  struct scene_animation* animation = scene_animation_get(node);
+  if (animation != NULL) {
+    scene_effect_damage(node, animation_expand(animation));
+  }
+  if (node->type != WLR_SCENE_NODE_TREE) {
+    return;
+  }
+  struct wlr_scene_node* child;
+  wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+    if (child->enabled) {
+      scene_effect_damage_subtree(child);
+    }
+  }
+}
+
+// Damages the drawn bounds and expand margins of every effect on `node` and
+// its enabled descendants. A node that is not drawn has nothing to damage.
+static void scene_effect_damage_margins(struct wlr_scene_node* node) {
+  int x, y;
+  if (scene_effects_get(scene_node_get_root(node), false) == NULL || !wlr_scene_node_coords(node, &x, &y)) {
+    return;
+  }
+  scene_effect_damage_subtree(node);
 }
 
 static bool uniforms_equal(const struct fx_animation_parameters* a, const struct fx_animation_parameters* b) {

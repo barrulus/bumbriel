@@ -621,13 +621,21 @@ bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
   return true;
 }
 
+// Buffer pixels per logical pixel. Summing both sides keeps the ratio when a
+// 90 or 270 degree output swaps the buffer box's width and height.
+static float animation_box_scale(const struct wlr_box* box, const struct wlr_box* logical_box) {
+  const int buffer = box->width + box->height;
+  const int logical = logical_box->width + logical_box->height;
+  return buffer > 0 && logical > 0 ? (float)buffer / logical : 1.0f;
+}
+
 // Grows the node boxes by `expand` logical pixels on every side. The buffer box
 // scales by the box's own scale so a fractional output keeps whole pixels.
 static void expand_animation_boxes(struct wlr_box* box, struct wlr_box* logical_box, int expand) {
   if (expand <= 0) {
     return;
   }
-  const float scale = logical_box->width > 0 ? (float)box->width / logical_box->width : 1.0f;
+  const float scale = animation_box_scale(box, logical_box);
   const int buffer_expand = (int)ceilf(expand * scale);
   box->x -= buffer_expand;
   box->y -= buffer_expand;
@@ -664,9 +672,7 @@ static void draw_animation_texture(
       shader->expand, logical_box->width > 0 ? (float)expand / logical_box->width : 0.0f,
       logical_box->height > 0 ? (float)expand / logical_box->height : 0.0f
   );
-  glUniform1f(
-      shader->scale, box->width > 0 && logical_box->width > 0 ? (float)box->width / logical_box->width : 1.0f
-  );
+  glUniform1f(shader->scale, animation_box_scale(box, logical_box));
   glUniform4fv(shader->random_seed, 1, parameters->random_seed);
   const struct wlr_fbox unit = {.width = 1, .height = 1};
   float uv_matrix[9], inverse[9], sample_matrix[9];

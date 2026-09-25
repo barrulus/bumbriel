@@ -63,7 +63,8 @@ is destroyed.
   scene-wide policy: no scanout, no opaque culling, whole-output damage while
   one runs. Persistent (window, overlay, border) slots exempt only their own
   subtree from culling, damage only their drawn bounds, and veto scanout only
-  on outputs where they draw. `tests/effects.c` covers the split.
+  on outputs where they draw. `tests/effects.c` covers culling and damage
+  isolation.
 
 ## License
 

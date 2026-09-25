@@ -16,7 +16,7 @@ struct fx_effect_shader;
 
 // Composition slots. Descendants compose before ancestors; on one node the
 // slots compose in ascending order. Slots 0..2 are persistent effects and
-// never count as running animations; 0..1 render in place.
+// never count as running animations.
 #define FX_ANIMATION_SLOTS 13
 #define FX_ANIMATION_DEPTH 24
 #define FX_SLOT_WINDOW 0
@@ -103,7 +103,7 @@ struct fx_animation_parameters {
   int expand;
   unsigned uniform_count;
   struct fx_uniform uniforms[FX_UNIFORMS_MAX];
-  // FX_SLOT_BORDER_EFFECT only: emission of the slot's result.
+  // Emission settings for FX_SLOT_BORDER_EFFECT.
   struct fx_effect_light light;
 };
 

@@ -9,7 +9,7 @@
 #include "render/fx_renderer/fx_renderer.h"
 #include "render/fx_renderer/shaders.h"
 
-// Shared by every kind. Names are the documented contract; keep in step with docs/user/effects.md.
+// Shared by every kind. Its names are the shared preamble contract.
 static const char kPreamble[] =
     "precision highp float;\n"
     "varying vec2 v_texcoord;\n"
@@ -190,14 +190,15 @@ void fx_effect_shader_unref(struct fx_effect_shader* shader) {
 
 // Enumerates the linked program's active uniforms once. Array names come back
 // as "name[0]"; the cache stores the bare name so lookups match the config.
-static void cache_uniforms(struct fx_effect_shader* shader) {
+static void cache_uniforms(struct fx_effect_shader* shader, const char* label) {
   GLint active = 0;
   glGetProgramiv(shader->program, GL_ACTIVE_UNIFORMS, &active);
   // glGetActiveUniform truncates a name into the buffer and reports the
   // truncated length, never bufSize or more, so a name that does not fit the
   // cache entry must be measured in a larger scratch buffer first.
   char scratch[256];
-  for (GLint i = 0; i < active && shader->uniform_count < FX_EFFECT_UNIFORM_CACHE; i++) {
+  GLint i = 0;
+  for (; i < active && shader->uniform_count < FX_EFFECT_UNIFORM_CACHE; i++) {
     struct fx_effect_uniform* uniform = &shader->uniforms[shader->uniform_count];
     GLsizei length = 0;
     GLint size = 0;
@@ -221,6 +222,12 @@ static void cache_uniforms(struct fx_effect_shader* shader) {
       continue;
     }
     shader->uniform_count++;
+  }
+  if (i < active) {
+    wlr_log(
+        WLR_ERROR, "Effect shader '%s' has more than %d active uniforms; %d are not cached and cannot be set", label,
+        FX_EFFECT_UNIFORM_CACHE, (int)(active - i)
+    );
   }
 }
 
@@ -261,10 +268,20 @@ void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct
     return;
   }
   const GLsizei count = (GLsizei)uniform->count;
-  if (cached->type != gl_type(uniform->type) || count == 0 || uniform->count > (unsigned)cached->size) {
+  const bool integer = uniform->type == FX_UNIFORM_INT || uniform->type == FX_UNIFORM_BOOL;
+  // count is bounded by the entry's own arrays as well as by the declaration.
+  const unsigned capacity = integer ? sizeof(uniform->ints) / sizeof(uniform->ints[0])
+                                    : FX_UNIFORM_FLOATS_MAX / fx_uniform_components(uniform->type);
+  if (cached->type != gl_type(uniform->type)
+      || count == 0
+      || uniform->count > (unsigned)cached->size
+      || uniform->count > capacity) {
     if (!cached->warned) {
       cached->warned = true;
-      wlr_log(WLR_ERROR, "Effect uniform '%s' does not match the program's declaration; ignoring it", uniform->name);
+      wlr_log(
+          WLR_ERROR, "Effect uniform '%s' does not match the program's declaration or its own storage; ignoring it",
+          uniform->name
+      );
     }
     return;
   }
@@ -363,7 +380,7 @@ fx_effect_shader_create(struct wlr_renderer* renderer, enum fx_effect_kind kind,
   shader->size = glGetUniformLocation(shader->program, "umbriel_size");
   shader->scale = glGetUniformLocation(shader->program, "umbriel_scale");
   shader->expand = glGetUniformLocation(shader->program, "umbriel_expand");
-  cache_uniforms(shader);
+  cache_uniforms(shader, label);
   wlr_egl_restore_context(&previous);
   return shader;
 }
