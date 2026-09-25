@@ -5,6 +5,7 @@
 #include "config/value_parse.h"
 #include "core/animation.h"
 #include "layout/layout.h"
+#include "scene/animation_shader.h"
 
 #include <array>
 #include <cstddef>
@@ -666,6 +667,41 @@ namespace umbriel {
         bool physics = false;
         bool operator==(const WindowsDrag&) const = default;
       } windowsDrag;
+
+      // The preset an event names through `effect =` and whether the event is enabled. `effect` is null for slots
+      // without a config event.
+      struct EventEffect {
+        const std::string* effect = nullptr;
+        bool enabled = false;
+      };
+      [[nodiscard]] EventEffect eventEffect(AnimationEvent event) const {
+        switch (event) {
+        case AnimationEvent::WindowsIn:
+          return {&windowsIn.effect, windowsIn.enabled};
+        case AnimationEvent::WindowsOut:
+          return {&windowsOut.effect, windowsOut.enabled};
+        case AnimationEvent::WindowsMove:
+          return {&windowsMove.effect, windowsMove.enabled};
+        case AnimationEvent::Workspaces:
+          return {&workspaces.effect, workspaces.enabled};
+        case AnimationEvent::Overview:
+          return {&overview.effect, overview.enabled};
+        case AnimationEvent::Scratchpad:
+          return {&scratchpad.effect, scratchpad.enabled};
+        case AnimationEvent::Border:
+          return {&border.effect, border.enabled};
+        case AnimationEvent::DimUnfocused:
+          return {&dimUnfocused.effect, dimUnfocused.enabled};
+        case AnimationEvent::Layers:
+          return {&layers.effect, layers.enabled};
+        case AnimationEvent::Window:
+        case AnimationEvent::Overlay:
+        case AnimationEvent::BorderEffect:
+        case AnimationEvent::Drag:
+          return {};
+        }
+        return {};
+      }
 
       bool operator==(const Animation&) const = default;
     } animation;

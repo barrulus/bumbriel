@@ -713,6 +713,19 @@ UMBRIEL_TEST(tearingPolicyDoesNotReapplyOutputStateOrInvalidateOverview) {
   CHECK(unrelatedEffects.viewChrome);
 }
 
+UMBRIEL_TEST(animationEventEffectsRaiseEffects) {
+  const Config before;
+  Config opening = before;
+  opening.animation.windowsIn.effect = "fade";
+  CHECK(ConfigEffects::between(before, opening).effects);
+  Config overview = before;
+  overview.animation.overview.effect = "zoom";
+  CHECK(ConfigEffects::between(before, overview).effects);
+  Config slower = before;
+  slower.animation.overview.durationMs = 400;
+  CHECK(!ConfigEffects::between(before, slower).effects);
+}
+
 UMBRIEL_TEST(directScanoutPolicyForcesOnlyItsRuntimeEffect) {
   Config before;
   OutputRule output;

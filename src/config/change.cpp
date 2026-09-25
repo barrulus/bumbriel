@@ -67,16 +67,15 @@ namespace umbriel {
     }
 
     bool sameAnimationEffects(const Config::Animation& before, const Config::Animation& after) {
-      return before.windowsIn.effect == after.windowsIn.effect
-          && before.windowsOut.effect == after.windowsOut.effect
-          && before.windowsMove.effect == after.windowsMove.effect
-          && before.workspaces.effect == after.workspaces.effect
-          && before.overview.effect == after.overview.effect
-          && before.scratchpad.effect == after.scratchpad.effect
-          && before.border.effect == after.border.effect
-          && before.dimUnfocused.effect == after.dimUnfocused.effect
-          && before.layers.effect == after.layers.effect
-          && before.windowsDrag == after.windowsDrag;
+      // Overview is the last event.
+      for (unsigned slot = 0; slot <= static_cast<unsigned>(AnimationEvent::Overview); ++slot) {
+        const auto event = static_cast<AnimationEvent>(slot);
+        const std::string* lhs = before.eventEffect(event).effect;
+        if (lhs != nullptr && *lhs != *after.eventEffect(event).effect) {
+          return false;
+        }
+      }
+      return before.windowsDrag == after.windowsDrag;
     }
 
     bool sameOutputDirectScanoutPolicy(const OutputRule* before, const OutputRule* after) {

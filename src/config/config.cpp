@@ -1060,6 +1060,21 @@ namespace umbriel {
       return std::make_pair(std::move(value), node->source());
     }
 
+    void addEffectReference(
+        std::vector<EffectReference>& references, std::string context,
+        const std::pair<std::string, toml::source_region>& selector, EffectKind kind, bool allowOff,
+        std::function<void()> clear
+    ) {
+      references.push_back({
+          .context = std::move(context),
+          .name = selector.first,
+          .kind = kind,
+          .allowOff = allowOff,
+          .source = selector.second,
+          .clear = std::move(clear),
+      });
+    }
+
     // Reads a string selector into `target` and records it for validation.
     void readEffectSelector(
         Section& keys, std::string_view key, std::string_view context, EffectKind kind, bool allowOff,
@@ -1070,14 +1085,7 @@ namespace umbriel {
         return;
       }
       target = selector->first;
-      references.push_back({
-          .context = std::string(context),
-          .name = selector->first,
-          .kind = kind,
-          .allowOff = allowOff,
-          .source = selector->second,
-          .clear = [&target] { target.clear(); },
-      });
+      addEffectReference(references, std::string(context), *selector, kind, allowOff, [&target] { target.clear(); });
     }
 
     void readEffects(Section& root, Config& loaded, std::vector<EffectReference>& references) {
@@ -1171,13 +1179,8 @@ namespace umbriel {
           loaded.effects.presets.push_back(std::move(preset));
           if (overlay) {
             const size_t index = loaded.effects.presets.size() - 1;
-            references.push_back({
-                .context = context + ".overlay",
-                .name = overlay->first,
-                .kind = EffectKind::Window,
-                .allowOff = false,
-                .source = overlay->second,
-                .clear = [&loaded, index] { loaded.effects.presets[index].overlay.clear(); },
+            addEffectReference(references, context + ".overlay", *overlay, EffectKind::Window, false, [&loaded, index] {
+              loaded.effects.presets[index].overlay.clear();
             });
           }
         }
@@ -2063,18 +2066,14 @@ namespace umbriel {
 
         loaded.outputs.push_back(std::move(rule));
         if (screenEffect) {
-          references.push_back({
-              .context = "output." + name + ".screen_effect",
-              .name = screenEffect->first,
-              .kind = EffectKind::Screen,
-              .allowOff = true,
-              .source = screenEffect->second,
-              .clear = [&loaded, name] {
+          addEffectReference(
+              references, "output." + name + ".screen_effect", *screenEffect, EffectKind::Screen, true,
+              [&loaded, name] {
                 if (OutputRule* rule = findOutputRuleMutable(loaded, name)) {
                   rule->screenEffect.reset();
                 }
-              },
-          });
+              }
+          );
         }
       }
     }
@@ -2524,24 +2523,16 @@ namespace umbriel {
           loaded.windowRules.push_back(std::move(rule));
           const size_t index = loaded.windowRules.size() - 1;
           if (borderEffect) {
-            references.push_back({
-                .context = "window_rule.border_effect",
-                .name = borderEffect->first,
-                .kind = EffectKind::Border,
-                .allowOff = true,
-                .source = borderEffect->second,
-                .clear = [&loaded, index] { loaded.windowRules[index].borderEffect.reset(); },
-            });
+            addEffectReference(
+                references, "window_rule.border_effect", *borderEffect, EffectKind::Border, true,
+                [&loaded, index] { loaded.windowRules[index].borderEffect.reset(); }
+            );
           }
           if (windowEffect) {
-            references.push_back({
-                .context = "window_rule.window_effect",
-                .name = windowEffect->first,
-                .kind = EffectKind::Window,
-                .allowOff = true,
-                .source = windowEffect->second,
-                .clear = [&loaded, index] { loaded.windowRules[index].windowEffect.reset(); },
-            });
+            addEffectReference(
+                references, "window_rule.window_effect", *windowEffect, EffectKind::Window, true,
+                [&loaded, index] { loaded.windowRules[index].windowEffect.reset(); }
+            );
           }
         }
       }

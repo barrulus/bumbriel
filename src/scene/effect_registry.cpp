@@ -21,40 +21,6 @@ namespace umbriel {
     return umbriel_sample(uv) * alpha;
 })";
 
-    // The config event an animation slot binds through `effect =`, or null for slots without one.
-    struct EventBinding {
-      const std::string* effect = nullptr;
-      bool enabled = false;
-    };
-    EventBinding eventBinding(const Config::Animation& settings, AnimationEvent event) {
-      switch (event) {
-      case AnimationEvent::DimUnfocused:
-        return {&settings.dimUnfocused.effect, settings.dimUnfocused.enabled};
-      case AnimationEvent::Border:
-        return {&settings.border.effect, settings.border.enabled};
-      case AnimationEvent::WindowsMove:
-        return {&settings.windowsMove.effect, settings.windowsMove.enabled};
-      case AnimationEvent::WindowsIn:
-        return {&settings.windowsIn.effect, settings.windowsIn.enabled};
-      case AnimationEvent::WindowsOut:
-        return {&settings.windowsOut.effect, settings.windowsOut.enabled};
-      case AnimationEvent::Scratchpad:
-        return {&settings.scratchpad.effect, settings.scratchpad.enabled};
-      case AnimationEvent::Layers:
-        return {&settings.layers.effect, settings.layers.enabled};
-      case AnimationEvent::Workspaces:
-        return {&settings.workspaces.effect, settings.workspaces.enabled};
-      case AnimationEvent::Overview:
-        return {&settings.overview.effect, settings.overview.enabled};
-      case AnimationEvent::Window:
-      case AnimationEvent::Overlay:
-      case AnimationEvent::BorderEffect:
-      case AnimationEvent::Drag:
-        return {};
-      }
-      return {};
-    }
-
     // Slide keeps per-buffer alpha: its opacity curve differs from the lifecycle progress.
     bool builtinFadeApplies(const Config::Animation& settings, AnimationEvent event) {
       return settings.enabled
@@ -117,7 +83,7 @@ namespace umbriel {
       add(rule.screenEffect.value_or(""));
     }
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; ++slot) {
-      const EventBinding binding = eventBinding(settings.animation, static_cast<AnimationEvent>(slot));
+      const auto binding = settings.animation.eventEffect(static_cast<AnimationEvent>(slot));
       if (binding.effect != nullptr && settings.animation.enabled && binding.enabled) {
         add(*binding.effect);
       }
@@ -195,7 +161,7 @@ namespace umbriel {
 
   fx_effect_shader* EffectRegistry::animationShader(AnimationEvent event) const {
     const Config::Animation& settings = config().animation;
-    const EventBinding binding = eventBinding(settings, event);
+    const auto binding = settings.eventEffect(event);
     if (binding.effect == nullptr || !settings.enabled || !binding.enabled || binding.effect->empty()) {
       return nullptr;
     }
