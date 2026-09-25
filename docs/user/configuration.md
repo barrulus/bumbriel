@@ -72,8 +72,9 @@ Included files are applied in list order. The including file is applied last:
 - Plain arrays and scalar values are replaced by the last file that sets them.
 - Setting a rule list to `[]` discards entries collected earlier.
 
-Every file must contain valid TOML. Duplicate device or workspace selectors are
-still errors when they come from different files.
+Every file must contain valid TOML. Duplicate device or workspace selectors, and
+effect presets defined in two files, are still errors when they come from
+different files.
 
 If any included file defines `[drm]`, also declare `[drm]` in the main file.
 This prevents an incomplete GPU exclusion policy from loading when an include

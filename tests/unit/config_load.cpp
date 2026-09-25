@@ -3456,4 +3456,28 @@ UMBRIEL_TEST(duplicateOutputSectionDoesNotCorruptASurvivingScreenEffectReference
   CHECK(!containsDiagnostic(store, "screen_effect (unknown effect 'nope')"));
 }
 
+UMBRIEL_TEST(duplicateEffectPresetsAcrossIncludesAreRejected) {
+  const TempConfigTree tree;
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("theme.toml", "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\n");
+  tree.write("config.toml", "[include]\nfiles = [\"theme.toml\"]\n[effects]\nborder = \"ring\"\n");
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const uint64_t generation = store.generation();
+  const umbriel::Config previous = store.config();
+
+  tree.write(
+      "config.toml",
+      "[include]\nfiles = [\"theme.toml\"]\n[effects]\nborder = \"ring\"\n"
+      "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\npadding = 4\n"
+  );
+  const auto duplicate = store.reload();
+  CHECK(!duplicate.success);
+  CHECK(containsDiagnostic(store, "effects.preset.ring is also defined in"));
+  CHECK(containsDiagnostic(store, "theme.toml"));
+  CHECK(store.config() == previous);
+  CHECK_EQ(store.generation(), generation);
+}
+
 int main() { return RUN_TESTS(); }

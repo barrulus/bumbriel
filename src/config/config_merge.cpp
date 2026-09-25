@@ -276,6 +276,30 @@ namespace umbriel::configmerge {
     toml::table
     loadAndExpand(const std::filesystem::path& path, std::set<std::filesystem::path>& visited, MergeResult& result);
 
+    // A preset defined in two files would merge key by key into one table. Refuse it, naming both files, before
+    // deepMerge can hide the second definition. Called after a file's includes are expanded, so the included files'
+    // presets claim the name first and the error names the earlier file.
+    void recordPresetOrigins(const std::filesystem::path& path, const toml::table& parsed, MergeResult& result) {
+      const auto* effects = parsed.get_as<toml::table>("effects");
+      if (effects == nullptr) {
+        return;
+      }
+      const auto* presets = effects->get_as<toml::table>("preset");
+      if (presets == nullptr) {
+        return;
+      }
+      for (const auto& [key, value] : *presets) {
+        const std::string name(key.str());
+        const auto [origin, inserted] = result.presetFiles.try_emplace(name, path.string());
+        if (!inserted) {
+          emit(
+              result, ConfigDiagnostic::Severity::Error, &key.source(),
+              std::format("effects.preset.{} is also defined in {}", name, origin->second)
+          );
+        }
+      }
+    }
+
     toml::table expandFile(
         const std::filesystem::path& path, toml::table parsed, std::set<std::filesystem::path>& visited,
         MergeResult& result
@@ -295,6 +319,7 @@ namespace umbriel::configmerge {
       parsed.erase("include");
 
       if (directive.files.empty() && directive.optionalFiles.empty()) {
+        recordPresetOrigins(path, parsed, result);
         // No includes: return parsed directly, preserving toml++ source regions
         // (copies lose them; only moves keep line/column/path).
         return parsed;
@@ -336,6 +361,7 @@ namespace umbriel::configmerge {
       };
       mergeEntries(directive.files, false);
       mergeEntries(directive.optionalFiles, true);
+      recordPresetOrigins(path, parsed, result);
       deepMerge(base, std::move(parsed));
       return base;
     }
