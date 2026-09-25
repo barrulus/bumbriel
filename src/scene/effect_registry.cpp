@@ -11,6 +11,8 @@ extern "C" {
 
 namespace umbriel {
   namespace {
+    // Event loops here and in change.cpp end at Overview; the slot table must agree.
+    static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
     constexpr Logger kLog("effects");
     EffectRegistry* s_registry = nullptr;
 
