@@ -189,7 +189,9 @@ Two small registry additions (`src/scene/effect_registry.h/.cpp`) that the adapt
     return binding.effect != nullptr && !binding.effect->empty() ? findEffectPreset(config().effects, *binding.effect) : nullptr;
   }
 
-  float EffectRegistry::clockSeconds() const { return static_cast<float>(m_server->animationClockMsec()) / 1000.0F; }
+  float EffectRegistry::clockSeconds() const {
+    return static_cast<float>(static_cast<double>(m_server->animationClockMsec() - m_clockEpochMsec) / 1000.0);
+  }
 ```
 The clock is read only inside `if (shader != nullptr)` with a preset bound, so a configuration without presets never reads it here (spec §5).
 
@@ -249,7 +251,7 @@ shader = "shader.glsl"
 ```meson
 # Bundled effect presets: each directory holds the preset's shader and an
 # effect.toml that defines it without selecting it. Users include the TOML and
-# select the name. Kept as data, not embedded: they are examples to copy.
+# select the name.
 foreach effect : ['animation/reveal', 'animation/squash']
   install_data(
     'examples/effects' / effect / 'shader.glsl',
@@ -355,7 +357,7 @@ Expected: every check passes. Investigate any failure by reading `$UMBRIEL_LOG` 
 
 - [ ] **Step 4: Confirm nothing references the old key or path**
 
-Run: `grep -rn 'shader = ' tests/harness/checks | grep -v 'effects.preset' ; grep -rn 'examples/shaders' tests docs examples meson.build src`
+Run a section-aware scan: every `shader =` line in `tests/harness/checks/*.sh` must have `[effects.preset.<name>]` as its nearest preceding table header (a small awk over each file); then `grep -rn 'examples/shaders' tests docs examples meson.build src`
 Expected: no output from the first (every `shader =` now sits under a preset); the second lists only `docs/user/animation.md` (rewritten in Stage 8).
 
 - [ ] **Step 5: Commit**
@@ -387,7 +389,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 duration_ms = 2000
 curve = "linear"
 [animation.windows_in]
-style = "none"
+style = "fade"
 [effects.preset.rebind]
 kind = "animation"
 shader = "rebind.glsl"
