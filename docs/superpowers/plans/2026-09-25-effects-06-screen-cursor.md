@@ -248,7 +248,7 @@ Output effects join Stage 1's sampling-aware invalidation. A screen program may 
         }
       }
 ```
-and drop the early `effects->persistent == 0` return in favour of `if ((effects == NULL || effects->persistent == 0) && scene_output_effects_get(scene_output, false) == NULL) return false;`. Factor the cursor square computation out of `render_output_effects` into `output_effects_cursor_box(effects, data, box)` (logical box, then `transform_output_box`) so both callers share it.
+The function's actual Stage 1 signature is `expand_damage_to_effects(struct wlr_scene_output* scene_output, struct scene_effects* effects, const struct render_data* data, pixman_region32_t* damage, bool commit)` with `effects` possibly NULL. Replace its early return with `if ((effects == NULL || effects->persistent == 0) && output_effects == NULL) return false;` (look `output_effects` up once at the top of the function) and guard the animation loop with `if (effects != NULL)` so a NULL `effects` never reaches `wl_list_for_each(..., &effects->animations, ...)`. Factor the cursor square computation out of `render_output_effects` into `output_effects_cursor_box(effects, data, box)` (logical box, then `transform_output_box`) so both callers share it.
 
 `build_state`:
 - `persistent_visible` becomes `render_data.persistent_visible = <node scan> || output_effects_active(output_effects);` (move the `output_effects` lookup above the scan).
