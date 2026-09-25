@@ -2722,6 +2722,9 @@ UMBRIEL_TEST(animationEffectsResolveIncludedPresetsAcrossAllEventsAndTrackConten
   CHECK(store.reload().success);
   CHECK(std::ranges::find(store.watchPaths(), tree.path("theme/effect.glsl")) == store.watchPaths().end());
   CHECK(store.config().animation.layers.effect.empty());
+  CHECK_EQ(store.config().animation.windowsIn.effect, std::string("reveal"));
+  reveal = umbriel::findEffectPreset(store.config().effects, "reveal");
+  CHECK(reveal != nullptr && reveal->shader.code == "replacement shader");
 }
 
 UMBRIEL_TEST(removedAnimationShaderKeyIsUnknown) {
