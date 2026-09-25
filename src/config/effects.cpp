@@ -134,6 +134,14 @@ namespace umbriel {
     return "effect";
   }
 
+  namespace {
+    // "a border preset", "an animation preset".
+    std::string presetPhrase(EffectKind kind) {
+      const std::string_view name = effectKindName(kind);
+      return std::format("{} {} preset", std::string_view("aeiou").contains(name.front()) ? "an" : "a", name);
+    }
+  } // namespace
+
   const EffectPreset* findEffectPreset(const Effects& effects, std::string_view name) {
     const auto preset = std::ranges::find(effects.presets, name, &EffectPreset::name);
     return preset != effects.presets.end() ? &*preset : nullptr;
@@ -149,9 +157,7 @@ namespace umbriel {
       return std::format("unknown effect '{}'", name);
     }
     if (preset->kind != kind) {
-      return std::format(
-          "effect '{}' is a {} preset, not a {} preset", name, effectKindName(preset->kind), effectKindName(kind)
-      );
+      return std::format("effect '{}' is {}, not {}", name, presetPhrase(preset->kind), presetPhrase(kind));
     }
     return std::nullopt;
   }

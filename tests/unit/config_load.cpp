@@ -3343,7 +3343,7 @@ UMBRIEL_TEST(effectReferencesAreValidatedAfterEverySectionIsRead) {
   ));
   CHECK(config.animation.windowsOut.effect.empty());
   CHECK(containsDiagnostic(
-      store, "ignoring animation.windows_out.effect (effect 'ring' is a border preset, not a animation preset)"
+      store, "ignoring animation.windows_out.effect (effect 'ring' is a border preset, not an animation preset)"
   ));
   const umbriel::EffectPreset* ring = umbriel::findEffectPreset(config.effects, "ring");
   CHECK(ring != nullptr && ring->overlay.empty());

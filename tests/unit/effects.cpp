@@ -39,6 +39,16 @@ UMBRIEL_TEST(effectReferencesRequireAnExistingPresetOfTheRightKind) {
       std::string("effect 'pulse' is a border preset, not a window preset")
   );
   CHECK_EQ(
+      umbriel::effectReferenceError(effects, "pulse", EffectKind::Animation, false).value_or(""),
+      std::string("effect 'pulse' is a border preset, not an animation preset")
+  );
+  Effects fades;
+  fades.presets.push_back(EffectPreset{.name = "fade", .kind = EffectKind::Animation, .shader = {.code = "z"}});
+  CHECK_EQ(
+      umbriel::effectReferenceError(fades, "fade", EffectKind::Border, false).value_or(""),
+      std::string("effect 'fade' is an animation preset, not a border preset")
+  );
+  CHECK_EQ(
       umbriel::effectReferenceError(effects, "missing", EffectKind::Window, false).value_or(""),
       std::string("unknown effect 'missing'")
   );
