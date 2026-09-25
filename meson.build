@@ -712,7 +712,7 @@ install_data(
 )
 # Bundled effect presets: each directory holds the preset's shader and an
 # effect.toml that defines it without selecting it. Users include the TOML and
-# select the name. Kept as data, not embedded: they are examples to copy.
+# select the name.
 foreach effect : ['animation/reveal', 'animation/squash']
   install_data(
     'examples/effects' / effect / 'shader.glsl',

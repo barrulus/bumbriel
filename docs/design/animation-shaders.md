@@ -13,14 +13,18 @@ equality, and blank/NUL text, nonregular files, and inputs larger than 256 KiB a
 Nonblocking opens prevent FIFOs hanging config reload.
 
 `EffectRegistry` (`src/scene/effect_registry.cpp`) caches one program per referenced preset, kind, exact
-source, and renderer. Startup and animation config reload prepare programs before rendering. Failures
-are cached too, avoiding per-frame compiler retries. UmbrielFX supplies a GLSL
+source, and renderer. Startup and any reload that changes `[animation]` or `[effects]` prepare programs
+before rendering. A reload while a transition is running keeps that transition's program but rebinds
+its uniforms from the new configuration, so a program reading `umbriel_time` or the palette can see
+them reset for the rest of that transition. Failures are cached too, avoiding per-frame compiler
+retries. UmbrielFX supplies a GLSL
 ES 1.00 wrapper around `vec4 animation(vec2 uv)`, normalized target sampling,
 target-local previous-result sampling, a stable four-channel random seed,
 logical target size, eased and linear progress, and transition direction.
-Compiler diagnostics retain source line numbers and the file/event label.
+Compiler diagnostics retain source line numbers and the label: the shader file path, or
+`effects.preset.<name>` when the preset has no file.
 
-Without a custom shader, `windows_in` and `windows_out` bind a built-in fade
+Without an effect, `windows_in` and `windows_out` bind a built-in fade
 program through `lifecycleShader`, except for the `slide` style, whose opacity
 curve differs from its progress. The window, its subsurfaces, and its border
 are composited once and faded as a group, so overlapping surfaces never show
@@ -33,7 +37,7 @@ start from a partial alpha that normalized progress does not carry.
 ## Scene processing
 
 Effect state is attached through scene-node addons, preserving the scene ABI.
-Nine ordered slots permit simultaneous effects on a node. Descendant effects
+13 ordered slots permit simultaneous effects on a node. Descendant effects
 run before ancestor effects; same-node order is dimming, border, movement,
 opening, closing, scratchpad, layers, workspaces, then overview.
 
@@ -238,7 +242,7 @@ sandbox shader execution or prevent an expensive shader from stalling a driver.
 
 ## Regression coverage
 
-`tests/unit/animation_shader.cpp` exercises source validation and file reads.
+`tests/unit/shader_source.cpp` exercises source validation and file reads.
 `tests/unit/config_load.cpp` covers all event sections, included-file provenance,
 source-content reload effects, dependency deduplication, and dependency removal.
 `tests/unit/animation.cpp` verifies that tiled geometry preserves safe curves and
