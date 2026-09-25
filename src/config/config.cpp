@@ -2073,8 +2073,7 @@ namespace umbriel {
               .kind = EffectKind::Screen,
               .allowOff = true,
               .source = screenEffect->second,
-              // Resolved by name rather than a captured index: a later duplicate output section can erase and
-              // reinsert rules, shifting indices.
+              // A later duplicate output section erases and reinserts rules, so indices do not survive.
               .clear = [&loaded, name] {
                 if (OutputRule* rule = findOutputRuleMutable(loaded, name)) {
                   rule->screenEffect.reset();
