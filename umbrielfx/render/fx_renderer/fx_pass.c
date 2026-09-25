@@ -1,6 +1,7 @@
 #include "render/color.h"
 #include "render/egl.h"
 #include "render/fx_renderer/animation_history.h"
+#include "render/fx_renderer/effect.h"
 #include "render/fx_renderer/fx_renderer.h"
 #include "render/fx_renderer/shaders.h"
 #include "render/pass.h"
@@ -629,6 +630,7 @@ static void draw_animation_texture(
 ) {
   struct fx_texture* texture = fx_get_texture(wlr_texture);
   glUseProgram(shader->program);
+  fx_effect_shader_bind_parameters(shader, parameters);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture->tex);
   const GLint filter =
@@ -640,6 +642,9 @@ static void draw_animation_texture(
   glUniform1f(shader->linear_progress, parameters->linear_progress);
   glUniform1f(shader->direction, parameters->direction);
   glUniform2f(shader->size, logical_box->width, logical_box->height);
+  glUniform1f(
+      shader->scale, box->width > 0 && logical_box->width > 0 ? (float)box->width / logical_box->width : 1.0f
+  );
   glUniform4fv(shader->random_seed, 1, parameters->random_seed);
   const struct wlr_fbox unit = {.width = 1, .height = 1};
   float uv_matrix[9], inverse[9], sample_matrix[9];
@@ -834,8 +839,9 @@ fallback:
 void fx_render_pass_end_animation(
     struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
-    enum wl_output_transform transform, const pixman_region32_t* clip
+    enum wl_output_transform transform, const pixman_region32_t* clip, int expand
 ) {
+  (void)expand;
   fx_render_pass_end_animation_with_history(
       pass, shader, parameters, box, logical_box, transform, clip, clip, NULL, NULL, false
   );
