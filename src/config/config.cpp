@@ -1867,8 +1867,6 @@ namespace umbriel {
       });
     }
 
-    // Finds the surviving output rule by name (case-insensitively), for a `clear` that must not depend on a vector
-    // index a later duplicate-output erase can shift.
     OutputRule* findOutputRuleMutable(Config& loaded, const std::string& name) {
       const auto it = std::ranges::find_if(loaded.outputs, [&](const OutputRule& rule) {
         return outputNamesEqual(rule.name, name);
@@ -1900,9 +1898,7 @@ namespace umbriel {
               return outputNamesEqual(rule.name, name);
             })) {
           warnAt(key.source(), "duplicate output section '{}'", name);
-          // The whole section is superseded, so drop any effect reference recorded for the discarded rule(s): it
-          // would otherwise be validated against a setting that no longer applies, or worse, land on whatever rule a
-          // later push shifts into the erased slot.
+          // Drop the discarded section's references so they cannot clear the surviving rule's value by name.
           std::erase_if(references, [&](const EffectReference& reference) {
             return std::ranges::any_of(loaded.outputs, [&](const OutputRule& rule) {
               return outputNamesEqual(rule.name, name) && reference.context == "output." + rule.name + ".screen_effect";
@@ -2073,7 +2069,6 @@ namespace umbriel {
               .kind = EffectKind::Screen,
               .allowOff = true,
               .source = screenEffect->second,
-              // A later duplicate output section erases and reinserts rules, so indices do not survive.
               .clear = [&loaded, name] {
                 if (OutputRule* rule = findOutputRuleMutable(loaded, name)) {
                   rule->screenEffect.reset();

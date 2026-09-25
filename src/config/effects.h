@@ -2,7 +2,6 @@
 
 #include "config/config_diag.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
