@@ -220,6 +220,7 @@ namespace umbriel {
     bool directScanout = true;
     HdrMode hdr = HdrMode::Off;
     float sdrWhite = 203.0F;
+    std::optional<std::string> screenEffect; // "off" disables the default
     // Explicit workspace inventory. A count creates anonymous positional
     // members, while a string list creates named members. Omitted is dynamic.
     using WorkspaceInventory = std::variant<size_t, std::vector<std::string>>;
@@ -346,6 +347,9 @@ namespace umbriel {
     std::optional<int> outerBorderWidth;
     std::optional<int> cornerRadius;
     std::optional<bool> shadow;
+    // Override [effects] border and window for windows this rule matches; "off" disables the default.
+    std::optional<std::string> borderEffect;
+    std::optional<std::string> windowEffect;
 
     // The compiled regexes are derived from the app ID, title, and XDG tag patterns and
     // are not comparable, so equality is decided by the patterns themselves.
@@ -393,7 +397,9 @@ namespace umbriel {
           && borderWidth == other.borderWidth
           && outerBorderWidth == other.outerBorderWidth
           && cornerRadius == other.cornerRadius
-          && shadow == other.shadow;
+          && shadow == other.shadow
+          && borderEffect == other.borderEffect
+          && windowEffect == other.windowEffect;
     }
   };
 
@@ -433,6 +439,8 @@ namespace umbriel {
     std::optional<int> outerBorderWidth;
     std::optional<int> cornerRadius;
     std::optional<bool> shadow;
+    std::optional<std::string> borderEffect;
+    std::optional<std::string> windowEffect;
     bool operator==(const ResolvedWindowRule&) const = default;
   };
 
@@ -559,6 +567,7 @@ namespace umbriel {
 
       struct WindowsIn {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         // Springs derive their own length; duration_ms stays at the shared value for a duration-based curve.
         int durationMs = 250;
@@ -570,6 +579,7 @@ namespace umbriel {
 
       struct WindowsOut {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 1400.0}};
@@ -580,6 +590,7 @@ namespace umbriel {
 
       struct WindowsMove {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 900.0}};
@@ -588,6 +599,7 @@ namespace umbriel {
 
       struct Workspaces {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 800.0}};
@@ -596,6 +608,7 @@ namespace umbriel {
 
       struct Overview {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 800.0}};
@@ -608,6 +621,7 @@ namespace umbriel {
 
       struct Scratchpad {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 800.0}};
@@ -621,6 +635,7 @@ namespace umbriel {
 
       struct Border {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = true;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::Spring, .spring = {.damping = 1.0, .stiffness = 900.0}};
@@ -629,6 +644,7 @@ namespace umbriel {
 
       struct DimUnfocused {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = false;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::EaseOutCubic};
@@ -638,14 +654,22 @@ namespace umbriel {
 
       struct Layers {
         std::optional<ShaderSource> shader;
+        std::string effect;
         bool enabled = false;
         int durationMs = 250;
         AnimationCurve curve{.easing = Easing::EaseOutCubic};
         bool operator==(const Layers&) const = default;
       } layers;
 
+      struct WindowsDrag {
+        // Deform the window like an elastic sheet while it is dragged by the pointer.
+        bool physics = false;
+        bool operator==(const WindowsDrag&) const = default;
+      } windowsDrag;
+
       bool operator==(const Animation&) const = default;
     } animation;
+    Effects effects;
 
     struct Overview {
       // Workspace scale when fully zoomed out.
@@ -899,6 +923,11 @@ namespace umbriel {
 
     bool operator==(const Config&) const = default;
   };
+
+  // Palette order shaders see through umbriel_palette_at: accent_primary, accent_secondary, warning, error.
+  [[nodiscard]] inline std::array<std::array<float, 4>, 4> effectPalette(const Config::Colors& colors) {
+    return {colors.accentPrimary, colors.accentSecondary, colors.warning, colors.error};
+  }
 
   [[nodiscard]] const Config& config();
   [[nodiscard]] bool loadConfig(const char* explicitPath);

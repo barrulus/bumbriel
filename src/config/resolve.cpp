@@ -338,6 +338,12 @@ namespace umbriel {
       if (rule.shadow) {
         resolved.shadow = rule.shadow;
       }
+      if (rule.borderEffect) {
+        resolved.borderEffect = rule.borderEffect;
+      }
+      if (rule.windowEffect) {
+        resolved.windowEffect = rule.windowEffect;
+      }
     }
     return resolved;
   }

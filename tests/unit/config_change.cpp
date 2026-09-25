@@ -670,7 +670,7 @@ UMBRIEL_TEST(tearingPolicyDoesNotReapplyOutputStateOrInvalidateOverview) {
   CHECK(ruleEffects.tearingPolicy);
   CHECK(ruleEffects.viewChrome);
   CHECK(!ruleEffects.outputState);
-  CHECK_EQ(ruleEffects.summary(), std::string("tearing policy, view chrome"));
+  CHECK_EQ(ruleEffects.summary(), std::string("tearing policy, view chrome, effects"));
 
   Config vetoedByRule = before;
   game.allowTearing = false;

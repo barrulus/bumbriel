@@ -3196,4 +3196,204 @@ UMBRIEL_TEST(packagedAnimationDefaultsMatchCompiledDefaults) {
   CHECK(store.config().animation == umbriel::Config{}.animation);
 }
 
+UMBRIEL_TEST(effectPresetsClaimOnlyTheirKindsKeys) {
+  const TempConfigTree tree;
+  tree.write("pulse.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("glow.glsl", "vec4 cursor(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write(
+      "config.toml",
+      "[effects]\nmax_fps = 60\nin_capture = true\n"
+      "[effects.preset.pulse]\nkind = \"border\"\nshader = \"pulse.glsl\"\npadding = 12\nspeed = 2.5\nanimated = "
+      "false\n"
+      "palette = true\nradius = 5\n"
+      "[effects.preset.pulse.light]\nspread = 40\nintensity = 2\nthreshold = 0.25\n"
+      "[effects.preset.glow]\nkind = \"cursor\"\nshader = \"glow.glsl\"\nradius = 96\npadding = 3\n"
+  );
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto& effects = store.config().effects;
+  CHECK_EQ(effects.maxFps, 60);
+  CHECK(effects.inCapture);
+  CHECK_EQ(effects.presets.size(), size_t{2});
+  const umbriel::EffectPreset* pulse = umbriel::findEffectPreset(effects, "pulse");
+  CHECK(pulse != nullptr);
+  if (pulse != nullptr) {
+    CHECK(pulse->kind == umbriel::EffectKind::Border);
+    CHECK_EQ(pulse->padding, 12);
+    CHECK(pulse->speed == 2.5F);
+    CHECK(!pulse->animated);
+    CHECK(pulse->palette);
+    CHECK(pulse->light.has_value());
+    if (pulse->light) {
+      CHECK_EQ(pulse->light->spread, 40);
+      CHECK(pulse->light->intensity == 2.0F);
+      CHECK(pulse->light->threshold == 0.25F);
+    }
+    CHECK(pulse->shader.file == tree.path("pulse.glsl"));
+    CHECK(!pulse->inert());
+  }
+  const umbriel::EffectPreset* glow = umbriel::findEffectPreset(effects, "glow");
+  CHECK(glow != nullptr);
+  if (glow != nullptr) {
+    CHECK_EQ(glow->radius, 96);
+  }
+  CHECK(containsDiagnostic(store, "unknown key effects.preset.pulse.radius"));
+  CHECK(containsDiagnostic(store, "unknown key effects.preset.glow.padding"));
+  CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("pulse.glsl")), 1);
+}
+
+UMBRIEL_TEST(effectPresetsNeedAKindAndKeepTheirNameWithoutAShader) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  file.write(
+      "[effects.preset.nokind]\nshader = \"x.glsl\"\n[effects.preset.missing]\nkind = \"screen\"\nshader = "
+      "\"absent.glsl\"\n[effects.preset.off]\nkind = \"screen\"\n"
+  );
+  CHECK(store.reload().success);
+  CHECK(umbriel::findEffectPreset(store.config().effects, "nokind") == nullptr);
+  CHECK(
+      containsDiagnostic(store, "ignoring effects.preset.nokind (kind must be animation|border|window|screen|cursor)")
+  );
+  const umbriel::EffectPreset* missing = umbriel::findEffectPreset(store.config().effects, "missing");
+  CHECK(missing != nullptr && missing->inert());
+  CHECK(containsDiagnostic(store, "cannot read shader file"));
+  CHECK(umbriel::findEffectPreset(store.config().effects, "off") == nullptr);
+  CHECK(containsDiagnostic(store, "ignoring effects.preset.off ('off' is reserved)"));
+}
+
+UMBRIEL_TEST(effectSelectorsLoadAtEveryLevel) {
+  const TempConfigTree tree;
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("w.glsl", "vec4 window(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("s.glsl", "vec4 screen(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("c.glsl", "vec4 cursor(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write("o.glsl", "vec4 animation(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write(
+      "config.toml",
+      "[effects]\nborder = \"ring\"\nwindow = \"lines\"\nscreen = \"vig\"\ncursor = \"glow\"\n"
+      "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\noverlay = \"lines\"\n"
+      "[effects.preset.lines]\nkind = \"window\"\nshader = \"w.glsl\"\n"
+      "[effects.preset.vig]\nkind = \"screen\"\nshader = \"s.glsl\"\n"
+      "[effects.preset.glow]\nkind = \"cursor\"\nshader = \"c.glsl\"\n"
+      "[effects.preset.open]\nkind = \"animation\"\nshader = \"o.glsl\"\n"
+      "[[window_rule]]\nmatch.app_id = \"^foot$\"\nborder_effect = \"off\"\nwindow_effect = \"lines\"\n"
+      "[output.\"HEADLESS-1\"]\nscreen_effect = \"off\"\n"
+      "[animation.windows_in]\neffect = \"open\"\n"
+      "[animation.windows_drag]\nphysics = true\n"
+  );
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto& config = store.config();
+  CHECK_EQ(config.effects.border, std::string("ring"));
+  CHECK_EQ(config.effects.window, std::string("lines"));
+  CHECK_EQ(config.effects.screen, std::string("vig"));
+  CHECK_EQ(config.effects.cursor, std::string("glow"));
+  CHECK_EQ(config.windowRules.size(), size_t{1});
+  CHECK(config.windowRules[0].borderEffect == "off");
+  CHECK(config.windowRules[0].windowEffect == "lines");
+  CHECK_EQ(config.outputs.size(), size_t{1});
+  CHECK(config.outputs[0].screenEffect == "off");
+  CHECK_EQ(config.animation.windowsIn.effect, std::string("open"));
+  CHECK(config.animation.windowsDrag.physics);
+  CHECK(!containsDiagnostic(store, "unknown key"));
+  const umbriel::EffectPreset* ring = umbriel::findEffectPreset(config.effects, "ring");
+  CHECK(ring != nullptr && ring->overlay == "lines");
+}
+
+UMBRIEL_TEST(effectReferencesAreValidatedAfterEverySectionIsRead) {
+  const TempConfigTree tree;
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write(
+      "config.toml",
+      // Forward reference: the selector precedes the preset in the file and the preset comes from an include.
+      "[effects]\nborder = \"ring\"\nwindow = \"ring\"\nscreen = \"nope\"\n"
+      "[include]\nfiles = [\"presets.toml\"]\n"
+      "[[window_rule]]\nmatch.app_id = \"^foot$\"\nborder_effect = \"nope\"\nwindow_effect = \"\"\n"
+      "[output.\"HEADLESS-1\"]\nscreen_effect = \"ring\"\n"
+      "[animation.windows_out]\neffect = \"ring\"\n"
+  );
+  tree.write(
+      "presets.toml",
+      "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\noverlay = \"nope\"\n"
+      "[effects.preset.ring2]\nkind = \"border\"\nshader = \"a.glsl\"\noverlay = \"ring\"\n"
+  );
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto& config = store.config();
+  CHECK_EQ(config.effects.border, std::string("ring"));
+  CHECK(config.effects.window.empty());
+  CHECK(containsDiagnostic(store, "ignoring effects.window (effect 'ring' is a border preset, not a window preset)"));
+  CHECK(config.effects.screen.empty());
+  CHECK(containsDiagnostic(store, "ignoring effects.screen (unknown effect 'nope')"));
+  CHECK(!config.windowRules[0].borderEffect);
+  CHECK(containsDiagnostic(store, "ignoring window_rule.border_effect (unknown effect 'nope')"));
+  CHECK(config.windowRules[0].windowEffect == "");
+  CHECK(!config.outputs[0].screenEffect);
+  CHECK(containsDiagnostic(
+      store, "ignoring output.HEADLESS-1.screen_effect (effect 'ring' is a border preset, not a screen preset)"
+  ));
+  CHECK(config.animation.windowsOut.effect.empty());
+  CHECK(containsDiagnostic(
+      store, "ignoring animation.windows_out.effect (effect 'ring' is a border preset, not a animation preset)"
+  ));
+  const umbriel::EffectPreset* ring = umbriel::findEffectPreset(config.effects, "ring");
+  CHECK(ring != nullptr && ring->overlay.empty());
+  CHECK(containsDiagnostic(store, "ignoring effects.preset.ring.overlay (unknown effect 'nope')"));
+  // An overlay must name a window preset: a border preset is the wrong kind.
+  const umbriel::EffectPreset* ring2 = umbriel::findEffectPreset(config.effects, "ring2");
+  CHECK(ring2 != nullptr && ring2->overlay.empty());
+  CHECK(containsDiagnostic(
+      store, "ignoring effects.preset.ring2.overlay (effect 'ring' is a border preset, not a window preset)"
+  ));
+}
+
+UMBRIEL_TEST(effectPaletteFollowsTheColorsSectionOrder) {
+  umbriel::Config config;
+  config.colors.accentPrimary = {1, 0, 0, 1};
+  config.colors.accentSecondary = {0, 1, 0, 1};
+  config.colors.warning = {0, 0, 1, 1};
+  config.colors.error = {1, 1, 0, 1};
+  const auto palette = umbriel::effectPalette(config.colors);
+  CHECK(palette[0] == config.colors.accentPrimary);
+  CHECK(palette[1] == config.colors.accentSecondary);
+  CHECK(palette[2] == config.colors.warning);
+  CHECK(palette[3] == config.colors.error);
+}
+
+UMBRIEL_TEST(effectReloadsFlagOnlyEffectDependentState) {
+  const TempConfigTree tree;
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
+  tree.write(
+      "config.toml",
+      "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\n[effects]\nborder = \"ring\"\n"
+      "[output.\"HEADLESS-1\"]\nenabled = true\n"
+  );
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto same = store.reload();
+  CHECK(same.success);
+  CHECK(!same.effects.effects);
+  CHECK(!same.effects.any());
+  tree.write("a.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv) * 0.5; }");
+  const auto edited = store.reload();
+  CHECK(edited.success);
+  CHECK(edited.effects.effects);
+  CHECK(edited.change.effects);
+  CHECK(!edited.effects.animation);
+  tree.write(
+      "config.toml",
+      "[effects.preset.ring]\nkind = \"border\"\nshader = \"a.glsl\"\n[effects]\nborder = \"ring\"\n"
+      "[output.\"HEADLESS-1\"]\nenabled = true\nscreen_effect = \"off\"\n"
+  );
+  const auto output = store.reload();
+  CHECK(output.success);
+  CHECK(output.effects.effects);
+  CHECK(!output.effects.outputState);
+}
+
 int main() { return RUN_TESTS(); }
