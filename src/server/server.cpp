@@ -21,6 +21,7 @@
 #include "scene/cheatsheet.h"
 #include "scene/color.h"
 #include "scene/config_banner.h"
+#include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
@@ -269,7 +270,7 @@ namespace umbriel {
     return pid > 0 && pid == m_xwayland->pid();
   }
 
-  Server::Server() {
+  Server::Server() : m_effects(*this) {
     m_nested = std::getenv("WAYLAND_DISPLAY") != nullptr
         || std::getenv("WAYLAND_SOCKET") != nullptr
         || std::getenv("DISPLAY") != nullptr;

@@ -13,6 +13,7 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
+#include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
@@ -495,7 +496,7 @@ namespace umbriel {
         }
       }
     }
-    if (effects.animation) {
+    if (effects.animation || effects.effects) {
       prepareAnimationShaders(m_renderer);
     }
 

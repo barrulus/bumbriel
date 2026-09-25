@@ -6,6 +6,7 @@
 #include "input/surface_layouts.h"
 #include "scene/animation_shader.h"
 #include "scene/border_rect.h"
+#include "scene/effect_registry.h"
 #include "scene/surface_shadow.h"
 #include "server/focus.h"
 #include "view/registry.h"
@@ -184,6 +185,8 @@ namespace umbriel {
     [[nodiscard]] InputMethodRelay* inputMethodRelay() const { return m_inputMethodRelay.get(); }
     [[nodiscard]] Seat* seat() const { return m_seat.get(); }
     [[nodiscard]] Cursor* cursor() const { return m_cursor.get(); }
+    [[nodiscard]] EffectRegistry& effects() { return m_effects; }
+    [[nodiscard]] const EffectRegistry& effects() const { return m_effects; }
     // Central animation tick: advances every registered owner once per msec and
     // reports whether anything is still animating.
     bool tickAnimations(uint64_t nowMsec);
@@ -553,6 +556,7 @@ namespace umbriel {
     wlr_content_type_manager_v1* m_contentTypeManager = nullptr;
     wlr_security_context_manager_v1* m_securityContextManager = nullptr;
     std::unique_ptr<WineColorManager> m_wineColorManager;
+    EffectRegistry m_effects;
     wlr_scene_output_layout* m_sceneLayout = nullptr;
     wlr_xdg_shell* m_xdgShell = nullptr;
     wlr_xdg_toplevel_tag_manager_v1* m_xdgToplevelTagManager = nullptr;

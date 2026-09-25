@@ -1,6 +1,7 @@
 #include "scene/animation_shader.h"
 
 #include "config/config.h"
+#include "scene/effect_registry.h"
 
 #include <algorithm>
 #include <array>
@@ -19,29 +20,6 @@ namespace umbriel {
     };
     std::array<CacheEntry, FX_ANIMATION_SLOTS> cache;
 
-    // Entering transitions fade in with progress and leaving ones fade out. Only alpha changes, uniformly, so the
-    // window's shape and its analytic shadow are unaffected.
-    constexpr const char* kBuiltinFade = R"(vec4 animation(vec2 uv) {
-    float alpha = umbriel_direction < 0.0 ? 1.0 - umbriel_clamped_progress : umbriel_clamped_progress;
-    return umbriel_sample(uv) * alpha;
-})";
-    struct BuiltinEntry {
-      wlr_renderer* renderer = nullptr;
-      std::shared_ptr<fx_effect_shader> shader;
-    };
-    BuiltinEntry builtinFade;
-
-    fx_effect_shader* builtinFadeShader(wlr_renderer* renderer) {
-      if (builtinFade.renderer != renderer) {
-        builtinFade.renderer = renderer;
-        builtinFade.shader = {
-            fx_effect_shader_create(renderer, FX_EFFECT_ANIMATION, kBuiltinFade, "animation.builtin_fade"),
-            fx_effect_shader_unref
-        };
-        fx_effect_shader_set_shape_preserving(builtinFade.shader.get(), true);
-      }
-      return builtinFade.shader.get();
-    }
     static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
     static_assert(static_cast<unsigned>(AnimationEvent::Window) == FX_SLOT_WINDOW);
     static_assert(static_cast<unsigned>(AnimationEvent::BorderEffect) == FX_SLOT_BORDER_EFFECT);
@@ -71,6 +49,9 @@ namespace umbriel {
   } // namespace
 
   fx_effect_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
+    if (fx_effect_shader* preset = effectRegistry().animationShader(event)) {
+      return preset;
+    }
     const auto& settings = config().animation;
     const std::optional<ShaderSource>* source = nullptr;
     bool enabled = false;
@@ -122,17 +103,11 @@ namespace umbriel {
     if (fx_effect_shader* custom = animationShader(renderer, event)) {
       return custom;
     }
-    const auto& settings = config().animation;
-    // Slide keeps per-buffer alpha: its opacity curve differs from the lifecycle progress.
-    const bool builtin = settings.enabled
-        && ((event == AnimationEvent::WindowsIn && settings.windowsIn.enabled && settings.windowsIn.style != "slide")
-            || (event == AnimationEvent::WindowsOut
-                && settings.windowsOut.enabled
-                && settings.windowsOut.style != "slide"));
-    return builtin ? builtinFadeShader(renderer) : nullptr;
+    return effectRegistry().lifecycleShader(event);
   }
 
   void prepareAnimationShaders(wlr_renderer* renderer) {
+    effectRegistry().prepare(renderer);
     for (unsigned event = 0; event < FX_ANIMATION_SLOTS; ++event) {
       (void)lifecycleShader(renderer, static_cast<AnimationEvent>(event));
     }
@@ -140,7 +115,7 @@ namespace umbriel {
 
   void clearAnimationShaderCache() {
     cache = {};
-    builtinFade = {};
+    effectRegistry().clear();
   }
 
   void updateAnimationShader(

@@ -552,6 +552,7 @@ core_sources = files(
   'src/core/animation.cpp',
   'src/core/application_scope.cpp',
   'src/scene/animation_shader.cpp',
+  'src/scene/effect_registry.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',
