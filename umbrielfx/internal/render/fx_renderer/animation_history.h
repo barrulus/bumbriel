@@ -25,7 +25,7 @@ void fx_render_pass_end_animation_with_history(
     struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
-    struct fx_animation_history* history, struct wlr_output* output, bool update_history
+    int expand, struct fx_animation_history* history, struct wlr_output* output, bool update_history
 );
 
 #endif

@@ -621,10 +621,28 @@ bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
   return true;
 }
 
+// Grows the node boxes by `expand` logical pixels on every side. The buffer box
+// scales by the box's own scale so a fractional output keeps whole pixels.
+static void expand_animation_boxes(struct wlr_box* box, struct wlr_box* logical_box, int expand) {
+  if (expand <= 0) {
+    return;
+  }
+  const float scale = logical_box->width > 0 ? (float)box->width / logical_box->width : 1.0f;
+  const int buffer_expand = (int)ceilf(expand * scale);
+  box->x -= buffer_expand;
+  box->y -= buffer_expand;
+  box->width += 2 * buffer_expand;
+  box->height += 2 * buffer_expand;
+  logical_box->x -= expand;
+  logical_box->y -= expand;
+  logical_box->width += 2 * expand;
+  logical_box->height += 2 * expand;
+}
+
 static void draw_animation_texture(
     struct fx_gles_render_pass* pass, struct wlr_texture* wlr_texture, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* source_box,
-    const struct wlr_box* logical_box, enum wl_output_transform transform, const pixman_region32_t* clip,
+    const struct wlr_box* logical_box, int expand, enum wl_output_transform transform, const pixman_region32_t* clip,
     struct wlr_texture* previous_texture, const struct wlr_box* previous_source_box, const float projection[9],
     bool blend, bool mark_updated
 ) {
@@ -642,6 +660,10 @@ static void draw_animation_texture(
   glUniform1f(shader->linear_progress, parameters->linear_progress);
   glUniform1f(shader->direction, parameters->direction);
   glUniform2f(shader->size, logical_box->width, logical_box->height);
+  glUniform2f(
+      shader->expand, logical_box->width > 0 ? (float)expand / logical_box->width : 0.0f,
+      logical_box->height > 0 ? (float)expand / logical_box->height : 0.0f
+  );
   glUniform1f(
       shader->scale, box->width > 0 && logical_box->width > 0 ? (float)box->width / logical_box->width : 1.0f
   );
@@ -717,8 +739,13 @@ void fx_render_pass_end_animation_with_history(
     struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* capture_clip, const pixman_region32_t* output_clip,
-    struct fx_animation_history* history, struct wlr_output* output, bool update_history
+    int expand, struct fx_animation_history* history, struct wlr_output* output, bool update_history
 ) {
+  struct wlr_box drawn = *box;
+  struct wlr_box logical = *logical_box;
+  expand_animation_boxes(&drawn, &logical, expand);
+  box = &drawn;
+  logical_box = &logical;
   struct wlr_texture* texture = pop_animation_capture(pass);
   struct fx_renderer* renderer = pass->buffer->renderer;
   struct fx_animation_output_history* output_history = NULL;
@@ -792,7 +819,7 @@ void fx_render_pass_end_animation_with_history(
         history_clip_ptr = &history_clip;
       }
       draw_animation_texture(
-          pass, texture, shader, parameters, &history_box, box, logical_box, transform, history_clip_ptr,
+          pass, texture, shader, parameters, &history_box, box, logical_box, expand, transform, history_clip_ptr,
           previous_texture, previous_texture != NULL ? &previous_box : NULL, history_projection, false, false
       );
       if (history_clip_ptr != NULL) {
@@ -827,7 +854,7 @@ void fx_render_pass_end_animation_with_history(
   }
 fallback:
   draw_animation_texture(
-      pass, texture, shader, parameters, box, box, logical_box, transform, output_clip, previous_texture,
+      pass, texture, shader, parameters, box, box, logical_box, expand, transform, output_clip, previous_texture,
       previous_texture != NULL ? &previous_box : NULL, pass->projection_matrix, true, true
   );
   if (previous_texture != NULL) {
@@ -841,9 +868,8 @@ void fx_render_pass_end_animation(
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
     enum wl_output_transform transform, const pixman_region32_t* clip, int expand
 ) {
-  (void)expand;
   fx_render_pass_end_animation_with_history(
-      pass, shader, parameters, box, logical_box, transform, clip, clip, NULL, NULL, false
+      pass, shader, parameters, box, logical_box, transform, clip, clip, expand, NULL, NULL, false
   );
 }
 
@@ -941,7 +967,7 @@ bool fx_render_pass_end_animation_shadow(
   glUseProgram(horizontal->program);
   glUniform2f(glGetUniformLocation(horizontal->program, "shadow_step"), softness / (8.0f * full.width), 0);
   draw_animation_texture(
-      pass, caster, horizontal, &params, &reduced, &full, &full, WL_OUTPUT_TRANSFORM_NORMAL, NULL, NULL, NULL,
+      pass, caster, horizontal, &params, &reduced, &full, &full, 0, WL_OUTPUT_TRANSFORM_NORMAL, NULL, NULL, NULL,
       pass->projection_matrix, true, true
   );
   struct wlr_texture* blurred = pop_animation_capture(pass);
@@ -962,7 +988,7 @@ bool fx_render_pass_end_animation_shadow(
   glBindTexture(GL_TEXTURE_2D, fx_get_texture(caster)->tex);
   glUniform1i(glGetUniformLocation(vertical->program, "shadow_mask"), 1);
   draw_animation_texture(
-      pass, blurred, vertical, &params, &full, &reduced, &reduced, WL_OUTPUT_TRANSFORM_NORMAL, clip, NULL, NULL,
+      pass, blurred, vertical, &params, &full, &reduced, &reduced, 0, WL_OUTPUT_TRANSFORM_NORMAL, clip, NULL, NULL,
       pass->projection_matrix, true, true
   );
   glActiveTexture(GL_TEXTURE1);

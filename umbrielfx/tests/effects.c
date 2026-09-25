@@ -195,6 +195,36 @@ static bool test_uniforms(struct fixture *fixture) {
 	return ok;
 }
 
+static bool test_expand(struct fixture *fixture) {
+	// Solid red everywhere the program is drawn: with expand, red must reach past the node box.
+	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0) * umbriel_expand.x * 4.0 + umbriel_sample(uv) * 0.0; }", "expand");
+	if (!check(shader != NULL, "expand program compiles")) {
+		return false;
+	}
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct wlr_buffer *target = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, TEST_WIDTH, TEST_HEIGHT);
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(fixture->renderer, target, NULL);
+	struct fx_gles_render_pass *fx_pass = fx_get_render_pass(pass);
+	bool ok = check(fx_render_pass_init_offscreen_buffers(pass, fixture->output), "offscreen buffers");
+	ok &= check(fx_render_pass_begin_animation(fx_pass), "capture begins");
+	const struct wlr_box box = { .x = 6, .y = 6, .width = 4, .height = 4 };
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options) {
+		.box = box, .color = { .r = 0, .g = 1, .b = 0, .a = 1 }, .blend_mode = WLR_RENDER_BLEND_MODE_NONE });
+	// expand = 2 logical px on an unscaled target: the drawn box is 8x8 at (4,4), so umbriel_expand.x == 0.25.
+	fx_render_pass_end_animation(fx_pass, shader, &parameters, &box, &box, WL_OUTPUT_TRANSFORM_NORMAL, NULL, 2);
+	ok &= check(wlr_render_pass_submit(pass), "submit");
+	uint8_t inside[4], margin[4], outside[4];
+	ok &= fixture_read_pixel(fixture, target, 8, 8, inside);
+	ok &= fixture_read_pixel(fixture, target, 4, 4, margin);
+	ok &= fixture_read_pixel(fixture, target, 2, 2, outside);
+	ok &= check(inside[2] > 250 && margin[2] > 250, "the program paints the node box and its expand margin");
+	ok &= check(outside[2] < 5 && outside[3] < 5, "nothing is drawn past the expanded box");
+	wlr_buffer_drop(target);
+	fx_effect_shader_unref(shader);
+	return ok;
+}
+
 static bool test_renderer_destroy(struct fixture *fixture) {
 	int fd = fcntl(fixture->drm_fd, F_DUPFD_CLOEXEC, 0);
 	struct wlr_renderer *renderer = fx_renderer_create_with_drm_fd(fd);
@@ -228,6 +258,8 @@ int main(int argc, char *argv[]) {
 		ok = test_reads(&fixture);
 	} else if (strcmp(argv[1], "uniforms") == 0) {
 		ok = test_uniforms(&fixture);
+	} else if (strcmp(argv[1], "expand") == 0) {
+		ok = test_expand(&fixture);
 	} else if (strcmp(argv[1], "renderer-destroy") == 0) {
 		ok = test_renderer_destroy(&fixture);
 	} else {

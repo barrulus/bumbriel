@@ -50,6 +50,8 @@ struct fx_gles_render_pass {
 };
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass *pass);
+// `box` and `logical_box` are the node's boxes; `expand` (logical px) grows the
+// drawn rectangle on every side. `uv` in the program spans the drawn rectangle.
 void fx_render_pass_end_animation(struct fx_gles_render_pass *pass,
 	struct fx_effect_shader *shader, const struct fx_animation_parameters *parameters,
 	const struct wlr_box *box, const struct wlr_box *logical_box,

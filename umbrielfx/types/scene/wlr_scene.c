@@ -1097,6 +1097,46 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
   pixman_region32_fini(damage);
 }
 
+static bool uniforms_equal(const struct fx_animation_parameters* a, const struct fx_animation_parameters* b) {
+  if (a->uniform_count != b->uniform_count) {
+    return false;
+  }
+  for (unsigned i = 0; i < a->uniform_count && i < FX_UNIFORMS_MAX; i++) {
+    const struct fx_uniform* x = &a->uniforms[i];
+    const struct fx_uniform* y = &b->uniforms[i];
+    if (x->type != y->type || x->count != y->count || strncmp(x->name, y->name, FX_UNIFORM_NAME_MAX) != 0) {
+      return false;
+    }
+    unsigned values = x->count * fx_uniform_components(x->type);
+    if (x->type == FX_UNIFORM_INT || x->type == FX_UNIFORM_BOOL) {
+      values = values > 4 ? 4 : values;
+      if (memcmp(x->ints, y->ints, values * sizeof(x->ints[0])) != 0) {
+        return false;
+      }
+    } else {
+      values = values > FX_UNIFORM_FLOATS_MAX ? FX_UNIFORM_FLOATS_MAX : values;
+      if (memcmp(x->floats, y->floats, values * sizeof(x->floats[0])) != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+static bool parameters_equal(const struct fx_animation_parameters* a, const struct fx_animation_parameters* b) {
+  return a->progress == b->progress
+      && a->linear_progress == b->linear_progress
+      && a->direction == b->direction
+      && a->transition_id == b->transition_id
+      && memcmp(a->random_seed, b->random_seed, sizeof(a->random_seed)) == 0
+      && a->expand == b->expand
+      && a->light.enabled == b->light.enabled
+      && a->light.spread == b->light.spread
+      && a->light.intensity == b->light.intensity
+      && a->light.threshold == b->light.threshold
+      && uniforms_equal(a, b);
+}
+
 void wlr_scene_node_set_animation(
     struct wlr_scene_node* node, unsigned slot, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters
@@ -1123,8 +1163,12 @@ void wlr_scene_node_set_animation(
   const bool same_transition = previous != NULL
       && shader != NULL
       && parameters != NULL
+      && !fx_slot_persistent(slot)
       && parameters->transition_id == animation->parameters[slot].transition_id;
-  const bool restarted = previous != NULL && shader != NULL && !same_transition;
+  // A transient slot restarts when its transition changes; a persistent slot only when its program does
+  // (a reload with a new source). Either resets the slot's feedback history.
+  const bool restarted = previous != NULL && shader != NULL
+      && (fx_slot_persistent(slot) ? previous != shader : !same_transition);
   if (previous != NULL
       && shader != NULL
       && parameters != NULL
@@ -1133,12 +1177,8 @@ void wlr_scene_node_set_animation(
     shader = previous;
   }
   struct fx_animation_parameters next = parameters != NULL ? *parameters : animation->parameters[slot];
-  const bool parameters_equal = next.progress == animation->parameters[slot].progress
-      && next.linear_progress == animation->parameters[slot].linear_progress
-      && next.direction == animation->parameters[slot].direction
-      && next.transition_id == animation->parameters[slot].transition_id
-      && memcmp(next.random_seed, animation->parameters[slot].random_seed, sizeof(next.random_seed)) == 0;
-  if (previous == shader && !restarted && parameters_equal) {
+  const bool parameters_equal_now = parameters_equal(&next, &animation->parameters[slot]);
+  if (previous == shader && !restarted && parameters_equal_now) {
     return;
   }
   if (previous != shader || restarted) {
@@ -2851,6 +2891,16 @@ static bool node_belongs_to(struct wlr_scene_node* node, struct wlr_scene_node* 
   return false;
 }
 
+static int animation_expand(const struct scene_animation* animation) {
+  int expand = 0;
+  for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
+    if (animation->shaders[slot] != NULL && fx_slot_expands(slot) && animation->parameters[slot].expand > expand) {
+      expand = animation->parameters[slot].expand;
+    }
+  }
+  return expand;
+}
+
 static struct scene_animation*
 outer_animation(struct wlr_scene_node* node, struct wlr_scene_node* stop, struct fx_renderer* renderer) {
   struct scene_animation* outer = NULL;
@@ -3050,12 +3100,13 @@ static void render_animated_range(
         final_slot = (int)slot;
       }
     }
+    const int expand = animation_expand(animation);
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
       if (captured[slot]) {
         const pixman_region32_t* composite_clip = has_output_clip && (int)slot == final_slot ? &output_clip : &clip;
         fx_render_pass_end_animation_with_history(
             pass, animation->shaders[slot], &animation->parameters[slot], &box, &logical_box, data->transform, &clip,
-            composite_clip, &animation->histories[slot], data->output->output, !data->shadow_capture
+            composite_clip, expand, &animation->histories[slot], data->output->output, !data->shadow_capture
         );
       }
     }
