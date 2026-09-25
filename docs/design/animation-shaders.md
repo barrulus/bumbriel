@@ -59,21 +59,24 @@ combined geometry transition.
 The compositor supplies the grab location, actual scene-position deltas, release
 and animation-clock ticks. `umbrielfx/render/drag_physics.c` owns the 4×4 spring
 simulation; the compositor keeps its per-view state alive after the grab ends.
-The grab constraint pins the interpolated point rather than rounding to a grid
-vertex. Neighbor springs propagate the impulse, restoring springs return the
+The grab constraint pins the interpolated point using tensor-product cubic
+Bernstein weights, matching the shader rather than rounding to a grid vertex. Neighbor springs propagate the impulse, restoring springs return the
 sheet to its rest shape, and damping removes energy. Integration uses fixed
 240 Hz steps. Large clock gaps settle the sheet instead of replaying stale motion.
 Native Jelly applies a 2× pointer response spread smoothly around the grab. Named
 `drag` presets supply stiffness, coupling, damping, response, vertical gradients,
 and motion-driven downward pull with decay. Live reload replaces coefficients
 without resetting displacement, velocity, grab position, or the motion reservoir. Limits follow the
-actual neighbouring displacement gradients, allowing broad bends without folding
-the sheet. Excursion remains
+global bicubic derivative bounds: three times the largest horizontal plus
+vertical control-point difference per normalized output component. Keeping
+each Jacobian row sum below 0.7 allows broad bends without folding the sheet. Excursion remains
 capped at 20% of each dimension and 200 logical pixels.
 
 Normalized displacements reach `umbriel_deformation[16]` in the built-in shader.
-Smooth interpolation and bounded displacement gradients allow inverse texture
-sampling without a separate mesh API. The final draw quad expands with the
+One bicubic surface replaces interpolation within individual grid cells, so
+control-point motion influences the whole sheet without local flat joins.
+Bounded displacement gradients allow inverse texture sampling without a
+separate mesh API. The final draw quad expands with the
 spring excursion; source sampling stays in the original window rectangle.
 Output rotation and scale apply to that expansion, and ancestor clips still
 apply. The interactive slot survives snapshot copying without overwriting a

@@ -21,15 +21,15 @@ static float average(const struct fx_drag_physics* w, int axis) {
 }
 
 static void offset_at(const struct fx_drag_physics* w, const float uv[2], float offset[2]) {
-  const float x = fminf(fmaxf(uv[0], 0), 1) * 3, y = fminf(fmaxf(uv[1], 0), 1) * 3;
-  const int col = (int)fminf(floorf(x), 2), row = (int)fminf(floorf(y), 2);
-  const float tx = x - col, ty = y - row;
-  const float sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+  const float x = fminf(fmaxf(uv[0], 0), 1), y = fminf(fmaxf(uv[1], 0), 1);
+  const float u = 1 - x, v = 1 - y;
+  const float horizontal[4] = {u * u * u, 3 * x * u * u, 3 * x * x * u, x * x * x};
+  const float vertical[4] = {v * v * v, 3 * y * v * v, 3 * y * y * v, y * y * y};
   for (int axis = 0; axis < 2; axis++) {
-    const int a = row * 4 + col;
-    const float top = w->displacement[a][axis] * (1 - sx) + w->displacement[a + 1][axis] * sx;
-    const float bottom = w->displacement[a + 4][axis] * (1 - sx) + w->displacement[a + 5][axis] * sx;
-    offset[axis] = (top * (1 - sy) + bottom * sy) / (axis == 0 ? w->width : w->height);
+    offset[axis] = 0;
+    for (int i = 0; i < FX_DRAG_PHYSICS_POINTS; i++)
+      offset[axis] += horizontal[i % 4] * vertical[i / 4] * w->displacement[i][axis];
+    offset[axis] /= axis == 0 ? w->width : w->height;
   }
 }
 
@@ -63,7 +63,57 @@ static struct fx_drag_physics_parameters taffy_parameters(void) {
   return parameters;
 }
 
+// A remote control point must influence the continuous sheet beyond its old
+// local grid cell. This catches reintroducing piecewise interpolation.
+static void check_whole_surface(void) {
+  struct fx_drag_physics w;
+  fx_drag_physics_begin(&w, 800, 500, 0.15f, 0.15f);
+  w.displacement[4][0] = 40;
+  const float remote[2] = {0.7f, 0.5f};
+  float offset[2];
+  offset_at(&w, remote, offset);
+  assert(offset[0] * w.width > 0.3f && offset[1] == 0);
+}
+
+static void check_lateral_response(void) {
+  struct fx_drag_physics w;
+  fx_drag_physics_begin(&w, 800, 500, 0.15f, 0.15f);
+  struct fx_drag_physics_parameters parameters = fx_drag_physics_default_parameters();
+  parameters.stiffness = 18;
+  parameters.coupling = 170;
+  parameters.damping = 8;
+  parameters.pointer_response = 2.8f;
+  assert(fx_drag_physics_set_parameters(&w, &parameters));
+  const int corners[4] = {0, 3, 12, 15};
+  float excursion[4] = {0};
+  const float grab[2] = {0.15f, 0.15f};
+  for (int frame = 0; frame < 126; frame++) {
+    fx_drag_physics_move(&w, frame < 84 ? 2.6f : -4.0f, 0);
+    fx_drag_physics_tick(&w, 1.0 / 120);
+    check_pin(&w);
+    float actual_grab[2];
+    offset_at(&w, grab, actual_grab);
+    assert(fabsf(actual_grab[0]) * w.width < 0.001f);
+    assert(fabsf(actual_grab[1]) * w.height < 0.001f);
+    for (int i = 0; i < 4; i++)
+      excursion[i] = fmaxf(excursion[i], fabsf(w.displacement[corners[i]][0]));
+    for (int i = 0; i < FX_DRAG_PHYSICS_POINTS; i++)
+      assert(w.displacement[i][1] == 0);
+    if (frame % 21 == 0)
+      check_inverse(&w);
+  }
+  for (int i = 0; i < 4; i++)
+    assert(excursion[i] > 35);
+  assert(excursion[3] > 120);
+  fx_drag_physics_release(&w);
+  for (int i = 0; i < 1200; i++)
+    fx_drag_physics_tick(&w, 1.0 / 240);
+  assert(!w.active);
+}
+
 int main(void) {
+  check_whole_surface();
+  check_lateral_response();
   struct fx_drag_physics right, left, diagonal;
   fx_drag_physics_begin(&right, 600, 400, 0.17f, 0.23f);
   fx_drag_physics_begin(&left, 600, 400, 0.17f, 0.23f);

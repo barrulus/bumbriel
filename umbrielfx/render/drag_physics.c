@@ -45,27 +45,23 @@ static void constrain(struct fx_drag_physics* w) {
       }
     }
   }
-  // Limit actual neighbouring slopes instead of capping every mass at 1/24
-  // of the window. Broad bends can travel much farther without folding.
-  // Smoothstep's maximum derivative is 1.5, over three cells per axis.
-  // Bound each normalized Jacobian row sum to keep inverse sampling contractive.
+  // A bicubic surface has derivative bounds of three times the largest
+  // adjacent control-point difference in each direction. Bound the normalized
+  // Jacobian row sums so inverse sampling remains a contraction everywhere.
   float ratio = 1;
-  for (int y = 0; y < 3; y++) {
-    for (int x = 0; x < 3; x++) {
-      const int a = y * 4 + x, b = a + 1, c = a + 4, d = c + 1;
-      for (int axis = 0; axis < 2; axis++) {
-        const float extent = axis == 0 ? w->width : w->height;
-        const float horizontal = fmaxf(
-            fabsf(w->displacement[b][axis] - w->displacement[a][axis]),
-            fabsf(w->displacement[d][axis] - w->displacement[c][axis])
-        );
-        const float vertical = fmaxf(
-            fabsf(w->displacement[c][axis] - w->displacement[a][axis]),
-            fabsf(w->displacement[d][axis] - w->displacement[b][axis])
-        );
-        ratio = fmaxf(ratio, 4.5f * (horizontal + vertical) / (extent * 0.7f));
+  for (int axis = 0; axis < 2; axis++) {
+    float horizontal = 0, vertical = 0;
+    const float extent = axis == 0 ? w->width : w->height;
+    for (int y = 0; y < 4; y++) {
+      for (int x = 0; x < 4; x++) {
+        const int i = y * 4 + x;
+        if (x < 3)
+          horizontal = fmaxf(horizontal, fabsf(w->displacement[i + 1][axis] - w->displacement[i][axis]));
+        if (y < 3)
+          vertical = fmaxf(vertical, fabsf(w->displacement[i + 4][axis] - w->displacement[i][axis]));
       }
     }
+    ratio = fmaxf(ratio, 3 * (horizontal + vertical) / (extent * 0.7f));
   }
   // A global scale preserves the pin constraint, unlike clamping each mass.
   for (int i = 0; i < FX_DRAG_PHYSICS_POINTS; i++) {
@@ -94,13 +90,14 @@ void fx_drag_physics_begin(struct fx_drag_physics* w, float width, float height,
       .grabbed = true,
       .grab_y = fminf(fmaxf(grab_y, 0), 1)
   };
-  float x = fminf(fmaxf(grab_x, 0), 1) * 3;
-  float y = fminf(fmaxf(grab_y, 0), 1) * 3;
-  float tx = x - floorf(x), ty = y - floorf(y);
-  x = floorf(x) + tx * tx * (3 - 2 * tx);
-  y = floorf(y) + ty * ty * (3 - 2 * ty);
+  const float u = fminf(fmaxf(grab_x, 0), 1);
+  const float v = fminf(fmaxf(grab_y, 0), 1);
+  const float ux = 1 - u, vy = 1 - v;
+  const float horizontal[4] = {ux * ux * ux, 3 * u * ux * ux, 3 * u * u * ux, u * u * u};
+  const float vertical[4] = {vy * vy * vy, 3 * v * vy * vy, 3 * v * v * vy, v * v * v};
   for (int i = 0; i < FX_DRAG_PHYSICS_POINTS; i++)
-    w->weights[i] = fmaxf(1 - fabsf(x - i % 4), 0) * fmaxf(1 - fabsf(y - i / 4), 0);
+    w->weights[i] = horizontal[i % 4] * vertical[i / 4];
+  const float x = u * 3, y = v * 3;
   // Spread pointer response around the grab instead of creating a sharp bump
   // in just its four nearest masses. Normalize at the interpolated grab point.
   float anchor = 0;

@@ -107,6 +107,28 @@ parameters, separate from timeline shaders and their durations or curves. Reload
 update the coefficients even during a grab, preserving displacement and pinning.
 The temporary `wobble_style` key has been removed.
 
+For broad lateral sway with less local wobble and no added downward stretch,
+select a uniform, more strongly coupled preset:
+
+```toml
+[appearance]
+effects = ["lateral-wobble"]
+
+[effects.lateral-wobble.drag]
+stiffness = 18
+coupling = 170
+damping = 8
+pointer_response = 2.8
+stiffness_gradient = 0
+lag_gradient = 0
+downward_pull = 0
+```
+
+The renderer bends one smooth bicubic surface across the whole window. The
+cursor remains pinned at the exact grab position while the other parts of the
+sheet trail and respond to direction changes. A horizontal drag with no
+downward pull adds no vertical displacement.
+
 | Drag parameter | Range | Jelly default |
 | --- | --- | --- |
 | `stiffness` | 1–1000 | 36 |
