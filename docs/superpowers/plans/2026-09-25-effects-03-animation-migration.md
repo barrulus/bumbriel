@@ -341,7 +341,7 @@ Run: `python3 /tmp/claude-1000/.../migrate_shader_keys.py tests/harness/checks/*
 `git diff --stat tests/harness/checks` shows 24 files. Read each hunk and fix these known cases:
 
 - `181_animation_shader_events.sh` parameterises the section as `[animation.$1]` in a function; the generated preset name `$1_fixture_1` must become `${1}_fixture_1` in both the table header and the `effect =` line so bash expands it (the heredoc there is unquoted).
-- `182_animation_shader_composition.sh`: three sections; the invalid `fixture-3.glsl` preset (`windows_in_fixture_3`) must still produce the `Animation shader .*rejected; using built-in animation` log line — with the registry this happens at reload (`prepare`), which the check's `grep` after `config-reload` already covers.
+- `182_animation_shader_composition.sh`: three sections; the invalid `fixture-3.glsl` preset (`windows_in_fixture_3`) must still produce the `effect preset '<name>' (animation) failed to compile; rendering plainly` log line (the registry's diagnostic) — with the registry this happens at reload (`prepare`), which the check's `grep` after `config-reload` already covers.
 - `183_animation_shader_lifetime.sh` and `184_animation_squash.sh`: `EXAMPLES` / `SHADER` paths change to the new layout:
   - 183: `readonly EXAMPLES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects/animation" && pwd)"`, `cp "$EXAMPLES/reveal/shader.glsl" "$SOURCE"`, and the move preset's value `"$EXAMPLES/squash/shader.glsl"`.
   - 184: `readonly SHADER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects/animation" && pwd)/squash/shader.glsl"`.
