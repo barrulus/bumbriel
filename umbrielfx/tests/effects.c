@@ -634,6 +634,42 @@ static bool test_margin_damage(struct fixture *fixture) {
 	return ok;
 }
 
+// A border program sees the client hole through umbriel_border_hole and
+// umbriel_border_distance, and its result is cut out of the hole.
+static bool test_border_geometry(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	// 12x12 ring at (2,2) with a 2px wall: the hole is 8x8 at (2,2) node-local.
+	struct wlr_scene_border *border = wlr_scene_border_create(&scene->tree, white, white);
+	wlr_scene_border_set_geometry(border, 12, 12, 2, 0,
+		(struct clipped_region){ .area = { 2, 2, 8, 8 } }, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	wlr_scene_node_set_position(&border->node, 2, 2);
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		"vec4 border(vec2 uv) { return vec4(0.0, 0.0, 1.0, 1.0) * step(0.0, umbriel_border_distance(uv)); }", "border-geometry");
+	bool ok = check(program != NULL, "border program compiles");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&border->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "renders");
+	if (rendered != NULL) {
+		uint8_t ring[4], hole[4], outside[4];
+		ok &= fixture_read_pixel(fixture, rendered, 3, 8, ring);      // inside the 2px wall
+		ok &= fixture_read_pixel(fixture, rendered, 8, 8, hole);      // hole centre
+		ok &= fixture_read_pixel(fixture, rendered, 0, 0, outside);   // past the node
+		ok &= check(ring[0] > 250 && ring[2] < 5, "the ring is blue where the distance is positive");
+		ok &= check(hole[0] < 5 && hole[1] < 5 && hole[2] < 5, "the hole is cut out of the result");
+		ok &= check(outside[0] < 5, "nothing draws past the border box");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -668,6 +704,8 @@ int main(int argc, char *argv[]) {
 		ok = test_transient_policy(&fixture);
 	} else if (strcmp(argv[1], "margin-damage") == 0) {
 		ok = test_margin_damage(&fixture);
+	} else if (strcmp(argv[1], "border-geometry") == 0) {
+		ok = test_border_geometry(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

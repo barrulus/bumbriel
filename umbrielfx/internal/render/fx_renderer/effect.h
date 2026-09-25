@@ -2,11 +2,17 @@
 #define FX_EFFECT_PRIVATE_H
 
 #include <GLES2/gl2.h>
+#include <pixman.h>
 #include <stdbool.h>
 #include <umbrielfx/render/effect.h>
 #include <wayland-server-core.h>
+#include <wayland-server-protocol.h>
+#include <wlr/util/box.h>
 
+struct fx_animation_history;
+struct fx_gles_render_pass;
 struct fx_renderer;
+struct wlr_output;
 
 #define FX_EFFECT_UNIFORM_CACHE 48
 
@@ -40,5 +46,33 @@ void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct
 void fx_effect_shader_bind_parameters(
     struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
 );
+
+// Border node geometry in logical px, relative to the composite's logical_box origin.
+struct fx_effect_geometry {
+  struct wlr_box hole;
+  float radius[4]; // tl, tr, br, bl logical px
+};
+
+struct fx_effect_light_cache;
+
+struct fx_effect_composite {
+  struct fx_effect_shader* shader;
+  const struct fx_animation_parameters* parameters;
+  struct wlr_box box;         // node box, buffer px
+  struct wlr_box logical_box; // node box, logical
+  enum wl_output_transform transform;
+  int expand;
+  const pixman_region32_t* capture_clip;
+  const pixman_region32_t* output_clip;
+  struct fx_animation_history* history;
+  struct wlr_output* output;
+  bool update_history;
+  const struct fx_effect_geometry* geometry; // NULL unless a border slot composites a border node
+  struct fx_effect_light_cache* light;       // NULL unless this composite emits light
+};
+
+// Pops the capture begun by fx_render_pass_begin_animation and draws it
+// through the composite's program.
+void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
 
 #endif

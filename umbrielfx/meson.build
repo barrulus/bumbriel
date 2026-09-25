@@ -261,6 +261,7 @@ if build_tests
     'whole-box-invalidation',
     'transient-policy',
     'margin-damage',
+    'border-geometry',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

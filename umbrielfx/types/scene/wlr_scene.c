@@ -2,6 +2,7 @@
 
 #include "render/color.h"
 #include "render/fx_renderer/animation_history.h"
+#include "render/fx_renderer/effect.h"
 #include "render/fx_renderer/fx_renderer.h"
 #include "render/tracy.h"
 #include "types/fx/clipped_region.h"
@@ -3239,6 +3240,42 @@ static bool render_animation_shadow(struct render_list_entry* entry, const struc
   return rendered;
 }
 
+// The border node a border slot composites: the node itself, or the single
+// enabled border child of a tree (a view's border tree). `hole` comes back in
+// logical coordinates relative to the extents' origin (the animated node's bounds).
+static bool scene_border_geometry(
+    struct wlr_scene_node* node, int lx, int ly, const pixman_box32_t* extents, struct fx_effect_geometry* geometry
+) {
+  struct wlr_scene_border* border = NULL;
+  int bx = lx, by = ly;
+  if (node->type == WLR_SCENE_NODE_BORDER) {
+    border = wlr_scene_border_from_node(node);
+  } else if (node->type == WLR_SCENE_NODE_TREE) {
+    struct wlr_scene_node* child;
+    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+      if (child->enabled && child->type == WLR_SCENE_NODE_BORDER) {
+        if (border != NULL) {
+          return false;
+        }
+        border = wlr_scene_border_from_node(child);
+        bx = lx + child->x;
+        by = ly + child->y;
+      }
+    }
+  }
+  if (border == NULL) {
+    return false;
+  }
+  geometry->hole = border->clipped_region.area;
+  geometry->hole.x += bx - extents->x1;
+  geometry->hole.y += by - extents->y1;
+  geometry->radius[0] = border->clipped_region.corners.top_left;
+  geometry->radius[1] = border->clipped_region.corners.top_right;
+  geometry->radius[2] = border->clipped_region.corners.bottom_right;
+  geometry->radius[3] = border->clipped_region.corners.bottom_left;
+  return true;
+}
+
 static void render_animated_range(
     struct render_list_entry* entries, int high, int low, struct wlr_scene_node* stop, const struct render_data* data
 ) {
@@ -3299,7 +3336,6 @@ static void render_animated_range(
         .width = extents->x2 - extents->x1,
         .height = extents->y2 - extents->y1,
     };
-    pixman_region32_fini(&bounds);
     struct wlr_box box = logical_box;
     transform_output_box(&box, data);
     pixman_region32_t clip;
@@ -3349,12 +3385,28 @@ static void render_animated_range(
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
       if (captured[slot]) {
         const pixman_region32_t* composite_clip = has_output_clip && (int)slot == final_slot ? &output_clip : &clip;
-        fx_render_pass_end_animation_with_history(
-            pass, animation->shaders[slot], &animation->parameters[slot], &box, &logical_box, data->transform, &clip,
-            composite_clip, expand, &animation->histories[slot], data->output->output, !data->shadow_capture
-        );
+        struct fx_effect_geometry geometry;
+        const bool has_geometry = slot == FX_SLOT_BORDER_EFFECT
+            && fx_effect_shader_kind(animation->shaders[slot]) == FX_EFFECT_BORDER
+            && scene_border_geometry(animation->node, lx, ly, extents, &geometry);
+        const struct fx_effect_composite composite = {
+            .shader = animation->shaders[slot],
+            .parameters = &animation->parameters[slot],
+            .box = box,
+            .logical_box = logical_box,
+            .transform = data->transform,
+            .expand = expand,
+            .capture_clip = &clip,
+            .output_clip = composite_clip,
+            .history = &animation->histories[slot],
+            .output = data->output->output,
+            .update_history = !data->shadow_capture,
+            .geometry = has_geometry ? &geometry : NULL,
+        };
+        fx_render_pass_end_effect(pass, &composite);
       }
     }
+    pixman_region32_fini(&bounds);
     if (has_output_clip) {
       pixman_region32_fini(&output_clip);
     }
