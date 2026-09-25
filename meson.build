@@ -502,7 +502,7 @@ pure_sources = files(
   'src/config/keybind_parse.cpp',
   'src/config/value_parse.cpp',
   'src/config/section.cpp',
-  'src/config/animation_shader.cpp',
+  'src/config/effects.cpp',
   'src/input/modifier_tap.cpp',
   'src/input/swipe_tracker.cpp',
   'src/input/keyboard_layout.cpp',

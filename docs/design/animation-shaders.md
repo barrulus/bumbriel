@@ -5,7 +5,7 @@ and authoring details are in [Animation](../user/animation.md#custom-glsl-shader
 
 ## Configuration and compilation
 
-`readAnimationShader` uses a `Section` reader for the `shader` file path.
+`readShaderSource` (`src/config/effects.cpp`) uses a `Section` reader for the `shader` file path.
 Inline GLSL is not accepted. Paths resolve relative
 to the declaring TOML file, including included files. The loader registers file
 dependencies even when missing, and includes source contents in configuration

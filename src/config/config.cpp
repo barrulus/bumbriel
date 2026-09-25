@@ -1094,7 +1094,7 @@ namespace umbriel {
       }
 
       const auto readShader = [&](Section& section, auto& event) {
-        auto result = readAnimationShader(section, configStore().mutableDiagnostics());
+        auto result = readShaderSource(section, "shader", configStore().mutableDiagnostics());
         event.shader = std::move(result.source);
         for (auto& path : result.watchPaths) {
           configStore().addWatchPath(std::move(path));

@@ -1,6 +1,5 @@
-#include "config/animation_shader.h"
-
 #include "check.h"
+#include "config/effects.h"
 #include "config/section.h"
 
 #include <algorithm>
@@ -32,11 +31,11 @@ namespace {
       CHECK(stream.good());
     }
 
-    umbriel::AnimationShaderReadResult read(const std::string& text, std::string_view relative = "theme/config.toml") {
+    umbriel::ShaderReadResult read(const std::string& text, std::string_view relative = "theme/config.toml") {
       diagnostics.clear();
       const auto table = toml::parse(text, (directory / relative).string());
       umbriel::Section section(table, "animation.windows_in", diagnostics);
-      return umbriel::readAnimationShader(section, diagnostics);
+      return umbriel::readShaderSource(section, "shader", diagnostics);
     }
 
     bool warned(std::string_view text) const {
@@ -132,9 +131,9 @@ UMBRIEL_TEST(shaderInputIsBoundedAndRejectsBlankNulAndNonRegularFiles) {
   CHECK(!fixture.read("shader = 'effect.glsl'").source);
   CHECK(fixture.warned("NUL"));
 
-  fixture.write("theme/effect.glsl", std::string(umbriel::kAnimationShaderSourceLimit, 'x'));
+  fixture.write("theme/effect.glsl", std::string(umbriel::kShaderSourceLimit, 'x'));
   CHECK(fixture.read("shader = 'effect.glsl'").source.has_value());
-  fixture.write("theme/effect.glsl", std::string(umbriel::kAnimationShaderSourceLimit + 1, 'x'));
+  fixture.write("theme/effect.glsl", std::string(umbriel::kShaderSourceLimit + 1, 'x'));
   CHECK(!fixture.read("shader = 'effect.glsl'").source);
   CHECK(fixture.warned("exceeds 256 KiB"));
 

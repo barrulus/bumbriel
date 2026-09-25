@@ -14,7 +14,7 @@ namespace umbriel {
   namespace {
     struct CacheEntry {
       wlr_renderer* renderer = nullptr;
-      std::optional<AnimationShaderSource> source;
+      std::optional<ShaderSource> source;
       std::shared_ptr<fx_effect_shader> shader;
     };
     std::array<CacheEntry, FX_ANIMATION_SLOTS> cache;
@@ -72,7 +72,7 @@ namespace umbriel {
 
   fx_effect_shader* animationShader(wlr_renderer* renderer, AnimationEvent event) {
     const auto& settings = config().animation;
-    const std::optional<AnimationShaderSource>* source = nullptr;
+    const std::optional<ShaderSource>* source = nullptr;
     bool enabled = false;
     const char* label = "animation";
     auto& entry = cache[static_cast<unsigned>(event)];

@@ -1,7 +1,8 @@
-#include "config/animation_shader.h"
+#include "config/effects.h"
 
 #include "config/section.h"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -11,9 +12,10 @@
 
 namespace umbriel {
 
-  AnimationShaderReadResult readAnimationShader(Section& section, std::vector<ConfigDiagnostic>& diagnostics) {
-    AnimationShaderReadResult result;
-    const toml::node* node = section.take("shader");
+  ShaderReadResult
+  readShaderSource(Section& section, std::string_view key, std::vector<ConfigDiagnostic>& diagnostics) {
+    ShaderReadResult result;
+    const toml::node* node = section.take(key);
     const auto warn = [&](const toml::node& node, std::string message) {
       diagnostics.push_back(makeDiagnostic(ConfigDiagnostic::Severity::Warning, node.source(), std::move(message)));
     };
@@ -22,15 +24,15 @@ namespace umbriel {
     }
     const auto value = node->value<std::string>();
     if (!node->is_string() || !value) {
-      warn(*node, "animation shader path must be a string");
+      warn(*node, "shader path must be a string");
       return result;
     }
     if (value->empty() || value->contains('\0')) {
-      warn(*node, "animation shader path must not be empty or contain NUL bytes");
+      warn(*node, "shader path must not be empty or contain NUL bytes");
       return result;
     }
 
-    AnimationShaderSource source;
+    ShaderSource source;
     source.file = *value;
     if (source.file.is_relative()) {
       if (node->source().path == nullptr || node->source().path->empty()) {
@@ -56,15 +58,15 @@ namespace umbriel {
       warn(*node, std::format("shader file '{}' must be a readable regular file", source.file.string()));
       return result;
     }
-    if (metadata.st_size > static_cast<off_t>(kAnimationShaderSourceLimit)) {
+    if (metadata.st_size > static_cast<off_t>(kShaderSourceLimit)) {
       close(fd);
-      warn(*node, "animation shader source exceeds 256 KiB");
+      warn(*node, "shader source exceeds 256 KiB");
       return result;
     }
 
     std::array<char, 4096> chunk{};
     bool failed = false;
-    while (source.code.size() <= kAnimationShaderSourceLimit) {
+    while (source.code.size() <= kShaderSourceLimit) {
       const ssize_t count = read(fd, chunk.data(), chunk.size());
       if (count < 0 && errno == EINTR) {
         continue;
@@ -84,16 +86,73 @@ namespace umbriel {
       return result;
     }
 
-    if (source.code.size() > kAnimationShaderSourceLimit) {
-      warn(*node, "animation shader source exceeds 256 KiB");
+    if (source.code.size() > kShaderSourceLimit) {
+      warn(*node, "shader source exceeds 256 KiB");
       return result;
     }
     if (source.code.contains('\0') || source.code.find_first_not_of(" \t\r\n") == std::string::npos) {
-      warn(*node, "animation shader source must not be blank or contain NUL bytes");
+      warn(*node, "shader source must not be blank or contain NUL bytes");
       return result;
     }
     result.source = std::move(source);
     return result;
+  }
+
+  std::optional<EffectKind> parseEffectKind(std::string_view text) {
+    if (text == "animation") {
+      return EffectKind::Animation;
+    }
+    if (text == "border") {
+      return EffectKind::Border;
+    }
+    if (text == "window") {
+      return EffectKind::Window;
+    }
+    if (text == "screen") {
+      return EffectKind::Screen;
+    }
+    if (text == "cursor") {
+      return EffectKind::Cursor;
+    }
+    return std::nullopt;
+  }
+
+  std::string_view effectKindName(EffectKind kind) {
+    switch (kind) {
+    case EffectKind::Animation:
+      return "animation";
+    case EffectKind::Border:
+      return "border";
+    case EffectKind::Window:
+      return "window";
+    case EffectKind::Screen:
+      return "screen";
+    case EffectKind::Cursor:
+      return "cursor";
+    }
+    return "effect";
+  }
+
+  const EffectPreset* findEffectPreset(const Effects& effects, std::string_view name) {
+    const auto preset = std::ranges::find(effects.presets, name, &EffectPreset::name);
+    return preset != effects.presets.end() ? &*preset : nullptr;
+  }
+
+  std::optional<std::string>
+  effectReferenceError(const Effects& effects, std::string_view name, EffectKind kind, bool allowOff) {
+    if (name.empty() || (allowOff && name == kEffectOff)) {
+      return std::nullopt;
+    }
+    const EffectPreset* preset = findEffectPreset(effects, name);
+    if (preset == nullptr) {
+      return std::format("unknown effect '{}'", name);
+    }
+    if (preset->kind != kind) {
+      return std::format(
+          "effect '{}' is a {} preset, not a {} preset", name, effectKindName(preset->kind), effectKindName(kind)
+      );
+    }
+    return std::nullopt;
   }
 
 } // namespace umbriel
