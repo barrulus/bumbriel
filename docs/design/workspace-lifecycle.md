@@ -128,16 +128,16 @@ When it must cross into a surviving column with several rows, it resolves those
 rows through the global focus history. Visual row order describes placement,
 not which member the user focused before opening the window that just closed.
 
-Closing a focused Dwindle or master tile is a bounded exception. Umbriel records
-the pointer position only when the closing view owns keyboard focus, is visibly
-beneath the pointer, and the position lies inside its current presented box. It chooses the
-normal layout replacement before detaching the view, then flushes the new layout
-and checks its final tiled target boxes once. A survivor that inherits the
-recorded position receives pointer-hover focus; otherwise the normal replacement
-remains focused. Scene hit-testing instead of cached seat pointer focus keeps
-consecutive closes correct without pointer motion. Reading final layout geometry
-avoids treating every view that moves through the pointer during an animation as
-another hover transition.
+Closing a focused tiled window is a bounded exception. Umbriel records the
+pointer position only when the closing view owns keyboard focus, is visibly
+beneath the pointer, and the position lies inside its current presented box. It
+chooses the normal layout replacement before detaching the view, then flushes the
+new layout and checks its final tiled target boxes once. A survivor that inherits
+the recorded position receives pointer-hover focus; otherwise the normal
+replacement remains focused. Scene hit-testing instead of cached seat pointer
+focus keeps consecutive closes correct without pointer motion. Reading final
+layout geometry avoids treating every view that moves through the pointer during
+an animation as another hover transition, including a moving scrolling strip.
 
 ## Data-device drag focus
 

@@ -3036,7 +3036,6 @@ namespace umbriel {
     const bool focusRevealedTile = closingWorkspace != nullptr
         && closingWorkspace->focusedView() == this
         && closingWorkspace->active()
-        && closingWorkspace->scrollingLayout() == nullptr
         && m_tiled
         && m_toplevel->parent == nullptr
         && config().input.focus.followsMouse
