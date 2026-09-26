@@ -12,9 +12,12 @@ namespace umbriel {
   class DragPhysics {
   public:
     static constexpr int kPoints = 16;
+    // The bound on any mass's speed on either axis, in logical pixels per second.
+    static constexpr float kMaxVelocity = 4000.0F;
     using Sheet = std::array<std::array<float, 2>, kPoints>;
-    // `grabX`/`grabY` are the grab point as fractions of the window (0-1). `transitionId` comes from the
-    // shared transition-id source (never 0), since this class mints no ids of its own.
+    // `grabX`/`grabY` are the grab point as fractions of the window (0-1). From rest the sheet starts a new episode
+    // with `transitionId`, which comes from the shared transition-id source (never 0). A sheet still settling keeps
+    // its deformation, motion and transition id, and is pinned at the new grab point.
     void begin(float width, float height, float grabX, float grabY, uint64_t transitionId);
     // Carries the sheet onto a resized window or a moved grab point: displacements keep their size relative to the
     // window, and the new grab point is pinned.
@@ -35,6 +38,8 @@ namespace umbriel {
     [[nodiscard]] Sheet normalizedDisplacement() const;
     // Largest displacement in logical pixels.
     [[nodiscard]] float maxDisplacement() const;
+    // Largest speed of any mass on either axis, in logical pixels per second.
+    [[nodiscard]] float maxVelocity() const;
     // The displacement at (u, v) of the window (0-1) in logical pixels, interpolated as the shader does.
     [[nodiscard]] std::array<float, 2> displacementAt(float u, float v) const;
     // The largest displacement constrain() allows on either axis, in logical pixels.

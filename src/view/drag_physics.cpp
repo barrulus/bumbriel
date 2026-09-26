@@ -14,25 +14,36 @@ namespace umbriel {
     constexpr double kStep = 1.0 / 240.0;
     constexpr double kSettleAfterPause = 0.25;
     constexpr float kMaxDisplacementPx = 200.0F;
-    constexpr float kMaxVelocity = 4000.0F;
-    // Below these, the sheet reads as at rest to the eye; settling here (rather than at zero) ends the
-    // frame stream promptly instead of chasing an imperceptible decaying tail.
+    // Below these the sheet reads as at rest, and settling ends the frame stream.
     constexpr float kSettledDisplacement = 0.25F;
     constexpr float kSettledVelocity = 2.5F;
     // A pointer delta beyond this cannot come from real input; `move()` clamps to it so a single huge,
     // finite delta cannot overflow to inf before `constrain()` gets a chance to bound the result.
     constexpr float kMaxDelta = 1.0e6F;
 
-    // Cubic Bernstein weights at t, shared by the pin and the shader's interpolation.
+    // Cubic Bernstein weights at t, the same weights the shader uses.
     std::array<float, 4> bernstein(float t) {
       const float s = 1 - t;
       return {s * s * s, 3 * t * s * s, 3 * t * t * s, t * t * t};
     }
+
+    float largestComponent(const DragPhysics::Sheet& sheet) {
+      float largest = 0;
+      for (const auto& point : sheet) {
+        largest = std::max({largest, std::abs(point[0]), std::abs(point[1])});
+      }
+      return largest;
+    }
   } // namespace
 
   void DragPhysics::begin(float width, float height, float grabX, float grabY, uint64_t transitionId) {
-    // Non-finite input stays inert rather than poisoning the sheet; a 0x0 window is valid (floored below).
+    // Non-finite input leaves the sheet untouched; a 0x0 window is valid (floored to 1x1).
     if (!std::isfinite(width) || !std::isfinite(height) || !std::isfinite(grabX) || !std::isfinite(grabY)) {
+      return;
+    }
+    if (m_active) {
+      m_grabbed = true;
+      resize(width, height, grabX, grabY);
       return;
     }
     *this = DragPhysics{};
@@ -150,7 +161,6 @@ namespace umbriel {
     if (!m_grabbed || !std::isfinite(dx) || !std::isfinite(dy) || (dx == 0 && dy == 0)) {
       return;
     }
-    // Bounded so a huge finite delta cannot overflow to inf before it reaches the sheet.
     dx = std::clamp(dx, -kMaxDelta, kMaxDelta);
     dy = std::clamp(dy, -kMaxDelta, kMaxDelta);
     for (int i = 0; i < kPoints; ++i) {
@@ -237,12 +247,8 @@ namespace umbriel {
 
   float DragPhysics::displacementBound() const { return std::min(kMaxDisplacementPx, std::max(m_width, m_height) / 5); }
 
-  float DragPhysics::maxDisplacement() const {
-    float largest = 0;
-    for (const auto& point : m_displacement) {
-      largest = std::max({largest, std::abs(point[0]), std::abs(point[1])});
-    }
-    return largest;
-  }
+  float DragPhysics::maxDisplacement() const { return largestComponent(m_displacement); }
+
+  float DragPhysics::maxVelocity() const { return largestComponent(m_velocity); }
 
 } // namespace umbriel
