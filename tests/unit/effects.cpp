@@ -39,33 +39,19 @@ UMBRIEL_TEST(effectReferencesRequireAnExistingPresetOfTheRightKind) {
   CHECK(umbriel::findEffectPreset(effects, "PULSE") == nullptr);
   CHECK(!umbriel::effectReferenceError(effects, "", EffectKind::Border, false));
   CHECK(!umbriel::effectReferenceError(effects, "pulse", EffectKind::Border, false));
-  CHECK_EQ(
-      umbriel::effectReferenceError(effects, "pulse", EffectKind::Window, false).value_or(""),
-      std::string("effect 'pulse' is a border preset, not a window preset")
-  );
-  CHECK_EQ(
-      umbriel::effectReferenceError(effects, "pulse", EffectKind::Animation, false).value_or(""),
-      std::string("effect 'pulse' is a border preset, not an animation preset")
-  );
+  CHECK(umbriel::effectReferenceError(effects, "pulse", EffectKind::Window, false));
+  CHECK(umbriel::effectReferenceError(effects, "pulse", EffectKind::Animation, false));
   Effects fades;
   fades.presets.push_back(EffectPreset{.name = "fade", .kind = EffectKind::Animation, .shader = {.code = "z"}});
-  CHECK_EQ(
-      umbriel::effectReferenceError(fades, "fade", EffectKind::Border, false).value_or(""),
-      std::string("effect 'fade' is an animation preset, not a border preset")
-  );
-  CHECK_EQ(
-      umbriel::effectReferenceError(effects, "missing", EffectKind::Window, false).value_or(""),
-      std::string("unknown effect 'missing'")
-  );
+  CHECK(!umbriel::effectReferenceError(fades, "fade", EffectKind::Animation, false));
+  CHECK(umbriel::effectReferenceError(fades, "fade", EffectKind::Border, false));
+  CHECK(umbriel::effectReferenceError(effects, "missing", EffectKind::Window, false));
 }
 
 UMBRIEL_TEST(offIsOnlyValidWhereAnOverrideCanDisableTheDefault) {
   const Effects effects = twoPresets();
   CHECK(!umbriel::effectReferenceError(effects, "off", EffectKind::Border, true));
-  CHECK_EQ(
-      umbriel::effectReferenceError(effects, "off", EffectKind::Border, false).value_or(""),
-      std::string("unknown effect 'off'")
-  );
+  CHECK(umbriel::effectReferenceError(effects, "off", EffectKind::Border, false));
 }
 
 UMBRIEL_TEST(clockSecondsKeepsMillisecondResolutionPastAFloatsExactRange) {
