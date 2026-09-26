@@ -34,12 +34,15 @@ enabled = false
 [layout]
 mode = "master"
 
+[effects.preset.windows_in_open_marker]
+kind = "animation"
+shader = "open-marker.glsl"
 [animation.windows_in]
 enabled = true
 duration_ms = 1600
 curve = "linear"
 style = "none"
-shader = "open-marker.glsl"
+effect = "windows_in_open_marker"
 
 [animation.windows_out]
 enabled = false

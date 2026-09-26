@@ -37,11 +37,14 @@ default_width_fraction = 0.5
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_configure_close]
+kind = "animation"
+shader = "configure-close.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = $OUT_MS
 curve = "linear"
-shader = "configure-close.glsl"
+effect = "windows_out_configure_close"
 
 [animation.windows_move]
 enabled = true

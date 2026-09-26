@@ -1,26 +1,31 @@
 # Custom animation shaders
 
-Custom fragment shaders are supported on every animation event. Configuration
-and authoring details are in [Animation](../user/animation.md#custom-glsl-shaders).
+Custom fragment shaders are supported on every animation event except
+`windows_drag`, whose slot runs the built-in deformation program. Configuration
+and authoring details are in [Animation](../user/animation.md#custom-effects).
 
 ## Configuration and compilation
 
-`readAnimationShader` uses a `Section` reader for the `shader` file path.
-Inline GLSL is not accepted. Paths resolve relative
-to the declaring TOML file, including included files. The loader registers file
-dependencies even when missing, and includes source contents in configuration
-equality. Validation rejects blank/NUL text, nonregular files, and inputs larger
-than 256 KiB. Nonblocking file opens prevent FIFOs hanging config reload.
+Animation events bind a preset by name: `[animation.<event>] effect = "<name>"` must name an
+`[effects.preset.<name>]` with `kind = "animation"`. `readShaderSource` (`src/config/effects.cpp`) reads
+the preset's `shader` path: inline GLSL is not accepted, paths resolve relative to the declaring TOML
+file including included files, missing files stay watched, contents take part in configuration
+equality, and blank/NUL text, nonregular files, and inputs larger than 256 KiB are rejected.
+Nonblocking opens prevent FIFOs hanging config reload.
 
-The C++ scene adapter caches one program per event, exact source, and renderer.
-Startup and animation config reload prepare programs before rendering. Failures
-are cached too, avoiding per-frame compiler retries. UmbrielFX supplies a GLSL
+`EffectRegistry` (`src/scene/effect_registry.cpp`) caches one program per referenced preset, kind, exact
+source, and renderer. Startup and any reload that changes `[animation]` or `[effects]` prepare programs
+before rendering. A reload while a transition is running keeps that transition's program but rebinds
+its uniforms from the new configuration, so a program reading `umbriel_time` or the palette can see
+them reset for the rest of that transition. Failures are cached too, avoiding per-frame compiler
+retries. UmbrielFX supplies a GLSL
 ES 1.00 wrapper around `vec4 animation(vec2 uv)`, normalized target sampling,
 target-local previous-result sampling, a stable four-channel random seed,
 logical target size, eased and linear progress, and transition direction.
-Compiler diagnostics retain source line numbers and the file/event label.
+Compiler diagnostics retain source line numbers and the label: the shader file path, or
+`effects.preset.<name>` when the preset has no file.
 
-Without a custom shader, `windows_in` and `windows_out` bind a built-in fade
+Without an effect, `windows_in` and `windows_out` bind a built-in fade
 program through `lifecycleShader`, except for the `slide` style, whose opacity
 curve differs from its progress. The window, its subsurfaces, and its border
 are composited once and faded as a group, so overlapping surfaces never show
@@ -33,15 +38,18 @@ start from a partial alpha that normalized progress does not carry.
 ## Scene processing
 
 Effect state is attached through scene-node addons, preserving the scene ABI.
-Nine ordered slots permit simultaneous effects on a node. Descendant effects
-run before ancestor effects; same-node order is dimming, border, movement,
-opening, closing, scratchpad, layers, workspaces, then overview.
+Thirteen ordered slots permit simultaneous effects on a node. Descendant
+effects run before ancestor effects; same-node order is window, overlay, border
+effect, border, dimming, movement, drag, opening, closing, scratchpad, layers,
+workspaces, then overview. Slots 0-2 are persistent effects
+([Effects](effects.md)); the rest are animation events.
 
 | Event | Target and timeline owner |
 | --- | --- |
 | `windows_in` | View tree and existing map fade |
 | `windows_out` | Close snapshot, including a card closed from overview, and existing close fade |
 | `windows_move` | View tree and position/presentation-size animation |
+| `windows_drag` | View content tree's drag slot and the `DragPhysics` sheet |
 | `workspaces` | Output workspace view root and workspace slide |
 | `overview` | Per-output overview tree when entering or leaving overview and zoom/row settling |
 | `scratchpad` | View show/hide fade and separate dim/blur backdrop targets |
@@ -94,21 +102,22 @@ Sampling transforms account for output rotation and fractional scale, with
 transparent samples outside target/output bounds. Drawing honors ancestor clips.
 
 Shaders that call `umbriel_sample_previous` receive the prior successfully
-submitted post-shader result for the same node, slot, output, and renderer. The
-first render uses the current input. History uses normalized target coordinates,
-so it follows movement and is resampled across target-size changes. A transition
-ID distinguishes retargets from spring progress moving backward. Snapshot
-creation preserves that ID and seed and transfers feedback history before the
-source target is retired.
+submitted post-shader result for the same node, slot, output, renderer, and
+composition role ([Effects](effects.md#capture)). The first render uses the
+current input. History uses normalized target coordinates, so it follows
+movement and is resampled across target-size changes. A transition ID
+distinguishes retargets from spring progress moving backward. Snapshot creation
+preserves that ID and seed and transfers feedback history before the source
+target is retired.
 
 Previous-result feedback lazily allocates two target-sized buffers per active
-node, slot, and output. The pair costs 8 bytes per pixel in SDR and 16 bytes per
-pixel with an FP16 color-management target, before allocator overhead. History
-is reset for a new transition, program, output transform, working format, or
-renderer. Allocation or import failure disables feedback for that transition
-and keeps direct shader rendering available. Front-buffer promotion is deferred
-until render-pass submission succeeds. Shadow silhouette captures may read the
-same prior result but never advance it.
+node, slot, output, and composition role. The pair costs 8 bytes per pixel in
+SDR and 16 bytes per pixel with an FP16 color-management target, before
+allocator overhead. History is reset for a new transition, program, output
+transform, working format, or renderer. Allocation or import failure disables
+feedback for that transition and keeps direct shader rendering available.
+Front-buffer promotion is deferred until render-pass submission succeeds.
+Shadow silhouette captures may read the same prior result but never advance it.
 
 Intermediate buffers are pooled per output and nesting depth, allocated on
 demand and dropped after effects end. Composition preserves the working format,
@@ -117,9 +126,11 @@ an effect samples a reconstructed backdrop containing outer captures and earlier
 siblings. Texture imports are checked before capture; allocation/import failure
 leaves ordinary rendering available. Capture depth is bounded at 24.
 
-While a scene has active effects, opaque-region culling and direct scanout are
-disabled and outputs receive full damage. This conservative policy allows
-arbitrary target sampling and changes in alpha without stale pixels.
+While any node in a scene carries an animation slot, opaque-region culling and
+direct scanout are disabled and every output receives full damage. This
+conservative policy allows arbitrary target sampling and changes in alpha
+without stale pixels. Persistent effects confine these costs to the nodes and
+outputs they affect ([Effects](effects.md#state-scanout-damage-and-culling)).
 
 ## Lifetime
 
@@ -157,7 +168,7 @@ already scaled box.
 A window that opens fullscreen rests in the output box its workspace assigns,
 which the arrange that follows its map owns. `popin` and `zoom` therefore do not
 tween the node: `View::fullscreenOpeningActive` keeps that box authoritative
-while the fade centres a scaled presentation inside it on every tick, and the
+while the fade centers a scaled presentation inside it on every tick, and the
 layout paths record the resting origin instead of animating toward it. The
 fullscreen backdrop is the window's own letterbox and follows the presented box,
 so the opener scales with its surround rather than inside an output-wide one.
@@ -168,7 +179,7 @@ view root. It is a fixed canvas: `CloseSnapshot::present(canvasX, canvasY,
 visible)` only translates it with its workspace's slide and hides it while that
 workspace is not showing. `umbriel_size` is therefore constant for a close
 snapshot unless the built-in `popin` or `zoom` style shrinks it, which scales
-the frozen buffers, borders, and shadow toward the captured box's centre using
+the frozen buffers, borders, and shadow toward the captured box's center using
 `1 - alpha`, the same eased progress its fade follows.
 
 The snapshot's `windows_out` `AnimatedValue` owns eased progress, linear
@@ -191,7 +202,7 @@ clock, over the live buffers. Both layers are scaled into the same presented
 box on every presentation change, round against the same content box, and
 multiply the view's opacity. The clones reject input and live inside the view
 tree, so movement, clipping, and view shaders apply to them. Unmap, destroy,
-and a cancelled size animation discard the capture.
+and a canceled size animation discard the capture.
 
 When movement completes, `completeLayoutMotion` keeps the compositor-owned
 endpoint until both the configure serial and committed content dimensions
@@ -238,7 +249,7 @@ sandbox shader execution or prevent an expensive shader from stalling a driver.
 
 ## Regression coverage
 
-`tests/unit/animation_shader.cpp` exercises source validation and file reads.
+`tests/unit/shader_source.cpp` exercises source validation and file reads.
 `tests/unit/config_load.cpp` covers all event sections, included-file provenance,
 source-content reload effects, dependency deduplication, and dependency removal.
 `tests/unit/animation.cpp` verifies that tiled geometry preserves safe curves and
@@ -260,7 +271,7 @@ event, both layer lifecycle directions, rotated fractional-scale UVs, nested
 sampling, output containment, invalid-GLSL fallback, and a tiled close effect
 that outlasts its configured `windows_move` timeline. Checks 193 and 195 also
 verify that a tiled opener runs its own `windows_in` in its final slot on the
-same tick its established neighbours begin to reflow, with each clock keeping
+same tick its established neighbors begin to reflow, with each clock keeping
 its own duration.
 Check 198 covers tiled and non-layout close snapshots following workspace
 translation and visibility while their independent lifecycle continues.
@@ -275,7 +286,7 @@ orderings against `windows_move` and asserts that the snapshot holds its
 captured box for every sampled frame. Check 207 interrupts scrolling reflow
 with a second close and verifies independent shader phases, monotonic survivor
 motion on a single movement clock, and no summed delay or starvation. Check 191 fades a window whose opaque subsurface covers its parent and verifies
-that the parent never shows through while opening or closing. Check 209 redraws a reflowing neighbour in a new colour at its new size and
+that the parent never shows through while opening or closing. Check 209 redraws a reflowing neighbor in a new color at its new size and
 observes blended pixels mid-reflow, then the redrawn frame alone. Check 208 closes
 the root leaf of a five-window dwindle tree and verifies that every changing
 survivor follows an overshooting movement curve across its full configured
@@ -283,7 +294,8 @@ clock instead of pinning at its first endpoint crossing. The overview check
 verifies that a card close remains outside workspace vacancy coordination and
 that the closing card drops its copied movement effect before `windows_out`
 samples the captured client buffer. The `183_animation_shader_lifetime` and
-`184_animation_squash` checks also cover
+`184_animation_squash` checks load the bundled
+`examples/effects/animation/{reveal,squash}` sources and also cover
 program retention across reloads, close-during-open snapshots, shader removal,
 and the bundled squash effect's intermediate pixels. Bright-green shadow
 assertions in `184_animation_squash`, `185_animation_shadows`,
@@ -306,6 +318,10 @@ while underdamped spring progress reverses. Negative controls replace feedback
 with current-target sampling, force a reused seed, suppress transition renewal,
 and refresh spring identity on every tick. Each check fails on its intended
 behavior.
+
+`600_renderer_recovery` verifies that the built-in fade compiles once per
+renderer and that an animation preset rebinds to the replacement renderer's
+program.
 
 Headless checks do not establish physical HDR output correctness or hardware
 GPU-reset recovery. Those require suitable hardware and a running-session check.

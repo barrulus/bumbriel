@@ -26,12 +26,15 @@ enabled = false
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_tiled_close_green]
+kind = "animation"
+shader = "tiled-close-green.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = 1600
 curve = "linear"
 style = "fade"
-shader = "tiled-close-green.glsl"
+effect = "windows_out_tiled_close_green"
 
 [animation.windows_move]
 enabled = true

@@ -12,10 +12,11 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/animation_shader.h"
+#include "scene/effect_registry.h"
 #include "scene/surface_blur.h"
 #include "server/server.h"
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 #include "view/maximize.h"
 #include "view/xdg_size.h"
@@ -276,6 +277,7 @@ namespace umbriel {
       m_acceptClientMaximizeIdle = nullptr;
     }
     m_server->unregisterAnimatable(this);
+    m_effects.detach();
     clearViewSurfaceWatches();
     setWorkspace(nullptr);
     if (m_map.link.next != nullptr) {
@@ -1063,6 +1065,94 @@ namespace umbriel {
     raiseToTop();
   }
 
+  bool View::beginDragPhysics(double localX, double localY) {
+    // Null while animations or physics are off, or when the program failed to compile: the window stays rigid.
+    if (effectRegistry().deformationShader() == nullptr) {
+      return false;
+    }
+    m_dragGrabX = localX;
+    m_dragGrabY = localY;
+    const std::optional<DragFit> fit = dragPhysicsFit();
+    if (!fit) {
+      return false;
+    }
+    m_dragBounds = fit->bounds;
+    m_dragPhysics.begin(
+        static_cast<float>(fit->bounds.width), static_cast<float>(fit->bounds.height), fit->grab[0], fit->grab[1],
+        m_dragPhysics.active() ? m_dragPhysics.transitionId() : nextAnimationTransitionId()
+    );
+    return true;
+  }
+
+  void View::setDragPhysicsGrab(double localX, double localY) {
+    m_dragGrabX = localX;
+    m_dragGrabY = localY;
+    fitDragPhysics(true);
+  }
+
+  void View::fitDragPhysics(bool grabMoved) {
+    if (!m_dragPhysics.grabbed() && !m_dragPhysics.active()) {
+      return;
+    }
+    const std::optional<DragFit> fit = dragPhysicsFit();
+    if (!fit || (!grabMoved && wlr_box_equal(&fit->bounds, &m_dragBounds))) {
+      return;
+    }
+    // The sheet spans the box the drag slot draws over, which follows presented resizes and decorations.
+    m_dragBounds = fit->bounds;
+    m_dragPhysics.resize(
+        static_cast<float>(fit->bounds.width), static_cast<float>(fit->bounds.height), fit->grab[0], fit->grab[1]
+    );
+  }
+
+  std::optional<View::DragFit> View::dragPhysicsFit() const {
+    wlr_box bounds{};
+    if (!wlr_scene_node_effect_bounds(&m_contentTree->node, &bounds)) {
+      return std::nullopt;
+    }
+    // The bounds are content-tree-local; the grab is frame-local.
+    const auto grab = DragPhysics::grabIn(
+        static_cast<float>(bounds.x), static_cast<float>(bounds.y), static_cast<float>(bounds.width),
+        static_cast<float>(bounds.height), m_dragGrabX - m_contentTree->node.x, m_dragGrabY - m_contentTree->node.y
+    );
+    return DragFit{.bounds = bounds, .grab = grab};
+  }
+
+  bool View::dragPhysicsOn(const Output* output) const {
+    int x = 0;
+    int y = 0;
+    if (output == nullptr || !wlr_scene_node_coords(&m_contentTree->node, &x, &y)) {
+      return false;
+    }
+    const int expand = dragPhysicsExpand();
+    const wlr_box drawn{
+        x + m_dragBounds.x - expand, y + m_dragBounds.y - expand, m_dragBounds.width + 2 * expand,
+        m_dragBounds.height + 2 * expand
+    };
+    const wlr_box outputBox = output->layoutBox();
+    wlr_box overlap{};
+    return wlr_box_intersection(&overlap, &drawn, &outputBox);
+  }
+
+  int View::dragPhysicsExpand() const { return static_cast<int>(std::ceil(m_dragPhysics.displacementBound())) + 2; }
+
+  void View::moveDragPhysics(double dx, double dy) {
+    if (!m_dragPhysics.grabbed()) {
+      return;
+    }
+    const bool wasActive = m_dragPhysics.active();
+    m_dragPhysics.move(static_cast<float>(dx), static_cast<float>(dy));
+    if (m_dragPhysics.active()) {
+      if (!wasActive) {
+        // Integration starts at the motion that wakes the sheet.
+        m_dragPhysicsMsec = m_server->animationClockMsec();
+      }
+      scheduleFrame();
+    }
+  }
+
+  void View::endDragPhysics() { m_dragPhysics.release(); }
+
   void View::restoreHomePresentation() {
     // The drag derived its own presented size and crop; drop them so the
     // resting presentation below is re-applied through a real reconfigure.
@@ -1325,8 +1415,12 @@ namespace umbriel {
     scheduleFrame();
   }
 
-  void View::syncAnimationShaders(wlr_scene_tree* target, wlr_scene_node* border) {
-    if (target == nullptr) {
+  void View::syncAnimationShaders(
+      wlr_scene_tree* target, wlr_scene_node* border, wlr_scene_node* surface, const BorderEffectGate* gate,
+      Output* cardOutput
+  ) {
+    const bool ownTrees = target == nullptr;
+    if (ownTrees) {
       target = m_contentTree;
       if (m_decoration.borderTree() != nullptr) {
         border = &m_decoration.borderTree()->node;
@@ -1337,9 +1431,13 @@ namespace umbriel {
     }
     if (!m_mapped) {
       wlr_scene_node_clear_animations(&target->node);
+      if (ownTrees) {
+        m_dragSlotBound = false;
+      }
       if (border != nullptr) {
         wlr_scene_node_clear_animations(border);
       }
+      m_effects.detach();
       return;
     }
     auto* renderer = m_server->renderer();
@@ -1355,6 +1453,28 @@ namespace umbriel {
     } else {
       updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, m_presentation.animation());
     }
+    // Only the view's own content tree deforms; overview cards stay rigid.
+    if (ownTrees && m_dragPhysics.active()) {
+      fx_animation_parameters parameters{};
+      parameters.progress = 1.0F;
+      parameters.linear_progress = 1.0F;
+      parameters.direction = 1.0F;
+      parameters.transition_id = m_dragPhysics.transitionId();
+      parameters.expand = dragPhysicsExpand();
+      if (fx_uniform* sheet =
+              fx_parameters_add_uniform(&parameters, "umbriel_deformation", FX_UNIFORM_VEC2, DragPhysics::kPoints)) {
+        const DragPhysics::Sheet displacement = m_dragPhysics.normalizedDisplacement();
+        for (int i = 0; i < DragPhysics::kPoints; ++i) {
+          sheet->floats[i * 2] = displacement[i][0];
+          sheet->floats[i * 2 + 1] = displacement[i][1];
+        }
+      }
+      wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, effectRegistry().deformationShader(), &parameters);
+      m_dragSlotBound = true;
+    } else if (ownTrees && m_dragSlotBound) {
+      wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, nullptr, nullptr);
+      m_dragSlotBound = false;
+    }
     updateAnimationShader(&target->node, renderer, AnimationEvent::DimUnfocused, m_focusDim);
     updateAnimationShader(
         &target->node, renderer, m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn, m_fade
@@ -1366,6 +1486,35 @@ namespace umbriel {
     updateAnimationShader(
         border, renderer, AnimationEvent::Border, m_borderColorAnim, m_borderFocusedState ? 1.0F : -1.0F
     );
+    // Persistent effects. With none configured this costs one string check per slot and never reads the clock.
+    if (m_effects.configured() || effectRegistry().active()) {
+      wlr_scene_node* captureSurface = nullptr;
+      if (ownTrees && m_effects.needsSurface()) {
+        surface = toplevelSurfaceTreeNode(m_contentTree, m_toplevel->base->surface);
+        captureSurface = m_captureScene != nullptr
+            ? toplevelSurfaceTreeNode(&m_captureScene->tree, m_toplevel->base->surface)
+            : nullptr;
+      }
+      const BorderEffectGate ownGate{
+          .focused = m_borderFocusedState,
+          .decorated = decorated(),
+          .urgent = m_urgent,
+          .fullscreen = m_toplevel->scheduled.fullscreen,
+      };
+      Output* output = cardOutput != nullptr ? cardOutput : currentOutput();
+      m_effects.apply({
+          .surface = surface,
+          .border = border,
+          .captureSurface = captureSurface,
+          .gate = gate != nullptr ? *gate : ownGate,
+          .seconds = m_effects.configured() && output != nullptr ? output->effectSeconds() : 0.0F,
+#ifdef UMBRIEL_TEST_IPC
+          .clockAdvancing = !m_server->animationClockFrozen(),
+#endif
+          .output = output,
+          .outputBox = output != nullptr ? output->layoutBox() : wlr_box{},
+      });
+    }
   }
 
   bool View::tickAnimations(uint64_t nowMsec) {
@@ -1466,11 +1615,26 @@ namespace umbriel {
       m_decoration.setBorderRawColor(m_borderColorAnim.current(), effectiveOpacity());
       active = active || m_borderColorAnim.animating();
     }
+    if (m_dragPhysics.active() || m_dragPhysics.grabbed()) {
+      if (effectRegistry().deformationShader() == nullptr) {
+        // Without the program (physics turned off), the window stays rigid for the rest of the drag.
+        m_dragPhysics = DragPhysics{};
+      } else if (m_dragPhysics.active()) {
+        fitDragPhysics(false);
+        const auto elapsed = static_cast<int64_t>(nowMsec - m_dragPhysicsMsec);
+        m_dragPhysicsMsec = nowMsec;
+        active = m_dragPhysics.tick(static_cast<double>(elapsed) / 1000.0) || active;
+      }
+    }
     syncAnimationShaders();
     return active;
   }
 
   bool View::animatesOn(const Output* output) const {
+    // A dragged window's sheet draws on every output its box reaches.
+    if (m_dragPhysics.active() && dragPhysicsOn(output)) {
+      return true;
+    }
     const Workspace* workspace = m_workspace;
     if (workspace != nullptr && workspace->group() != nullptr) {
       return workspace->group()->output() == output;
@@ -1486,7 +1650,8 @@ namespace umbriel {
         || m_fade.animating()
         || m_borderColorAnim.animating()
         || m_focusDim.animating()
-        || m_resizeCrossfade.active();
+        || m_resizeCrossfade.active()
+        || m_dragPhysics.active();
   }
 
   bool View::layoutFullscreen() const { return m_toplevel->scheduled.fullscreen; }
@@ -2322,6 +2487,13 @@ namespace umbriel {
     }
 
     wlr_scene_node_copy_animations_for_snapshot(&snap->node, &m_contentTree->node);
+    // Window and overlay effects live on the surface tree; the snapshot's content tree takes them over with time
+    // frozen.
+    if (m_effects.needsSurface()) {
+      if (wlr_scene_node* surface = toplevelSurfaceTreeNode(m_contentTree, m_toplevel->base->surface)) {
+        wlr_scene_node_copy_animations_for_snapshot(&content->node, surface);
+      }
+    }
     // A close snapshot owns its windows_out lifecycle. Keep a possible interrupted windows_in effect, but do not
     // freeze windows_move into the snapshot.
     wlr_scene_node_set_animation(&snap->node, static_cast<unsigned>(AnimationEvent::WindowsMove), nullptr, nullptr);
@@ -3088,6 +3260,17 @@ namespace umbriel {
     const CloseSnapshotId snapshot = beginCloseAnimation();
     // The closing snapshot must retain any in-flight opening shader first.
     wlr_scene_node_clear_animations(&m_contentTree->node);
+    m_dragSlotBound = false;
+    // The snapshot holds the frozen deformation; the live sheet ends here.
+    m_dragPhysics = DragPhysics{};
+    // The window slots leave with the snapshot; a remap binds them again.
+    if (m_effects.needsSurface()) {
+      wlr_surface* surface = m_toplevel->base->surface;
+      clearWindowEffectSlots(toplevelSurfaceTreeNode(m_contentTree, surface));
+      if (m_captureScene != nullptr) {
+        clearWindowEffectSlots(toplevelSurfaceTreeNode(&m_captureScene->tree, surface));
+      }
+    }
     cancelFadeAnimation();
     // The workspace owns the snapshot's visibility and its slide translation from here.
     if (snapshot != kInvalidCloseSnapshot && m_workspace != nullptr) {
@@ -3105,6 +3288,7 @@ namespace umbriel {
       setSceneParent(m_workspace ? m_workspace->viewLayer(m_tiled) : m_server->xdgTree());
     }
     m_mapped = false;
+    m_effects.detach();
     m_openingParentRequested = false;
     m_acceptClientMaximizeRequests = false;
     m_consumeRestoredMaximizeRequest = false;
@@ -4618,10 +4802,20 @@ namespace umbriel {
     const ResolvedWindowRule& rule = resolved != nullptr ? *resolved : resolvedRules();
     m_appliedRuleState = ruleState();
     // Tile spacing stays on the global border width, so a decoration change redraws this window without an arrange.
-    if (m_decoration.applyRule(rule)) {
+    const bool ringChanged = m_decoration.applyRule(rule);
+    m_effects.resolve(config().effects, rule);
+    const bool paddingChanged = m_decoration.setBorderPadding(m_effects.borderPadding());
+    if (ringChanged || paddingChanged) {
       updateBorderGeometry();
       applyCornerRadius();
       updateShadow();
+    }
+    if (paddingChanged) {
+      // Overview cards lay their rings out from the padding too.
+      if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
+        overview->onViewPresentationChanged(this);
+        scheduleFrame();
+      }
     }
     const Config::Colors::Border& colors = m_decoration.borderColors();
     const std::array<float, 4>& targetBorder = m_borderFocusedState ? colors.focused : colors.unfocused;

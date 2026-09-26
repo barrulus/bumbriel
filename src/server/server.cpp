@@ -21,6 +21,7 @@
 #include "scene/cheatsheet.h"
 #include "scene/color.h"
 #include "scene/config_banner.h"
+#include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
@@ -33,7 +34,7 @@
 #include "xwayland/supervisor.h"
 
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 
 #include <algorithm>
@@ -269,7 +270,7 @@ namespace umbriel {
     return pid > 0 && pid == m_xwayland->pid();
   }
 
-  Server::Server() {
+  Server::Server() : m_effects(*this) {
     m_nested = std::getenv("WAYLAND_DISPLAY") != nullptr
         || std::getenv("WAYLAND_SOCKET") != nullptr
         || std::getenv("DISPLAY") != nullptr;
@@ -451,6 +452,7 @@ namespace umbriel {
     wlr_scene_node_set_enabled(&m_lockBlank->node, false);
     wlr_scene_node_set_enabled(&m_lockTree->node, false);
     wlr_scene_node_lower_to_bottom(&m_backdrop->node);
+    m_effects.syncLightLayer();
 
     m_gammaManager = wlr_gamma_control_manager_v1_create(m_display);
     m_setGamma.notify = onSetGamma;
@@ -531,7 +533,13 @@ namespace umbriel {
     wlr_screencopy_manager_v1_create(m_display);
     m_exportDmabufManager = wlr_export_dmabuf_manager_v1_create(m_display);
     wlr_ext_output_image_capture_source_manager_v1_create(m_display, 1);
-    wlr_ext_image_copy_capture_manager_v1_create(m_display, 1);
+    wlr_ext_image_copy_capture_manager_v1* imageCopyManager =
+        wlr_ext_image_copy_capture_manager_v1_create(m_display, 1);
+    if (imageCopyManager == nullptr) {
+      throw std::runtime_error("failed to create image-copy-capture manager");
+    }
+    m_newImageCopySession.notify = onNewImageCopySession;
+    wl_signal_add(&imageCopyManager->events.new_session, &m_newImageCopySession);
 
     // Create the manager so apply/test listeners stay wired, but leave heads empty (see updateOutputManagerConfig).
     // Advertising a full configuration on bind currently takes down the desktop shell from this flake.
@@ -540,8 +548,6 @@ namespace umbriel {
     wl_signal_add(&m_outputManager->events.apply, &m_outputManagerApply);
     m_outputManagerTest.notify = onOutputManagerTest;
     wl_signal_add(&m_outputManager->events.test, &m_outputManagerTest);
-    m_outputLayoutChange.notify = onOutputLayoutChange;
-    wl_signal_add(&m_outputLayout->events.change, &m_outputLayoutChange);
 
     m_xdgActivation = wlr_xdg_activation_v1_create(m_display);
     m_newActivationToken.notify = onNewActivationToken;
@@ -550,6 +556,9 @@ namespace umbriel {
     wl_signal_add(&m_xdgActivation->events.request_activate, &m_requestActivate);
 
     m_cursor = std::make_unique<Cursor>(*this);
+    // Registered after the cursor attaches to the layout: wlr_cursor's own listener clamps the pointer first.
+    m_outputLayoutChange.notify = onOutputLayoutChange;
+    wl_signal_add(&m_outputLayout->events.change, &m_outputLayoutChange);
     m_seat = std::make_unique<Seat>(*this);
     m_padKeyboardFocusChange.notify = onPadKeyboardFocusChange;
     wl_signal_add(&m_seat->wlr()->keyboard_state.events.focus_change, &m_padKeyboardFocusChange);
@@ -591,6 +600,7 @@ namespace umbriel {
     wl_list_remove(&m_newVirtualPointer.link);
     wl_list_remove(&m_newIdleInhibitor.link);
     wl_list_remove(&m_newShortcutsInhibitor.link);
+    wl_list_remove(&m_newImageCopySession.link);
     wl_list_remove(&m_newActivationToken.link);
     wl_list_remove(&m_requestActivate.link);
     wl_list_remove(&m_workspaceCommit.link);
@@ -914,6 +924,19 @@ namespace umbriel {
     }
   }
 
+  void Server::setEffectLightLayer(bool present) {
+    if (present && m_effectLightTree == nullptr && m_dragIconTree != nullptr) {
+      // Ring illumination stays below panels and pinned content, above dragged windows.
+      m_effectLightTree = wlr_scene_tree_create(&m_scene->tree);
+      wlr_scene_node_place_above(&m_effectLightTree->node, &m_dragIconTree->node);
+      wlr_scene_set_effect_light_layer(m_scene, m_effectLightTree);
+    } else if (!present && m_effectLightTree != nullptr) {
+      wlr_scene_set_effect_light_layer(m_scene, nullptr);
+      wlr_scene_node_destroy(&m_effectLightTree->node);
+      m_effectLightTree = nullptr;
+    }
+  }
+
   wlr_scene_tree* Server::shellLayerTree(uint32_t layer) const {
     if (layer >= kLayerCount) {
       return m_shellLayerTrees[ZWLR_LAYER_SHELL_V1_LAYER_TOP];
@@ -1103,9 +1126,13 @@ namespace umbriel {
     const int innerWidth = static_cast<int>(std::lround(captured.innerWidth * ringScale));
     const int outerWidth = static_cast<int>(std::lround(captured.outerWidth * ringScale));
     const int radius = static_cast<int>(std::lround(captured.cornerRadius * ringScale));
-    const BorderRing ring = makeBorderRing(width, height, radius, innerWidth, outerWidth);
+    const int padding = static_cast<int>(std::lround(captured.padding * ringScale));
+    const BorderRing ring = makeBorderRing(width, height, radius, innerWidth, outerWidth, padding);
     const bool ringVisible = innerWidth + outerWidth > 0;
-    const wlr_box treeClip = m_borders.empty() || !ringVisible ? wlr_box{0, 0, width, height} : ring.box;
+    wlr_box treeClip = m_borders.empty() || !ringVisible ? wlr_box{0, 0, width, height} : ring.box;
+    // A frozen drag deformation draws past the box by its slot's expand.
+    const int expand = wlr_scene_node_animation_expand(&m_tree->node);
+    treeClip = {treeClip.x - expand, treeClip.y - expand, treeClip.width + 2 * expand, treeClip.height + 2 * expand};
     wlr_scene_tree_set_clip(m_tree, &treeClip);
 
     if (m_content != nullptr && m_captured.width > 0 && m_captured.height > 0) {
@@ -1318,6 +1345,12 @@ namespace umbriel {
     if (!m_frozenAnimationClockMsec) {
       m_frozenAnimationClockMsec = animationClockMsec();
     }
+    // The frozen instant may equal the last tick's; ticking it once more lets views re-sync their effects'
+    // clockAdvancing on the next frame instead of skipping it as a repeat.
+    m_lastAnimTickMsec = 0;
+    for (const auto& output : m_outputs) {
+      wlr_output_schedule_frame(output->wlr());
+    }
   }
 
   bool Server::advanceAnimationClock(uint64_t ms) {
@@ -1346,6 +1379,9 @@ namespace umbriel {
       m_animationClockOffsetMsec =
           static_cast<int64_t>(*m_frozenAnimationClockMsec) - static_cast<int64_t>(monotonicClockMsec());
       m_frozenAnimationClockMsec.reset();
+    }
+    for (const auto& output : m_outputs) {
+      wlr_output_schedule_frame(output->wlr());
     }
   }
 

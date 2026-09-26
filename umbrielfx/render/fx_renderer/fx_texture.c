@@ -424,6 +424,39 @@ static struct wlr_texture *fx_texture_from_framebuffer(
 	return &texture->wlr_texture;
 }
 
+bool fx_framebuffer_copy(struct fx_framebuffer *target,
+		struct fx_framebuffer *source,
+		enum wlr_color_transfer_function transfer_function) {
+	struct fx_renderer *renderer = target->renderer;
+	struct wlr_texture *texture = fx_texture_from_framebuffer(renderer,
+		source, source->buffer);
+	if (texture == NULL) {
+		return false;
+	}
+
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
+		&renderer->wlr_renderer, target->buffer, NULL);
+	if (pass == NULL) {
+		wlr_texture_destroy(texture);
+		return false;
+	}
+
+	struct wlr_box box = {
+		.width = target->buffer->width,
+		.height = target->buffer->height,
+	};
+	wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options) {
+		.texture = texture,
+		.dst_box = box,
+		.filter_mode = WLR_SCALE_FILTER_NEAREST,
+		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+		.transfer_function = transfer_function,
+	});
+	bool ok = wlr_render_pass_submit(pass);
+	wlr_texture_destroy(texture);
+	return ok;
+}
+
 static bool update_sdr_capture_buffer(struct fx_framebuffer *output_buffer) {
 	struct fx_offscreen_buffers *output_buffers = output_buffer->output_buffers;
 	struct fx_framebuffer *blend_buffer = output_buffer->blend_buffer;
@@ -485,32 +518,8 @@ static bool update_sdr_capture_buffer(struct fx_framebuffer *output_buffer) {
 		(*capture_buffer)->sdr_capture_parent = output_buffer;
 	}
 
-	struct wlr_texture *texture = fx_texture_from_framebuffer(renderer,
-		blend_buffer, blend_buffer->buffer);
-	if (texture == NULL) {
-		return false;
-	}
-
-	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
-		&renderer->wlr_renderer, (*capture_buffer)->buffer, NULL);
-	if (pass == NULL) {
-		wlr_texture_destroy(texture);
-		return false;
-	}
-
-	struct wlr_box box = {
-		.width = output_buffer->buffer->width,
-		.height = output_buffer->buffer->height,
-	};
-	wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options) {
-		.texture = texture,
-		.dst_box = box,
-		.filter_mode = WLR_SCALE_FILTER_NEAREST,
-		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
-		.transfer_function = WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR,
-	});
-	bool valid = wlr_render_pass_submit(pass);
-	wlr_texture_destroy(texture);
+	bool valid = fx_framebuffer_copy(*capture_buffer, blend_buffer,
+		WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR);
 	if (output_buffers != NULL) {
 		output_buffers->sdr_capture_generation = valid
 			? output_buffer->output_generation : 0;
@@ -530,7 +539,9 @@ static struct wlr_texture *fx_texture_from_dmabuf(
 	}
 
 	struct fx_framebuffer *texture_buffer = buffer;
-	if (buffer->capture_sdr) {
+	if (buffer->effect_capture_valid && buffer->effect_capture_buffer != NULL) {
+		texture_buffer = buffer->effect_capture_buffer;
+	} else if (buffer->capture_sdr) {
 		if (!update_sdr_capture_buffer(buffer)) {
 			return NULL;
 		}

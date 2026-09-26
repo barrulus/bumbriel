@@ -30,10 +30,16 @@ duration_ms = 2000
 curve = "linear"
 [animation.windows_move]
 enabled = false
-[animation.windows_in]
+[effects.preset.windows_in_half]
+kind = "animation"
 shader = "half.glsl"
-[animation.windows_out]
+[animation.windows_in]
+effect = "windows_in_half"
+[effects.preset.windows_out_identity]
+kind = "animation"
 shader = "identity.glsl"
+[animation.windows_out]
+effect = "windows_out_identity"
 [[window_rule]]
 match.title = "^shadow-caster$"
 default_floating = true

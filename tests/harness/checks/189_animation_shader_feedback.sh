@@ -49,13 +49,19 @@ enabled = false
 enabled = true
 duration_ms = 7000
 curve = "linear"
+[effects.preset.windows_in_feedback]
+kind = "animation"
+shader = "feedback.glsl"
 [animation.windows_in]
 style = "none"
-shader = "feedback.glsl"
+effect = "windows_in_feedback"
+[effects.preset.windows_out_feedback_passthrough]
+kind = "animation"
+shader = "feedback-passthrough.glsl"
 [animation.windows_out]
 duration_ms = 1200
 style = "fade"
-shader = "feedback-passthrough.glsl"
+effect = "windows_out_feedback_passthrough"
 [animation.windows_move]
 enabled = false
 

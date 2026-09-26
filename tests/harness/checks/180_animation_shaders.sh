@@ -22,11 +22,17 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 enabled = true
 duration_ms = 1600
 curve = "linear"
+[effects.preset.windows_in_animation]
+kind = "animation"
+shader = "animation.glsl"
 [animation.windows_in]
 style = "fade"
-shader = "animation.glsl"
-[animation.windows_out]
+effect = "windows_in_animation"
+[effects.preset.windows_out_fixture_1]
+kind = "animation"
 shader = "fixture-1.glsl"
+[animation.windows_out]
+effect = "windows_out_fixture_1"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 

@@ -719,6 +719,41 @@ UMBRIEL_TEST(tearingPolicyDoesNotReapplyOutputStateOrInvalidateOverview) {
   CHECK(unrelatedEffects.viewChrome);
 }
 
+UMBRIEL_TEST(animationEventEffectsRaiseEffects) {
+  const Config before;
+  Config opening = before;
+  opening.animation.windowsIn.effect = "fade";
+  CHECK(ConfigEffects::between(before, opening).effects);
+  Config overview = before;
+  overview.animation.overview.effect = "zoom";
+  CHECK(ConfigEffects::between(before, overview).effects);
+  Config slower = before;
+  slower.animation.overview.durationMs = 400;
+  CHECK(!ConfigEffects::between(before, slower).effects);
+}
+
+UMBRIEL_TEST(windowRulesRaiseEffectsOnlyWhenARuleSelectsAnEffect) {
+  Config before;
+  WindowRule translucent;
+  translucent.appIdPattern = "^foot$";
+  translucent.opacity = 0.9;
+  before.windowRules.push_back(translucent);
+  Config opacityOnly = before;
+  opacityOnly.windowRules[0].opacity = 0.8;
+  const ConfigEffects opacityEffects = ConfigEffects::between(before, opacityOnly);
+  CHECK(opacityEffects.viewChrome);
+  CHECK(!opacityEffects.effects);
+
+  Config selecting;
+  WindowRule lines;
+  lines.appIdPattern = "^foot$";
+  lines.windowEffect = "lines";
+  selecting.windowRules.push_back(lines);
+  Config rematched = selecting;
+  rematched.windowRules[0].appIdPattern = "^kitty$";
+  CHECK(ConfigEffects::between(selecting, rematched).effects);
+}
+
 UMBRIEL_TEST(directScanoutPolicyForcesOnlyItsRuntimeEffect) {
   Config before;
   OutputRule output;

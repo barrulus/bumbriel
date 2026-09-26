@@ -25,6 +25,7 @@ static void clear_effect_buffers(struct fx_offscreen_buffers *fbos) {
 	drop_framebuffer(&fbos->blur_saved_pixels_buffer);
 	drop_framebuffer(&fbos->effects_buffer);
 	drop_framebuffer(&fbos->effects_buffer_swapped);
+	drop_framebuffer(&fbos->in_place_source);
 }
 
 static void addon_handle_destroy(struct wlr_addon *addon) {
@@ -88,6 +89,7 @@ void fx_renderer_clear_animation_buffers(struct wlr_output *output) {
 		drop_framebuffer(&fbos->animation_buffers[i]);
 	}
 	drop_framebuffer(&fbos->animation_backdrop);
+	drop_framebuffer(&fbos->in_place_source);
 }
 
 void fx_offscreen_buffers_invalidate_blend(struct wlr_output *output) {

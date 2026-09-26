@@ -42,17 +42,23 @@ gap = 0
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_dwindle_transparent_close]
+kind = "animation"
+shader = "dwindle-transparent-close.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = $OUT_MS
 curve = "linear"
-shader = "dwindle-transparent-close.glsl"
+effect = "windows_out_dwindle_transparent_close"
 
+[effects.preset.windows_move_dwindle_move_marker]
+kind = "animation"
+shader = "dwindle-move-marker.glsl"
 [animation.windows_move]
 enabled = true
 duration_ms = $MOVE_MS
 curve = "$MOVE_CURVE"
-shader = "dwindle-move-marker.glsl"
+effect = "windows_move_dwindle_move_marker"
 
 [animation.workspaces]
 enabled = false

@@ -64,17 +64,23 @@ center_underfull_strip = false
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_repeated_close_phases]
+kind = "animation"
+shader = "repeated-close-phases.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = $OUT_MS
 curve = "linear"
-shader = "repeated-close-phases.glsl"
+effect = "windows_out_repeated_close_phases"
 
+[effects.preset.windows_move_repeated_move_marker]
+kind = "animation"
+shader = "repeated-move-marker.glsl"
 [animation.windows_move]
 enabled = true
 duration_ms = $MOVE_MS
 curve = "linear"
-shader = "repeated-move-marker.glsl"
+effect = "windows_move_repeated_move_marker"
 
 [animation.workspaces]
 enabled = false

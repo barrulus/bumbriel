@@ -35,13 +35,19 @@ enabled = false
 enabled = true
 duration_ms = 1800
 curve = "linear"
+[effects.preset.windows_in_seed]
+kind = "animation"
+shader = "seed.glsl"
 [animation.windows_in]
 style = "none"
-shader = "seed.glsl"
+effect = "windows_in_seed"
+[effects.preset.windows_out_seed_passthrough]
+kind = "animation"
+shader = "seed-passthrough.glsl"
 [animation.windows_out]
 duration_ms = 900
 style = "fade"
-shader = "seed-passthrough.glsl"
+effect = "windows_out_seed_passthrough"
 [animation.windows_move]
 enabled = false
 

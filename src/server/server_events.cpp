@@ -13,6 +13,7 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
+#include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
 #include "server/backend_manager.h"
@@ -558,8 +559,16 @@ namespace umbriel {
         }
       }
     }
-    if (effects.animation) {
+    if (effects.animation || effects.effects) {
       prepareAnimationShaders(m_renderer);
+    }
+    if (effects.effects) {
+      // The next frame re-arms the effect timer from the new max_fps.
+      for (const auto& output : m_outputs) {
+        if (output->effectEligible() > 0) {
+          output->scheduleEffectFrame();
+        }
+      }
     }
 
     if (effects.sceneBlur) {
@@ -659,9 +668,18 @@ namespace umbriel {
       }
       // The view refresh cleared every focus ring; put the active one back.
       refocus();
+      // Screen and cursor presets take their palette from [colors] too.
+      m_effects.applyOutputEffects();
       markDirty(Dirty::Backdrop);
       if (m_sessionLocked) {
         updateLockBlank();
+      }
+    }
+    if (effects.effects && !effects.viewChrome) {
+      for (const auto& view : m_registry.all()) {
+        if (view->mapped()) {
+          view->applyDynamicRules();
+        }
       }
     }
     if (effects.animation && m_scratchpadManager != nullptr) {
@@ -1053,6 +1071,28 @@ namespace umbriel {
     kLog.debug("idle inhibitor removed");
   }
 
+  void Server::onNewImageCopySession(wl_listener* listener, void* data) {
+    Server* self;
+    self = wl_container_of(listener, self, m_newImageCopySession);
+    auto* session = static_cast<wlr_ext_image_copy_capture_session_v1*>(data);
+    auto* watch = new ImageCopySessionWatch();
+    watch->server = self;
+    watch->destroy.notify = onImageCopySessionDestroy;
+    wl_signal_add(&session->events.destroy, &watch->destroy);
+  }
+
+  // The session's render lock is released after this signal; the frame it schedules runs from an idle, without it.
+  void Server::onImageCopySessionDestroy(wl_listener* listener, void* /*data*/) {
+    ImageCopySessionWatch* watch;
+    watch = wl_container_of(listener, watch, destroy);
+    Server* server = watch->server;
+    wl_list_remove(&watch->destroy.link);
+    delete watch;
+    for (const auto& output : server->m_outputs) {
+      output->scheduleEffectCaptureRelease();
+    }
+  }
+
   void Server::onNewShortcutsInhibitor(wl_listener* listener, void* data) {
     Server* self;
     self = wl_container_of(listener, self, m_newShortcutsInhibitor);
@@ -1359,6 +1399,8 @@ namespace umbriel {
       }
 
       m_sessionLocked = true;
+      m_effects.setSuspended(true);
+      m_effects.applyOutputEffects();
       cancelModifierTap();
       m_overview->forceClose();
       if (m_cheatsheet != nullptr) {
@@ -1380,6 +1422,13 @@ namespace umbriel {
 
   void Server::unlockSession() {
     m_sessionLocked = false;
+    m_effects.setSuspended(false);
+    m_effects.applyOutputEffects();
+    for (const auto& output : m_outputs) {
+      if (output->effectEligible() > 0) {
+        output->scheduleEffectFrame();
+      }
+    }
     updateIdleInhibit();
     setLockBlankEnabled(false);
     // The cursor need not sit on the output that had focus, so restore the
@@ -1936,6 +1985,7 @@ namespace umbriel {
     if (!m_cursor->isPassthrough()) {
       m_cursor->resetMode();
     }
+    m_effects.removeOutput(output);
     if (m_insertHint != nullptr && m_insertHint->output() == output) {
       m_insertHint->hideImmediate();
     }
@@ -2720,6 +2770,7 @@ namespace umbriel {
     if (!self->m_deferOutputManagerConfig) {
       self->updateOutputManagerConfig();
     }
+    self->m_cursor->handleOutputLayoutChange();
   }
 
   void Server::updateOutputManagerConfig() {

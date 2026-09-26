@@ -37,11 +37,14 @@ center_underfull_strip = false
 [animation.windows_in]
 enabled = false
 
+[effects.preset.windows_out_solid_blue]
+kind = "animation"
+shader = "solid-blue.glsl"
 [animation.windows_out]
 enabled = true
 duration_ms = 6500
 curve = "linear"
-shader = "solid-blue.glsl"
+effect = "windows_out_solid_blue"
 
 [animation.windows_move]
 enabled = true

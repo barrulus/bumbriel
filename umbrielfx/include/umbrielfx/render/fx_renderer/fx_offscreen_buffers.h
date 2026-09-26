@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/util/addon.h>
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 
 /**
  * Per-output renderer framebuffers. Each buffer is allocated on first use and
@@ -39,6 +39,8 @@ struct fx_offscreen_buffers {
 	struct fx_framebuffer *effects_buffer;
 	// Swap buffer used for effects
 	struct fx_framebuffer *effects_buffer_swapped;
+	// Copy of the target under an in-place effect, which the program samples
+	struct fx_framebuffer *in_place_source;
 	struct fx_framebuffer *animation_buffers[FX_ANIMATION_DEPTH];
 	struct fx_framebuffer *animation_backdrop;
 };

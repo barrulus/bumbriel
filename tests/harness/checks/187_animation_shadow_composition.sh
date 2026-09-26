@@ -32,15 +32,21 @@ offset_y = 0
 [animation]
 duration_ms = 4000
 curve = "linear"
+[effects.preset.windows_in_half]
+kind = "animation"
+shader = "half.glsl"
 [animation.windows_in]
 enabled = $1
-shader = "half.glsl"
+effect = "windows_in_half"
 [animation.windows_out]
 enabled = false
 [animation.windows_move]
 enabled = false
-[animation.workspaces]
+[effects.preset.workspaces_outer]
+kind = "animation"
 shader = "outer.glsl"
+[animation.workspaces]
+effect = "workspaces_outer"
 [[window_rule]]
 match.title = "^occluder$"
 default_floating = true

@@ -21,10 +21,15 @@
 #include "server/ipc.h"
 #include "server/server.h"
 #include "server/wine_color_manager.h"
+#include "view/effects.h"
 #include "view/view.h"
 #include "wlr.h"
 #include "workspace/scratchpad.h"
 #include "workspace/workspace.h"
+
+extern "C" {
+#include <umbrielfx/render/effect.h>
+}
 
 #include <algorithm>
 #include <cstdlib>
@@ -82,6 +87,8 @@ namespace umbriel {
       wlr_output_layout_output* layoutOutput = addToLayout();
       wlr_scene_output_layout_add_output(m_server->sceneLayout(), layoutOutput, m_sceneOutput);
     }
+    // After the layout binding: the cursor slot needs this output's layout position.
+    applyOutputEffects();
 
     for (uint32_t layer = 0; layer < kLayerCount; ++layer) {
       m_layerTrees[layer] = wlr_scene_tree_create(m_server->shellLayerTree(layer));
@@ -98,6 +105,95 @@ namespace umbriel {
     const OutputRule* rule = findOutputRule(config(), identity());
     return rule != nullptr ? rule->enabled : outputCanAutoEnable(m_output);
   }
+
+  void Output::scheduleEffectFrame() {
+    if (m_handlingFrame) {
+      return; // handleFrame arms the next effect frame after its tick
+    }
+    m_effectFrameDue = true;
+    wlr_output_schedule_frame(m_output);
+  }
+
+  void Output::applyOutputEffects() {
+    EffectRegistry& registry = m_server->effects();
+    const Effects& settings = config().effects;
+    // Nothing configured: touch nothing (no addon, no scene calls). The registry's counts are zero too; a bound
+    // screen or cursor slot keeps a ledger instance, so it is still detached below.
+    if (settings.presets.empty() && !registry.active()) {
+      return;
+    }
+    wlr_scene_output_set_effect_capture_policy(m_sceneOutput, settings.inCapture);
+    const std::string screenName = resolveScreenEffectName(settings, findOutputRule(config(), identity()));
+    const bool suspended = registry.ledger().suspended();
+    fx_effect_shader* screen = suspended ? nullptr : registry.preset(screenName, EffectKind::Screen);
+    const EffectPreset* screenPreset = screen != nullptr ? registry.presetConfig(screenName) : nullptr;
+    fx_effect_shader* cursor = suspended ? nullptr : registry.preset(settings.cursor, EffectKind::Cursor);
+    const EffectPreset* cursorPreset = cursor != nullptr ? registry.presetConfig(settings.cursor) : nullptr;
+    bool advancing = true;
+#ifdef UMBRIEL_TEST_IPC
+    advancing = !m_server->animationClockFrozen();
+#endif
+    m_outputEffectsTimed = false;
+    // Registers the slot's instance and returns its parameters at this output's effect time.
+    const auto bind = [&](const void* owner, const EffectPreset& preset, fx_effect_shader* shader, bool visible) {
+      fx_animation_parameters parameters{};
+      registry.fillTimeUniforms(parameters, m_effectSeconds, preset, shader);
+      const bool readsTime = fx_effect_shader_reads(shader, "umbriel_time");
+      m_outputEffectsTimed = m_outputEffectsTimed || (readsTime && visible);
+      registry.updateInstance(
+          owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing}
+      );
+      return parameters;
+    };
+    if (screenPreset != nullptr) {
+      const fx_animation_parameters parameters = bind(this, *screenPreset, screen, m_output->enabled);
+      wlr_scene_output_set_screen_effect(m_sceneOutput, screen, &parameters);
+    } else {
+      wlr_scene_output_set_screen_effect(m_sceneOutput, nullptr, nullptr);
+      registry.removeInstance(this);
+    }
+    const Cursor* pointer = m_server->cursor();
+    if (cursorPreset != nullptr && pointer != nullptr) {
+      const double lx = pointer->wlr()->x;
+      const double ly = pointer->wlr()->y;
+      const bool here = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly) == m_output;
+      const fx_animation_parameters parameters =
+          bind(&m_cursorEffectOwner, *cursorPreset, cursor, m_output->enabled && here && pointer->visible());
+      wlr_scene_output_set_cursor_effect(m_sceneOutput, cursor, &parameters, cursorPreset->radius);
+      // A newly set cursor program draws nothing until the pointer is pushed after it.
+      wlr_scene_output_set_effect_pointer(m_sceneOutput, lx, ly, pointer->visible());
+    } else {
+      wlr_scene_output_set_cursor_effect(m_sceneOutput, nullptr, nullptr, 0);
+      registry.removeInstance(&m_cursorEffectOwner);
+    }
+  }
+
+  void Output::scheduleEffectCaptureRelease() {
+    if (m_effectCaptureBuilt && outputFrameAllowed(m_server->stopping(), m_server->session())) {
+      wlr_output_schedule_frame(m_output);
+    }
+  }
+
+  int Output::externalRenderLocks() const { return m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0); }
+
+  int Output::captureRenderLocks(int externalLocks) const {
+    if (wlr_export_dmabuf_manager_v1* manager = m_server->exportDmabufManager()) {
+      wlr_export_dmabuf_frame_v1* frame;
+      wl_list_for_each(frame, &manager->frames, link) {
+        if (frame->output == m_output) {
+          --externalLocks;
+        }
+      }
+    }
+    return externalLocks;
+  }
+
+  bool Output::effectCapturePending(int captureLocks) const {
+    // Keyed on configuration, not instances: a close snapshot keeps its window slots after its instances leave.
+    return captureLocks > 0 && !config().effects.inCapture && m_server->effects().inPlaceReferenced();
+  }
+
+  unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
 
   wlr_box Output::layoutBox() const {
     wlr_box box{.x = m_arrangedLayoutX, .y = m_arrangedLayoutY, .width = 0, .height = 0};
@@ -662,6 +758,7 @@ namespace umbriel {
     } else {
       wlr_output_layout_remove(m_server->outputLayout(), m_output);
     }
+    applyOutputEffects();
     markDirty(Dirty::LayerArrange | Dirty::Banner);
     if (m_server->sessionLocked()) {
       m_server->updateLockBlank();
@@ -689,6 +786,7 @@ namespace umbriel {
     } else {
       wlr_output_layout_remove(m_server->outputLayout(), m_output);
     }
+    applyOutputEffects();
     handleExternalConfigChange();
     kLog.info(
         "output '{}': {} by output management, power {}", m_output->name, desktopEnabled() ? "enabled" : "disabled",
@@ -714,6 +812,7 @@ namespace umbriel {
       m_dpmsOff = previous;
       return false;
     }
+    applyOutputEffects();
 
     if (powered) {
       m_gammaDirty = true;
@@ -761,6 +860,10 @@ namespace umbriel {
     if (m_frameRetryTimer != nullptr) {
       wl_event_source_remove(m_frameRetryTimer);
       m_frameRetryTimer = nullptr;
+    }
+    if (m_effectFrameTimer != nullptr) {
+      wl_event_source_remove(m_effectFrameTimer);
+      m_effectFrameTimer = nullptr;
     }
     if (m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, false);
@@ -996,6 +1099,40 @@ namespace umbriel {
     }
   }
 
+  int Output::onEffectFrameTimer(void* data) {
+    auto* output = static_cast<Output*>(data);
+    output->m_effectFrameArmed = false;
+    output->m_effectFrameDue = true;
+    wlr_output_schedule_frame(output->m_output);
+    return 0;
+  }
+
+  void Output::armEffectFrame(uint64_t nowMsec) {
+    const uint64_t delay = effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec);
+    if (delay == 0) {
+      disarmEffectFrame();
+      m_effectFrameDue = true;
+      wlr_output_schedule_frame(m_output);
+      return;
+    }
+    if (m_effectFrameArmed) {
+      return;
+    }
+    if (m_effectFrameTimer == nullptr) {
+      m_effectFrameTimer =
+          wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onEffectFrameTimer, this);
+    }
+    wl_event_source_timer_update(m_effectFrameTimer, static_cast<int>(delay));
+    m_effectFrameArmed = true;
+  }
+
+  void Output::disarmEffectFrame() {
+    if (m_effectFrameArmed) {
+      wl_event_source_timer_update(m_effectFrameTimer, 0);
+      m_effectFrameArmed = false;
+    }
+  }
+
   void Output::applyMode(int width, int height) {
     if (width <= 0 || height <= 0) {
       return;
@@ -1075,6 +1212,7 @@ namespace umbriel {
     if (m_frameRetryTimer != nullptr) {
       wl_event_source_timer_update(m_frameRetryTimer, 0);
     }
+    m_handlingFrame = true;
 
     flushDirty();
     if (m_hasDeferredMode) {
@@ -1083,7 +1221,35 @@ namespace umbriel {
     }
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
+    const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
+    // A frame is an effect frame when one was asked for, or when an instance here is eligible and the max_fps interval
+    // has elapsed (a delay of 1 ms is the helper's "due now"), whichever timeline scheduled the frame. The output's own
+    // timer supplies the frames nothing else asks for.
+    const bool effectFrame = m_effectFrameDue
+        || (!m_server->sessionLocked()
+            && effectEligible() > 0
+            && effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec) <= 1);
+    m_effectFrameDue = false;
+    if (effectFrame) {
+      m_lastEffectFrameMsec = nowMsec;
+      disarmEffectFrame();
+    }
+    // Effect time moves only on effect frames, which caps them at max_fps. It follows the clock while nothing here
+    // needs frames of its own, so a new instance starts from now, and while the clock is frozen, so the first frozen
+    // frame draws the frozen instant.
+    const EffectRegistry& effects = m_server->effects();
+    bool stampEffectTime =
+        effectFrame || (effectEligible() == 0 && (effects.persistentReferenced() || effects.active()));
+#ifdef UMBRIEL_TEST_IPC
+    stampEffectTime = stampEffectTime || m_server->animationClockFrozen();
+#endif
+    if (stampEffectTime) {
+      m_effectSeconds = effects.clockSeconds();
+    }
     m_server->tickAnimations(m_server->animationClockMsec());
+    if (stampEffectTime && m_outputEffectsTimed) {
+      applyOutputEffects();
+    }
 
     // Surface commits reset scene-buffer opacity to the protocol alpha. Repair
     // pending rule opacity after every commit listener and before composition.
@@ -1093,6 +1259,9 @@ namespace umbriel {
     // the first workspace-switch frame waiting on the old client, so the compositor never gets a vblank to advance the
     // slide. Keep animated outputs on the render path until their final composed frame has settled.
     const bool animationsActive = m_server->animationsActiveFor(this);
+    // Persistent effects reading time keep an output drawing on their own timer, never through the animation
+    // registry: settle, tearing, and the render lock keep their meanings.
+    const bool effectsEligible = !m_server->sessionLocked() && effectEligible() > 0;
     if (animationsActive != m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, animationsActive);
       m_animationRenderLocked = animationsActive;
@@ -1106,8 +1275,8 @@ namespace umbriel {
       colorManager->applySurfaceDescriptions();
     }
 
-    const int externalRenderLocks = m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0);
-    const bool captureActive = externalRenderLocks > 0;
+    const int externalLocks = externalRenderLocks();
+    const bool captureActive = externalLocks > 0;
     View* tearingView = tearingCandidate();
     const bool tearingPolicyRequested = tearingEligible(tearingView);
 
@@ -1151,6 +1320,7 @@ namespace umbriel {
 
     if (m_output->width <= 0 || m_output->height <= 0) {
       // Output not configured yet; no clients can be presenting on it either.
+      m_handlingFrame = false;
       return;
     }
 
@@ -1169,23 +1339,20 @@ namespace umbriel {
     }
     if (sceneChanged || m_gammaDirty) {
       m_inFrame = true;
+      if (effectFrame) {
+        ++m_effectFrames;
+      }
       UMBRIEL_ZONE("Output::render");
 
       wlr_output_state state{};
       wlr_output_state_init(&state);
 
       bool commitOk = false;
-      int captureLocks = externalRenderLocks;
-      if (wlr_export_dmabuf_manager_v1* manager = m_server->exportDmabufManager()) {
-        wlr_export_dmabuf_frame_v1* frame;
-        wl_list_for_each(frame, &manager->frames, link) {
-          if (frame->output == m_output) {
-            --captureLocks;
-          }
-        }
-      }
+      const int captureLocks = captureRenderLocks(externalLocks);
       wlr_scene_output_state_options sceneOptions{};
       sceneOptions.capture_sdr = hdrActive() && captureLocks > 0;
+      sceneOptions.effect_capture_pending = effectCapturePending(captureLocks);
+      m_effectCaptureBuilt = sceneOptions.effect_capture_pending;
       if (wlr_scene_output_build_state(m_sceneOutput, &state, &sceneOptions)) {
         // Hardware gamma only (DRM). Nested Wayland has no gamma LUT; leave that alone.
         // Apply only when dirty: uploading the LUT every frame stalls the compositor.
@@ -1259,6 +1426,11 @@ namespace umbriel {
       commitFailed = !commitOk;
     }
 
+    // Screencopy drops its lock inside the commit; image-copy sessions ask for the release frame when they end.
+    if (m_effectCaptureBuilt && !effectCapturePending(captureRenderLocks(externalRenderLocks()))) {
+      scheduleEffectCaptureRelease();
+    }
+
     // A request_state that arrived mid-commit is applied now that we're out of it.
     if (m_hasDeferredMode) {
       m_hasDeferredMode = false;
@@ -1286,6 +1458,13 @@ namespace umbriel {
     case OutputFrameFollowup::None:
       break;
     }
+
+    if (effectsEligible && !commitFailed) {
+      armEffectFrame(nowMsec);
+    } else {
+      disarmEffectFrame();
+    }
+    m_handlingFrame = false;
 
     if (Ipc* ipc = m_server->ipc()) {
       ipc->notifyOutputFrame(*this);
