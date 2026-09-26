@@ -36,13 +36,13 @@ frame at the new time, and `clock-resume` continues from the frozen time so
 animation time never runs backwards. An animation that starts while frozen
 counts from the frozen instant. Frozen time does not reach clients, input
 timestamps, or compositor timers. While an animation runs on the frozen clock,
-`settle` replies with an error at the next drawn frame. `output-create` and
+`settle` replies with an error at the next output frame. `output-create` and
 `output-destroy` work only on the headless backend. `renderer-recover` emits
-two consecutive notifications through the renderer's real mutable lost signal. The recovery check uses them
-to assert that one deferred renderer replacement completes and draws a new
-frame. `effect-frames` reports, per output, how many drawn frames advanced
-persistent effects' time and how many effect instances currently need
-frames of their own.
+two consecutive notifications through the renderer's real mutable lost signal.
+The recovery check uses them to assert that one deferred renderer replacement
+completes and draws a new frame. `effect-frames` reports, per output, how many
+drawn frames advanced persistent effects' time and how many effect instances
+currently need frames of their own.
 
 ## Pointer drag completion
 

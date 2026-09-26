@@ -34,8 +34,11 @@ the only place programs are compiled
 - `fillTimeUniforms` (`:323-343`) adds `umbriel_time` only to a program that
   reads it and the `[colors]` palette only to a preset with `palette = true`.
 - `EffectLedger` ([`effect_ledger.h:12-58`](../../src/scene/effect_ledger.h))
-  holds one `EffectInstanceState` per owner: the scene node carrying a slot, or
-  an output for its screen and cursor slots. Each records its driving output,
+  holds one `EffectInstanceState` per owner: the border node, the surface node
+  for its window slot and that node's `addons` member for its overlay slot
+  (`effects.cpp:151-152`), and the output and its cursor-owner member for its
+  screen and cursor slots (`output.cpp:148`, `:160`). Each records its driving
+  output,
   whether it is visible there, whether its program reads `umbriel_time`, and
   whether its clock advances. `eligible(output)` counts instances that are all
   three and is 0 while suspended; `active()` counts owners. `updateInstance`
@@ -80,8 +83,10 @@ default) and the cursor preset, and records both in the ledger. It pushes the
 pointer after setting a cursor program, because a new cursor program draws
 nothing until a pointer update follows it. It binds no program while the
 ledger is suspended, and returns before any scene call when no preset is
-defined and the ledger is empty. The output also owns the effect frame timer
-([Frames](#frames)).
+defined and the ledger is empty. The cursor square draws only on the output
+holding the pointer: a pointer outside the output, or hidden, leaves that
+output's cursor slot inactive (`wlr_scene.c:4176-4180`, `:4194-4196`). The
+output also owns the effect frame timer ([Frames](#frames)).
 
 ### `Cursor`
 
@@ -124,8 +129,9 @@ and first surface buffer.
 ([`wlr_scene.c:1758-1777`](../../umbrielfx/types/scene/wlr_scene.c)) copies
 each populated slot with its current parameters, moves its feedback history,
 and turns light off. Slots from `windows_out` up land in `windows_in`; the rest
-keep their index. Nothing updates a snapshot's parameters, so its time stays
-frozen, and a snapshot owns no ledger instance, so it never requests frames.
+keep their index. Nothing updates the copied slots' parameters, so their time
+stays frozen, and a snapshot owns no ledger instance, so it never requests
+frames.
 
 | Source | Snapshot node | Slots |
 | --- | --- | --- |
@@ -213,8 +219,9 @@ slot follows the same contract.
 An instance is eligible while it is visible on its output
 (`wlr_scene_node_visible_in_box` against the output's layout box; the output
 enabled for a screen slot; the pointer shown on that output for a cursor slot),
-its program reads `umbriel_time`, and its clock advances (`animated`, a nonzero
-`speed`, and an unfrozen animation clock).
+its program reads `umbriel_time`, and its clock advances (for a border or
+overlay, `animated` and a nonzero `speed`; for all, an unfrozen animation
+clock).
 
 `Output::handleFrame` (`output.cpp:1148-1171`) treats a frame as an effect
 frame when one was requested, or when an instance there is eligible and the
@@ -222,7 +229,8 @@ frame when one was requested, or when an instance there is eligible and the
 [`frame_schedule.h:35-44`](../../src/output/frame_schedule.h); 0 follows the
 refresh rate), whatever scheduled the frame. The output's effect time,
 `Output::effectSeconds()`, is stamped from the animation clock only on effect
-frames and while nothing on the output is eligible, so it advances at most at
+frames, and while nothing on the output is eligible but a persistent preset is
+referenced or the ledger has owners (`:1161-1162`), so it advances at most at
 `max_fps` and a new instance starts from the present. After the frame,
 `Output::armEffectFrame` (`:1030-1047`) requests the next frame at once or arms
 a lazily created timer for the rest of the interval; with nothing eligible, or
@@ -292,7 +300,9 @@ the desktop scene. Window slots are bound there only with `in_capture = true`.
 
 Each scene keeps a `scene_effects` addon on its root (`wlr_scene.c:151-206`)
 listing its `scene_animation` addons with separate counts of nodes carrying
-transient and persistent slots (`scene_animation_classify`, `:208-223`). An
+transient and persistent slots (`scene_animation_classify`, `:208-223`). The
+addon exists while any node carries a slot or a light layer is registered, and
+is destroyed with the last of them (`:359-364`, `:1313-1350`). An
 output's `scene_output_effects` addon (`:3968-3984`) is created on first use:
 a screen or cursor slot, `in_capture = true`, or an unfiltered composition.
 `wlr_scene_output_build_state` looks the scene addon up once per frame. A
@@ -320,7 +330,7 @@ slot it damages the drawn box before and after the change
 (`scene_effect_damage`, `:1528-1549`) and re-runs `scene_node_update` on the
 node when a slot appears or disappears. Destroying a node damages its effects'
 margins first (`:1569-1577`). Whenever the scene has effect state,
-`scene_node_update` (`:1468-1526`) grows its update and damage regions by the
+`scene_node_update` (`:1468-1523`) grows its update and damage regions by the
 largest `expand` on the node, its ancestors, and its enabled descendants
 (`scene_node_drawn_expand`, `:1443-1447`), so moving a frame repaints a child
 slot's old margin.
@@ -414,7 +424,7 @@ Harness ([`tests/harness/checks`](../../tests/harness/checks)):
 | `760_effect_window` | Backdrop sampling at rest, content shading inside an opening capture, the close snapshot, overview cards, `window_effect` overrides, and the overlay following focus. |
 | `761_effect_window_capture` | `in_capture` for grim and toplevel captures, a reload flipping both, one live instance after remap, and frames only for time-reading programs. |
 | `770_effect_screen_cursor` | Screen override per output, the cursor square following the pointer, frames stopping when it hides or leaves, lock detachment, and both capture policies. |
-| `771_effect_capture_feedback` | With `in_capture = false`, captured frames exclude the window effect from the first, and display feedback counts the same animation instants as a run without capture, for output and toplevel captures. |
+| `771_effect_capture_feedback` | With `in_capture = false`, captured frames exclude the window effect from the first, display history never composites a capture frame, and display feedback counts the same animation instants as a run without capture, for output and toplevel captures. |
 | `780_effect_reload` | Recovery from a missing shader, unknown and mismatched names, `[colors]` reaching a palette without a recompile, and light layer removal and return. |
 | `790_bundled_effects` | Every bundled preset compiles when selected, and selecting none keeps the compositor plain. |
 | `480_drag_physics` | Deformation while held, settling, rigid overview cards, handover to the close snapshot, and nothing left running with physics off. |
