@@ -93,28 +93,29 @@ static uint32_t offscreen_buffer_format(const struct fx_gles_render_pass* pass, 
   return alpha ? DRM_FORMAT_ABGR8888 : DRM_FORMAT_XBGR8888;
 }
 
-// Allocates the offscreen buffer in *slot on first use, matching the pass
-// target's size and the format returned by offscreen_buffer_format. Rebinds
-// the pass target on return. Returns NULL when the buffer could not be
-// allocated.
-static struct fx_framebuffer*
-ensure_offscreen_buffer(struct fx_gles_render_pass* pass, struct fx_framebuffer** slot, bool alpha) {
+// Allocates or reuses *slot at the requested size. Restores the pass target;
+// returns NULL on allocation failure.
+static struct fx_framebuffer* ensure_offscreen_buffer_size(
+    struct fx_gles_render_pass* pass, struct fx_framebuffer** slot, bool alpha, int width, int height
+) {
   struct fx_offscreen_buffers* fbos = pass->fx_offscreen_buffers;
   if (fbos == NULL) {
     return NULL;
   }
   const uint32_t format = offscreen_buffer_format(pass, alpha);
   bool failed = false;
-  fx_framebuffer_get_or_create_custom(
-      pass->buffer->renderer, fbos->allocator, pass->buffer->buffer->width, pass->buffer->buffer->height, format, slot,
-      &failed
-  );
+  fx_framebuffer_get_or_create_custom(pass->buffer->renderer, fbos->allocator, width, height, format, slot, &failed);
   fx_framebuffer_bind(pass->buffer);
   if (failed) {
     wlr_log(WLR_ERROR, "Failed to create effect framebuffer");
     return NULL;
   }
   return *slot;
+}
+
+static struct fx_framebuffer*
+ensure_offscreen_buffer(struct fx_gles_render_pass* pass, struct fx_framebuffer** slot, bool alpha) {
+  return ensure_offscreen_buffer_size(pass, slot, alpha, pass->buffer->buffer->width, pass->buffer->buffer->height);
 }
 
 struct fx_animation_output_history {
@@ -623,12 +624,14 @@ static void set_tex_matrix(GLint loc, enum wl_output_transform trans, const stru
   glUniformMatrix3fv(loc, 1, GL_FALSE, tex_matrix);
 }
 
-bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
+bool fx_render_pass_begin_capture(struct fx_gles_render_pass* pass, const struct wlr_box* box) {
   if (pass->fx_offscreen_buffers == NULL || pass->animation_depth == FX_ANIMATION_DEPTH) {
     return false;
   }
-  struct fx_framebuffer* target =
-      ensure_offscreen_buffer(pass, &pass->fx_offscreen_buffers->animation_buffers[pass->animation_depth], true);
+  const int width = box->width, height = box->height;
+  struct fx_framebuffer* target = ensure_offscreen_buffer_size(
+      pass, &pass->fx_offscreen_buffers->animation_buffers[pass->animation_depth], true, width, height
+  );
   if (target == NULL) {
     return false;
   }
@@ -644,14 +647,22 @@ bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
   pass->animation_textures[pass->animation_depth] = texture;
   pass->animation_parents[pass->animation_depth] = pass->buffer;
   pass->animation_suppress[pass->animation_depth] = pass->suppress_updated;
+  pass->animation_boxes[pass->animation_depth] = *box;
   pass->animation_depth++;
   pass->buffer = target;
   pass->suppress_updated = true;
   fx_framebuffer_bind(target);
+  matrix_projection(pass->projection_matrix, width, height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  glViewport(0, 0, width, height);
   glDisable(GL_SCISSOR_TEST);
   glClearColor(0, 0, 0, 0);
   glClear(GL_COLOR_BUFFER_BIT);
   return true;
+}
+
+bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
+  const struct wlr_box box = {.width = pass->buffer->buffer->width, .height = pass->buffer->buffer->height};
+  return fx_render_pass_begin_capture(pass, &box);
 }
 
 // Buffer pixels per logical pixel. Summing both sides keeps the ratio when a
@@ -802,7 +813,28 @@ static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pas
   pass->buffer = pass->animation_parents[pass->animation_depth];
   pass->suppress_updated = pass->animation_suppress[pass->animation_depth];
   fx_framebuffer_bind(pass->buffer);
+  const int width = pass->buffer->buffer->width, height = pass->buffer->buffer->height;
+  matrix_projection(pass->projection_matrix, width, height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+  glViewport(0, 0, width, height);
   return pass->animation_textures[pass->animation_depth];
+}
+
+void fx_render_pass_end_capture(
+    struct fx_gles_render_pass* pass, const struct wlr_box* box, const pixman_region32_t* clip
+) {
+  struct wlr_texture* texture = pop_animation_capture(pass);
+  const struct fx_render_texture_options options = {
+      .base = {
+          .texture = texture,
+          .dst_box = *box,
+          .clip = clip,
+          .filter_mode = WLR_SCALE_FILTER_NEAREST,
+          .blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
+          .transfer_function = pass->has_color_transform ? WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR : 0,
+      },
+  };
+  fx_render_pass_add_texture(pass, &options);
+  wlr_texture_destroy(texture);
 }
 
 static bool ensure_light_program(struct fx_renderer* renderer) {
@@ -1892,6 +1924,11 @@ static struct fx_framebuffer* animation_backdrop(struct fx_gles_render_pass* pas
   glClear(GL_COLOR_BUFFER_BIT);
   for (unsigned i = 0; i <= pass->animation_depth; i++) {
     struct fx_framebuffer* layer = i == pass->animation_depth ? saved : pass->animation_parents[i];
+    struct wlr_box layer_box = {.width = layer->buffer->width, .height = layer->buffer->height};
+    for (unsigned j = i; j < pass->animation_depth; j++) {
+      layer_box.x -= pass->animation_boxes[j].x;
+      layer_box.y -= pass->animation_boxes[j].y;
+    }
     struct wlr_texture* texture = fx_texture_from_buffer(&target->renderer->wlr_renderer, layer->buffer);
     if (texture == NULL) {
       continue;
@@ -1899,7 +1936,7 @@ static struct fx_framebuffer* animation_backdrop(struct fx_gles_render_pass* pas
     fx_framebuffer_bind(target);
     struct wlr_render_texture_options options = {
         .texture = texture,
-        .dst_box = {.width = target->buffer->width, .height = target->buffer->height},
+        .dst_box = layer_box,
         .transfer_function =
             pass->has_color_transform ? WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR : WLR_COLOR_TRANSFER_FUNCTION_SRGB,
         .blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
@@ -2598,6 +2635,12 @@ get_main_buffer_blur(struct fx_gles_render_pass* pass, struct fx_render_blur_pas
 }
 
 static bool optimized_buffer_ready(const struct fx_gles_render_pass* pass, const struct fx_framebuffer* buffer) {
+  // Output blur cannot be reused in translated coordinates, even at the same size.
+  for (unsigned i = 0; i < pass->animation_depth; i++) {
+    if (pass->animation_boxes[i].x != 0 || pass->animation_boxes[i].y != 0) {
+      return false;
+    }
+  }
   return buffer != NULL
       && buffer->buffer->width == pass->buffer->buffer->width
       && buffer->buffer->height == pass->buffer->buffer->height

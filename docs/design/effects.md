@@ -156,10 +156,14 @@ region. A close mid-drag moves the drag slot to the snapshot root, and
 
 A dragged window sits in the unclipped drag tree
 (`View::enterDragPresentation`), so every output it reaches draws its part.
-Each output's capture holds only what lies on that output, though, so near an
-output edge the sheet pulls transparent texels from past the edge and the
-window shows a gap along the seam. Capturing the content tree into a buffer
-sized to its drawn box would remove it.
+When its drawn bounds cross an output edge, a group-sized capture retains the
+off-output input before the drag slot deforms it. A border outside the monitor
+can bend back onto it; only the finished group is clipped to output damage.
+A physical-pixel translation preserves fractional rounding and rotation.
+Enclosing backdrop layers use the same translation. Capture dimensions round
+up to 128-pixel blocks to reuse buffers as the spring's margin changes.
+`drag/physics_edges` covers all four edges and nested effects on a
+rotated, fractionally scaled output.
 
 ## Slot modes
 

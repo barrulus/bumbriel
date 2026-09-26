@@ -807,6 +807,9 @@ struct render_data {
   float scale;
   struct wlr_box logical;
   int trans_width, trans_height;
+  // Physical translation into a capture, applied after output scaling/rotation.
+  int capture_x, capture_y;
+  bool full_capture;
 
   struct wlr_scene_output* output;
 
@@ -832,6 +835,7 @@ static void logical_to_buffer_coords(pixman_region32_t* region, const struct ren
   enum wl_output_transform transform = wlr_output_transform_invert(data->transform);
   scale_region(region, data->scale, round_up);
   wlr_region_transform(region, region, transform, data->trans_width, data->trans_height);
+  pixman_region32_translate(region, data->capture_x, data->capture_y);
 }
 
 static void output_to_buffer_coords(pixman_region32_t* damage, struct wlr_output* output) {
@@ -868,6 +872,8 @@ static void transform_output_box(struct wlr_box* box, const struct render_data* 
     box->height = data->trans_height - box->y;
   }
   wlr_box_transform(box, box, transform, data->trans_width, data->trans_height);
+  box->x += data->capture_x;
+  box->y += data->capture_y;
 }
 
 static void scene_output_damage(struct wlr_scene_output* scene_output, const pixman_region32_t* damage) {
@@ -3731,6 +3737,40 @@ static void render_animated_range(
     }
     int lx, ly;
     wlr_scene_node_coords(animation->node, &lx, &ly);
+    // Keep off-output pixels until after deformation: they can bend back on screen.
+    if (!data->full_capture && animation->shaders[FX_SLOT_DRAG] != NULL) {
+      pixman_region32_t bounds;
+      pixman_region32_init(&bounds);
+      scene_node_bounds(animation->node, lx, ly, &bounds);
+      wlr_region_expand(&bounds, &bounds, scene_node_drawn_expand(animation->node));
+      pixman_region32_translate(&bounds, -data->logical.x, -data->logical.y);
+      logical_to_buffer_coords(&bounds, data, true);
+      const pixman_box32_t* extents = pixman_region32_extents(&bounds);
+      struct wlr_box capture_box = {
+          .x = extents->x1,
+          .y = extents->y1,
+          .width = extents->x2 - extents->x1,
+          .height = extents->y2 - extents->y1,
+      };
+      const struct wlr_box target = {.width = pass->buffer->buffer->width, .height = pass->buffer->buffer->height};
+      const bool needs_capture = !wlr_box_empty(&capture_box) && !wlr_box_contains_box(&target, &capture_box);
+      pixman_region32_fini(&bounds);
+      // Reuse the allocation across small changes in the spring's margin.
+      capture_box.width = (capture_box.width + 127) / 128 * 128;
+      capture_box.height = (capture_box.height + 127) / 128 * 128;
+      if (needs_capture && fx_render_pass_begin_capture(pass, &capture_box)) {
+        struct render_data capture = *data;
+        capture.capture_x -= capture_box.x;
+        capture.capture_y -= capture_box.y;
+        capture.full_capture = true;
+        pixman_region32_init_rect(&capture.damage, 0, 0, capture_box.width, capture_box.height);
+        render_animated_range(entries, i, end, stop, &capture);
+        pixman_region32_fini(&capture.damage);
+        fx_render_pass_end_capture(pass, &capture_box, &data->damage);
+        i = end - 1;
+        continue;
+      }
+    }
     const bool has_animation_clip = animation->output_clip_enabled && !data->shadow_capture;
     struct wlr_box output_box = {0};
     if (has_animation_clip) {
