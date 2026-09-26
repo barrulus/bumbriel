@@ -295,6 +295,10 @@ for _ in $(seq 100); do
   [[ -z $("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "effect-one")') ]] && break
   sleep 0.02
 done
+if [[ -n $("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "effect-one")') ]]; then
+  echo "the window never left the window list after window-close"
+  exit 1
+fi
 "$UMBRIEL" clock-advance 1
 grim "$IMAGE"
 snapshot_red=$(red_at "$CARD_TOP")

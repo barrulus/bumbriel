@@ -192,7 +192,7 @@ if (( now <= capped )); then
 fi
 grim "$IMAGE"
 read -r ring_r7 ring_g7 ring_b7 < <(ring_pixel "$ring_x" "$ring_y")
-sleep 0.15
+sleep 0.15 # real time: no effect frame is due within max_fps = 1's 1000ms interval, so the ring must not change
 grim "$IMAGE"
 read -r ring_r8 ring_g8 ring_b8 < <(ring_pixel "$ring_x" "$ring_y")
 if [[ "$ring_r7 $ring_g7 $ring_b7" != "$ring_r8 $ring_g8 $ring_b8" ]]; then
