@@ -188,43 +188,27 @@ cheapest test of whether the render list still holds one entry.
 ### Headless measurements
 
 Measured 2026-09-26 on a laptop with an Intel Arc (ARL) iGPU and an NVIDIA RTX
-5060 Laptop GPU, both builds in `tracy` mode: upstream `7fb0ba44` and this
-branch. Each instance runs headless with two 1280x720 outputs at 60 Hz, the
-renderer pinned to the Intel render node, and `vkmark` 2025.01 on the same
-device:
+5060 Laptop GPU, in a `tracy` build. Each instance runs headless with two
+1280x720 outputs at 60 Hz, the renderer pinned to the Intel render node, and
+`vkmark` 2025.01 on the same device:
 
 ```sh
 WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD129 \
   build-tracy/umbriel -c config.toml
-vkmark -D <intel-uuid> --fullscreen --present-mode immediate -b shading:duration=5
+vkmark -D <intel-uuid> --present-mode immediate -b shading:duration=5
 ```
 
 Render node numbers follow probe order; `/sys/class/drm/renderD*/device/driver`
-names the driver behind each. `tracy-capture` and `tracy-csvexport` 0.13.1 come
-from `nix shell nixpkgs#tracy`. The client library is built from the `v0.13.1`
-tag, the tag matching `tracy-capture --version`, with the
-[CONTRIBUTING.md](../../CONTRIBUTING.md#profiling) commands. `just tracy` needs
-`AR=gcc-ar` at configure time when `AR` names an `ar` without the LTO plugin,
-as the development shell's `AR=ar` does. Frame rates are taken with the
-profiler disconnected, three runs each. Zone numbers are medians over 2 to 4
-second captures.
-
-Commit path, fullscreen `vkmark`, no effects:
-
-| Workload | Upstream | Branch |
-| --- | --- | --- |
-| `immediate`, panel hidden | 5954, 5994, 6098 FPS (0.164-0.168 ms) | 6044, 6086, 6075 FPS (0.164-0.165 ms) |
-| `immediate`, panel visible | 6024, 6055, 6009 FPS (0.165-0.166 ms) | 6053, 6062, 6021 FPS (0.165-0.166 ms) |
-| `fifo`, panel hidden or visible | 61 FPS, 16.393 ms, every run | 61 FPS, 16.393 ms, every run |
-
-The panel is `layer-client HEADLESS-2 40`, a 40 px top-layer surface from the
-harness clients. The render list holds one entry with it hidden and with it
-visible, because a fullscreen window covers the top layer.
-`umbriel tearing --json` reports the same state on both builds. Scanout state
-is not measured here (needs a TTY session with two physical outputs): the
-headless backend never scans out, so neither build logs a `Direct scan-out`
-line. Refresh-locked `fifo` numbers on hardware are not measured here (needs a
-TTY session with two physical outputs).
+names the driver behind each. `tracy-capture` and `tracy-csvexport` come from
+`nix shell nixpkgs#tracy`. The client library is built from the Tracy tag
+matching that package's version (`nix eval --raw nixpkgs#tracy.version` prints
+`0.13.1`), with the [CONTRIBUTING.md](../../CONTRIBUTING.md#profiling)
+commands. `just tracy` needs `AR=gcc-ar` at configure time when `AR` names an
+`ar` without the LTO plugin, as the development shell's `AR=ar` does. Frame
+rates are taken with the profiler disconnected, three runs each. Zone numbers
+are medians over 2 to 4 second captures. The headless backend never scans out,
+so scanout state and refresh-locked `fifo` numbers are not measured here (they
+need a TTY session with two physical outputs).
 
 Composition per effect kind, a tiled 800x600 `vkmark` in `immediate` mode with
 the pointer moved over it by `pointer-client 2560 720 move 640 360`, and the
@@ -232,8 +216,7 @@ bundled presets from `790_bundled_effects`:
 
 | Effects | `vkmark` FPS | `Output::render` CPU | Program draws per frame | GPU per draw |
 | --- | --- | --- | --- | --- |
-| None, upstream | 7158, 7066, 7138 | 132-144 µs | | |
-| None, branch | 7164, 7151, 7094 | 120-130 µs | | |
+| None | 7164, 7151, 7094 | 120-130 µs | | |
 | `border = "pulse"` | 6203, 6292, 6264 | 275 µs | 5 | 70 µs |
 | `window = "scanlines"` | 6498, 6585, 6577 | 243 µs | 4 | 44 µs |
 | `screen = "vignette"` | 6919, 6967, 6852 | 156 µs | 1 | 62 µs |
@@ -241,8 +224,7 @@ bundled presets from `790_bundled_effects`:
 | All four, plus `reveal` and `squash` | 5944, 5996, 5914 | 305 µs | 9 | 61 µs |
 | `reveal` on four opening 600x400 windows, no `vkmark` | | 99 µs | | 65 µs |
 
-The no-effect `Output::render` ranges span three captures per build; single
-captures of the same build vary by about 40 µs. GPU times are
+The no-effect `Output::render` range spans three captures. GPU times are
 `draw_animation_texture` GPU zones. They exclude the border light's pyramid and
 its blur passes, which carry no zone of their own.
 
@@ -296,7 +278,7 @@ The same runs repeat with a window effect, then with the window moved across
 the boundary, the effect removed, and a border light with `spread = 128` next
 to the boundary.
 
-Results, measured 2026-09-26 on this branch with the headless setup above. B is
+Results, measured 2026-09-26 with the headless setup above. B is
 `HEADLESS-2` (layout x 0 to 1280) and A is `HEADLESS-1` (1280 to 2560). The
 scenes come from the harness clients and `vkmark`:
 
@@ -338,9 +320,10 @@ total per output frame:
 | Physics drag at 4K | 128 | 180 calls, 669 ns, 2.1 µs | 180 calls, 658 ns, 1.3 µs |
 
 The expand walk runs only while the scene has effect state, and also on the
-disabled path, where the bounds zone does not, so the counts differ. Per output frame it costs less than the bounds walk
-in all three runs; per call it ranges from half the bounds walk to 3.5 times
-it. Each time includes the zone's own begin and end.
+disabled path, where the bounds zone does not, so the counts differ. Per output
+frame it costs less than the bounds walk in all three runs; per call it ranges
+from about 0.6 times the bounds walk (41 against 72 ns) to 3.5 times it (230
+against 65 ns). Each time includes the zone's own begin and end.
 
 ## Measurement caveats
 
