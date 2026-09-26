@@ -155,6 +155,13 @@ region. A close mid-drag moves the drag slot to the snapshot root, and
 `CloseSnapshot::applyShrink` grows its tree clip by that slot's `expand`
 (`server.cpp:1134-1136`), so `popin` and `zoom` keep the frozen deformation.
 
+A dragged window sits in the unclipped drag tree
+(`View::enterDragPresentation`), so every output it reaches draws its part.
+Each output's capture holds only what lies on that output, though, so near an
+output edge the sheet pulls transparent texels from past the edge and the
+window shows a gap along the seam. Capturing the content tree into a buffer
+sized to its drawn box would remove it.
+
 ## Slot modes
 
 **Capture.** `render_animated_range` (`wlr_scene.c:3715-3869`) renders the
@@ -327,8 +334,9 @@ A drawn box is the node's bounds grown by its `expand`, plus the light proxy
 (`persistent_effect_box`, `:5069-5099`); a screen or cursor box is the output
 or the cursor square. The render-list walk tests leaves against the output box
 grown by the scene's largest `expand` (`scene_effects_max_expand`), so a node
-whose drawn box reaches an output only through its margin, border effect or
-drag sheet alike, is listed and drawn there.
+whose drawn box reaches an output only through its margin is listed there. A
+border effect draws its padding in full; a drag sheet draws only what that
+output captured ([Attachment](#attachment)).
 Changing a slot (`wlr_scene_node_set_animation`,
 `:1637-1734`) updates the whole scene for a transient slot. For a persistent
 slot it damages the drawn box before and after the change
