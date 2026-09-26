@@ -92,11 +92,16 @@ namespace {
     state.bufferWidth = width;
     state.bufferHeight = height;
   }
+  // Picks ARGB8888 over XRGB8888 when the session advertises both, and ignores any other format in the list;
+  // `haveShmFormat` stays false only when neither ever arrives.
   void sessionShmFormat(void* data, ext_image_copy_capture_session_v1*, uint32_t format) {
     auto& state = *static_cast<State*>(data);
-    if (!state.haveShmFormat) {
-      state.haveShmFormat = true;
+    if (format == WL_SHM_FORMAT_ARGB8888) {
       state.shmFormat = format;
+      state.haveShmFormat = true;
+    } else if (format == WL_SHM_FORMAT_XRGB8888 && !state.haveShmFormat) {
+      state.shmFormat = format;
+      state.haveShmFormat = true;
     }
   }
   void sessionDmabufDevice(void*, ext_image_copy_capture_session_v1*, wl_array*) {}
@@ -200,8 +205,8 @@ namespace {
   // ARGB8888 or XRGB8888 since the centre-pixel sampling below assumes that byte layout.
   Buffer createBuffer(State& state) {
     Buffer buffer{.width = static_cast<int>(state.bufferWidth), .height = static_cast<int>(state.bufferHeight)};
-    if (state.shmFormat != WL_SHM_FORMAT_ARGB8888 && state.shmFormat != WL_SHM_FORMAT_XRGB8888) {
-      std::println(stderr, "toplevel-capture-client: session offered unsupported shm format {}", state.shmFormat);
+    if (!state.haveShmFormat) {
+      std::println(stderr, "toplevel-capture-client: session offered neither ARGB8888 nor XRGB8888");
       return buffer;
     }
     const int stride = buffer.width * 4;
