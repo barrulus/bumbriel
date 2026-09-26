@@ -183,6 +183,26 @@ namespace umbriel {
       }
     }
 
+    void applyLeftHanded(
+        libinput_device* libinputDevice, const wlr_input_device* device, const std::optional<bool>& configured,
+        std::string_view setting
+    ) {
+      if (libinput_device_config_left_handed_is_available(libinputDevice) == 0) {
+        if (configured) {
+          kLog.warn("input: '{}' does not support {}", deviceName(device), setting);
+        }
+        return;
+      }
+      const bool enabled = configured.value_or(libinput_device_config_left_handed_get_default(libinputDevice) != 0);
+      if (libinput_device_config_left_handed_set(libinputDevice, enabled) != LIBINPUT_CONFIG_STATUS_SUCCESS) {
+        if (configured) {
+          kLog.warn("input: failed to apply {} to '{}'", setting, deviceName(device));
+        } else {
+          kLog.warn("input: failed to restore the default left-handed state for '{}'", deviceName(device));
+        }
+      }
+    }
+
     void applyClickMethod(
         libinput_device* libinputDevice, const wlr_input_device* device, std::optional<ClickMethod> configured,
         std::string_view setting
@@ -476,6 +496,16 @@ namespace umbriel {
           override != nullptr && override->naturalScroll ? "input.device.natural_scroll"
               : isTouchpad                               ? "input.touchpad.natural_scroll"
                                                          : "input.mouse.natural_scroll"
+      );
+
+      const std::optional<bool>& leftHanded = override != nullptr && override->leftHanded ? override->leftHanded
+          : isTouchpad                                                                    ? input.touchpad.leftHanded
+                                                                                          : input.mouse.leftHanded;
+      applyLeftHanded(
+          libinputDevice, device, leftHanded,
+          override != nullptr && override->leftHanded ? "input.device.left_handed"
+              : isTouchpad                            ? "input.touchpad.left_handed"
+                                                      : "input.mouse.left_handed"
       );
 
       // Button scrolling has no `[input.touchpad]` counterpart: a touchpad only gets it from its own device rule,

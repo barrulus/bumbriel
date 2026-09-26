@@ -71,6 +71,22 @@ The incoming active workspace remains interactive throughout the transition.
 Pinned windows and scratchpad windows do not inherit this inactive-workspace
 restriction.
 
+## Cyclic switching
+
+`cyclic_workspaces` wraps a workspace step around the ends of the inventory. It
+is read from the owning output's rule when the action runs, so a reload applies
+it and nothing else holds state derived from it. The adjacent switch and move
+actions resolve their target through `stepWorkspace()` in
+`src/server/actions.cpp`, so they cannot disagree at the ends.
+
+The wrap applies only where a step leaves the inventory. On a dynamic output,
+the trailing empty sentinel is the last member: stepping forward from the last
+populated workspace enters it, and the forward wrap happens from the sentinel
+itself, or at the workspace limit where no sentinel can be appended. Stepping
+back from the first workspace wraps to that sentinel. A static inventory has no
+sentinel, so both ends wrap directly. Without the key, a step past either end is
+a silent no-op.
+
 ## Pointer focus after scene changes
 
 Mapping a window, activating a workspace, or running a layout command can

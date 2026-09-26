@@ -203,4 +203,30 @@ wait_for_fullscreen_query \
   '[.surfaces[] | select(.title == "dwindle-fullscreen-target") | .fullscreen] == [false]' \
   "moving a floating window in did not exit fullscreen"
 
-echo "only windows arriving on a dwindle workspace exit fullscreen when configured, by scope"
+# On a scrolling workspace a tiled arrival opens beside the fullscreen column, so even "all" keeps fullscreen.
+sed -i 's/^new_exits_fullscreen = "floating"$/new_exits_fullscreen = "all"/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" msg workspace-set-layout:scrolling > /dev/null
+"$UMBRIEL" msg "window-focus:$target_id" > /dev/null
+"$UMBRIEL" msg window-toggle-fullscreen > /dev/null
+wait_for_fullscreen_query \
+  '[.surfaces[] | select(.title == "dwindle-fullscreen-target" and .fullscreen)] | length == 1' \
+  "target window did not enter fullscreen on the scrolling workspace"
+"$UMBRIEL" msg "window-focus:$third_id" > /dev/null
+"$UMBRIEL" msg window-move-to-workspace:1 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-third" and (.workspace | endswith(":1")))] | length == 1' \
+  "third window did not move to workspace 1"
+"$UMBRIEL" msg window-move-to-workspace:2 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-third" and (.workspace | endswith(":2")))] | length == 1' \
+  "third window did not move back to the scrolling workspace"
+"$UMBRIEL" settle
+state=$("$UMBRIEL" tearing --json)
+if ! jq -e '[.surfaces[] | select(.title == "dwindle-fullscreen-target") | .fullscreen] == [true]' <<< "$state" \
+  > /dev/null; then
+  echo "a tiled arrival on a scrolling workspace exited fullscreen: $state"
+  exit 1
+fi
+
+echo "only windows arriving on a workspace exit fullscreen when configured, by scope; scrolling keeps it for tiles"

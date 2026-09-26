@@ -806,6 +806,25 @@ namespace umbriel {
       return true;
     }
 
+    // The workspace one step from `index`, wrapping around the ends of the
+    // inventory when the output enables cyclic workspaces. Null means the step
+    // leaves the inventory, or that the output owns no workspace at all.
+    Workspace* stepWorkspace(WorkspaceGroup& group, size_t index, int step) {
+      const size_t count = group.workspaceCount();
+      if (count == 0) {
+        return nullptr;
+      }
+      const long long target = static_cast<long long>(index) + step;
+      if (target >= 0 && target < static_cast<long long>(count)) {
+        return group.workspaceAt(static_cast<size_t>(target));
+      }
+      const Output* output = group.output();
+      if (output == nullptr || !output->configuredCyclicWorkspaces()) {
+        return nullptr;
+      }
+      return step < 0 ? group.workspaceAt(count - 1) : group.workspaceAt(0);
+    }
+
     template <int Direction>
     bool actionMoveVerticalOrWorkspace(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
       if (Workspace* workspace = windowActionWorkspace(server)) {
@@ -814,12 +833,7 @@ namespace umbriel {
           if (source->group() == nullptr) {
             return true;
           }
-          WorkspaceGroup* group = source->group();
-          const size_t index = source->index();
-          if (Direction < 0 && index == 0) {
-            return true;
-          }
-          Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+          Workspace* target = stepWorkspace(*source->group(), source->index(), Direction);
           if (target == nullptr || target == source) {
             return true;
           }
@@ -1225,11 +1239,7 @@ namespace umbriel {
       if (group == nullptr) {
         return true;
       }
-      const size_t index = group->active()->index();
-      if (Direction < 0 && index == 0) {
-        return true; // no wrap-around; silent no-op at the first workspace
-      }
-      Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+      Workspace* target = stepWorkspace(*group, group->active()->index(), Direction);
       if (target == nullptr || target == group->active()) {
         return true;
       }
@@ -1243,12 +1253,7 @@ namespace umbriel {
       if (workspace == nullptr || workspace->group() == nullptr) {
         return true;
       }
-      WorkspaceGroup* group = workspace->group();
-      const size_t index = workspace->index();
-      if (Direction < 0 && index == 0) {
-        return true;
-      }
-      Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+      Workspace* target = stepWorkspace(*workspace->group(), workspace->index(), Direction);
       if (target == nullptr || target == workspace) {
         return true;
       }
@@ -1264,12 +1269,7 @@ namespace umbriel {
       if (source == nullptr || source->group() == nullptr) {
         return true;
       }
-      WorkspaceGroup* group = source->group();
-      const size_t index = source->index();
-      if (Direction < 0 && index == 0) {
-        return true;
-      }
-      Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+      Workspace* target = stepWorkspace(*source->group(), source->index(), Direction);
       if (target == nullptr || target == source) {
         return true;
       }

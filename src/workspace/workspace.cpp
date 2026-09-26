@@ -323,7 +323,9 @@ namespace umbriel {
             : joining->tiled() ? FullscreenExitScope::Tiled
                                : FullscreenExitScope::Floating
     );
-    if ((static_cast<uint8_t>(scope) & joiningBit) == 0) {
+    // A tiled arrival on a scrolling workspace opens beside the fullscreen column and the strip scrolls to it.
+    if ((static_cast<uint8_t>(scope) & joiningBit) == 0
+        || (m_layoutMode == LayoutMode::Scrolling && joiningBit == static_cast<uint8_t>(FullscreenExitScope::Tiled))) {
       return;
     }
     for (View* other : m_views) {

@@ -1629,6 +1629,7 @@ namespace umbriel {
             .integer("repeat_delay", 0, 10000, device.repeatDelay)
             .boolean("tap", device.tap)
             .boolean("natural_scroll", device.naturalScroll)
+            .boolean("left_handed", device.leftHanded)
             .real("sensitivity", -1.0, 1.0, device.sensitivity)
             .boolean("disable_while_typing", device.disableWhileTyping)
             .boolean("scroll_button_lock", device.scrollButtonLock);
@@ -1703,6 +1704,7 @@ namespace umbriel {
         s.sub("touchpad", [&](Section& t) {
           t.boolean("tap", in.touchpad.tap)
               .boolean("natural_scroll", in.touchpad.naturalScroll)
+              .boolean("left_handed", in.touchpad.leftHanded)
               .real("sensitivity", -1.0, 1.0, in.touchpad.sensitivity)
               .boolean("disable_while_typing", in.touchpad.disableWhileTyping)
               .boolean("disable_on_external_mouse", in.touchpad.disableOnExternalMouse);
@@ -1713,6 +1715,7 @@ namespace umbriel {
         });
         s.sub("mouse", [&](Section& m) {
           m.boolean("natural_scroll", in.mouse.naturalScroll)
+              .boolean("left_handed", in.mouse.leftHanded)
               .real("sensitivity", -1.0, 1.0, in.mouse.sensitivity)
               .integer("scroll_wheel_step", 1, 1000, in.mouse.scrollWheelStep)
               .boolean("scroll_button_lock", in.mouse.scrollButtonLock);
@@ -1785,7 +1788,8 @@ namespace umbriel {
             scrolling.real("default_extent_fraction", 0.1, 1.0, rule.layout.scrolling.defaultExtentFraction);
           });
         });
-        keys.integer("min_workspaces", 1, static_cast<int>(kMaxWorkspaces), rule.minWorkspaces);
+        keys.integer("min_workspaces", 1, static_cast<int>(kMaxWorkspaces), rule.minWorkspaces)
+            .boolean("cyclic_workspaces", rule.cyclicWorkspaces);
         if (const toml::node* axisNode = keys.take("workspace_axis")) {
           const auto value = axisNode->value<std::string>();
           if (value == "vertical") {
