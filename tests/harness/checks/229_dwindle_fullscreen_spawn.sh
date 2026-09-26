@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # In dwindle, a new tiled window normally maps below an existing fullscreen window. The fullscreen action must still
-# leave the visible fullscreen state. With new_exits_fullscreen enabled, only opening a tiled window exits fullscreen;
-# attaching an existing floating window to the layout leaves it unchanged. A late title rule that completes the new
-# window's initial workspace placement still counts as opening it there.
+# leave the visible fullscreen state. With new_exits_fullscreen enabled, only a window arriving on the workspace exits
+# fullscreen: opening it there, a late title rule completing its initial placement, or moving it in from another
+# workspace. Attaching an existing floating window to the layout, or moving a window to the workspace it is already
+# on, leaves fullscreen unchanged. The scope selects which kinds of arriving window count.
 set -euo pipefail
 
 readonly CLIENT="${UMBRIEL_UNMAP_CLIENT:-./build-debug/tests/unmap-client}"
@@ -17,6 +18,7 @@ cat >> "$UMBRIEL_CONFIG" <<'EOF'
 
 [layout]
 mode = "dwindle"
+new_exits_fullscreen = []
 
 [animation]
 enabled = false
@@ -76,10 +78,8 @@ wait_for_query \
   '[.[] | select(.title == "dwindle-fullscreen-second" and .focused)] | length == 1' \
   "leaving the obscuring fullscreen changed focus"
 
+sed -i 's/^new_exits_fullscreen = \[\]$/new_exits_fullscreen = "tiled"/' "$UMBRIEL_CONFIG"
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
-
-[layout.dwindle]
-new_exits_fullscreen = true
 
 [output.HEADLESS-1]
 workspaces = 2
@@ -145,4 +145,88 @@ wait_for_fullscreen_query \
   '(.surfaces | length) == 5 and all(.surfaces[]; .fullscreen == false)' \
   "late initial workspace placement did not exit fullscreen"
 
-echo "only newly opened dwindle windows exit fullscreen when configured, including late initial placement"
+target_id=$("$UMBRIEL" windows --json | jq -r '.[] | select(.title == "dwindle-fullscreen-target") | .id')
+third_id=$("$UMBRIEL" windows --json | jq -r '.[] | select(.title == "dwindle-fullscreen-third") | .id')
+late_id=$("$UMBRIEL" windows --json | jq -r '.[] | select(.title == "dwindle-fullscreen-late") | .id')
+
+"$UMBRIEL" msg workspace-switch:2 > /dev/null
+"$UMBRIEL" msg "window-focus:$target_id" > /dev/null
+"$UMBRIEL" msg window-toggle-fullscreen > /dev/null
+wait_for_fullscreen_query \
+  '[.surfaces[] | select(.title == "dwindle-fullscreen-target" and .fullscreen)] | length == 1' \
+  "target window did not re-enter fullscreen"
+"$UMBRIEL" msg workspace-switch:1 > /dev/null
+"$UMBRIEL" msg "window-focus:$third_id" > /dev/null
+"$UMBRIEL" msg window-move-to-workspace:2 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-third" and (.workspace | endswith(":2")))] | length == 1' \
+  "third window did not move to workspace 2"
+wait_for_fullscreen_query \
+  '[.surfaces[] | select(.title == "dwindle-fullscreen-target") | .fullscreen] == [false]' \
+  "moving a tiled window in did not exit fullscreen"
+
+sed -i 's/^new_exits_fullscreen = "tiled"$/new_exits_fullscreen = "floating"/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+
+"$UMBRIEL" msg "window-focus:$late_id" > /dev/null
+"$UMBRIEL" msg window-toggle-floating > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-late" and .floating)] | length == 1' \
+  "late window did not become floating"
+"$UMBRIEL" msg "window-focus:$target_id" > /dev/null
+"$UMBRIEL" msg window-toggle-fullscreen > /dev/null
+wait_for_fullscreen_query \
+  '[.surfaces[] | select(.title == "dwindle-fullscreen-target" and .fullscreen)] | length == 1' \
+  "target window did not enter fullscreen before the floating moves"
+
+# A move onto the workspace the window already occupies is not an arrival. settle waits for every configure an
+# erroneous exit would send to be acknowledged, so the fullscreen state read after it is final.
+"$UMBRIEL" msg "window-focus:$late_id" > /dev/null
+"$UMBRIEL" msg window-move-to-workspace:2 > /dev/null
+"$UMBRIEL" settle
+state=$("$UMBRIEL" tearing --json)
+if ! jq -e '[.surfaces[] | select(.title == "dwindle-fullscreen-target") | .fullscreen] == [true]' <<< "$state" \
+  > /dev/null; then
+  echo "moving a floating window to its own workspace exited fullscreen: $state"
+  exit 1
+fi
+
+"$UMBRIEL" msg window-move-to-workspace:1 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-late" and (.workspace | endswith(":1")))] | length == 1' \
+  "late window did not move to workspace 1"
+"$UMBRIEL" msg window-move-to-workspace:2 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-late" and (.workspace | endswith(":2")))] | length == 1' \
+  "late window did not move back to workspace 2"
+wait_for_fullscreen_query \
+  '[.surfaces[] | select(.title == "dwindle-fullscreen-target") | .fullscreen] == [false]' \
+  "moving a floating window in did not exit fullscreen"
+
+# On a scrolling workspace a tiled arrival opens beside the fullscreen column, so even "all" keeps fullscreen.
+sed -i 's/^new_exits_fullscreen = "floating"$/new_exits_fullscreen = "all"/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" msg workspace-set-layout:scrolling > /dev/null
+"$UMBRIEL" msg "window-focus:$target_id" > /dev/null
+"$UMBRIEL" msg window-toggle-fullscreen > /dev/null
+wait_for_fullscreen_query \
+  '[.surfaces[] | select(.title == "dwindle-fullscreen-target" and .fullscreen)] | length == 1' \
+  "target window did not enter fullscreen on the scrolling workspace"
+"$UMBRIEL" msg "window-focus:$third_id" > /dev/null
+"$UMBRIEL" msg window-move-to-workspace:1 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-third" and (.workspace | endswith(":1")))] | length == 1' \
+  "third window did not move to workspace 1"
+"$UMBRIEL" msg window-move-to-workspace:2 > /dev/null
+wait_for_query \
+  '[.[] | select(.title == "dwindle-fullscreen-third" and (.workspace | endswith(":2")))] | length == 1' \
+  "third window did not move back to the scrolling workspace"
+"$UMBRIEL" settle
+state=$("$UMBRIEL" tearing --json)
+if ! jq -e '[.surfaces[] | select(.title == "dwindle-fullscreen-target") | .fullscreen] == [true]' <<< "$state" \
+  > /dev/null; then
+  echo "a tiled arrival on a scrolling workspace exited fullscreen: $state"
+  exit 1
+fi
+
+echo "only windows arriving on a workspace exit fullscreen when configured, by scope; scrolling keeps it for tiles"

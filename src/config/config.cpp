@@ -378,6 +378,65 @@ namespace umbriel {
       return std::nullopt;
     }
 
+    constexpr std::string_view kFullscreenExitScopeValues = R"("tiled", "floating", "pinned", or "all")";
+
+    std::optional<FullscreenExitScope> parseFullscreenExitScope(std::string_view token) {
+      if (token == "tiled") {
+        return FullscreenExitScope::Tiled;
+      }
+      if (token == "floating") {
+        return FullscreenExitScope::Floating;
+      }
+      if (token == "pinned") {
+        return FullscreenExitScope::Pinned;
+      }
+      if (token == "all") {
+        return FullscreenExitScope::All;
+      }
+      return std::nullopt;
+    }
+
+    // A string names one scope; an array combines several, and an empty array disables the behavior.
+    std::optional<FullscreenExitScope> readFullscreenExitScope(Section& section, std::string_view context) {
+      const toml::node* node = section.take("new_exits_fullscreen");
+      if (node == nullptr) {
+        return std::nullopt;
+      }
+      if (const auto* value = node->as_string()) {
+        const std::optional<FullscreenExitScope> scope = parseFullscreenExitScope(value->get());
+        if (!scope) {
+          warnAt(
+              node->source(), R"(ignoring {}.new_exits_fullscreen "{}" (expected {}))", context, value->get(),
+              kFullscreenExitScopeValues
+          );
+        }
+        return scope;
+      }
+      const auto* array = node->as_array();
+      if (array == nullptr) {
+        warnAt(
+            node->source(), "ignoring {}.new_exits_fullscreen (expected a string or an array of strings, each {})",
+            context, kFullscreenExitScopeValues
+        );
+        return std::nullopt;
+      }
+      auto combined = static_cast<uint8_t>(FullscreenExitScope::None);
+      for (const toml::node& entry : *array) {
+        const auto* value = entry.as_string();
+        const std::optional<FullscreenExitScope> scope =
+            value != nullptr ? parseFullscreenExitScope(value->get()) : std::nullopt;
+        if (!scope) {
+          warnAt(
+              entry.source(), "ignoring {}.new_exits_fullscreen entry (expected {})", context,
+              kFullscreenExitScopeValues
+          );
+          continue;
+        }
+        combined |= static_cast<uint8_t>(*scope);
+      }
+      return static_cast<FullscreenExitScope>(combined);
+    }
+
     std::optional<CenterFocusedColumn> readCenterFocused(Section& section, std::string_view context) {
       const toml::node* node = section.take("center_focused");
       if (node == nullptr) {
@@ -529,6 +588,30 @@ namespace umbriel {
       return std::nullopt;
     }
 
+    std::optional<TapButtonMap> readTapButtonMap(Section& section, std::string_view context) {
+      const toml::node* node = section.take("tap_button_map");
+      if (node == nullptr) {
+        return std::nullopt;
+      }
+      const auto* value = node->as_string();
+      if (value == nullptr) {
+        warnAt(node->source(), "{}.tap_button_map must be a string", context);
+        return std::nullopt;
+      }
+      const std::string map = lowercase(value->get());
+      if (map == "left_right_middle") {
+        return TapButtonMap::LeftRightMiddle;
+      }
+      if (map == "left_middle_right") {
+        return TapButtonMap::LeftMiddleRight;
+      }
+      warnAt(
+          node->source(), R"(invalid {}.tap_button_map "{}" (expected "left_right_middle" or "left_middle_right"))",
+          context, value->get()
+      );
+      return std::nullopt;
+    }
+
     std::optional<uint32_t> readScrollButton(Section& section, std::string_view context) {
       const toml::node* node = section.take("scroll_button");
       if (node == nullptr) {
@@ -623,6 +706,9 @@ namespace umbriel {
             if (auto presets = readExtentPresets(s, layoutContext)) {
               overrides.extentPresets = std::move(*presets);
             }
+            if (const auto scope = readFullscreenExitScope(s, layoutContext)) {
+              overrides.newExitsFullscreen = scope;
+            }
             s.sub("scrolling", [&](Section& sc) {
               sc.real("default_extent_fraction", 0.1, 1.0, overrides.scrolling.defaultExtentFraction)
                   .boolean("center_underfull_strip", overrides.scrolling.centerUnderfullStrip);
@@ -630,18 +716,14 @@ namespace umbriel {
                 overrides.scrolling.centerFocused = centerFocused;
               }
             });
-            s.sub("dwindle", [&](Section& sd) {
-              sd.boolean("preserve_split", overrides.dwindle.preserveSplit)
-                  .boolean("new_exits_fullscreen", overrides.dwindle.newExitsFullscreen);
-            });
+            s.sub("dwindle", [&](Section& sd) { sd.boolean("preserve_split", overrides.dwindle.preserveSplit); });
             s.sub("master", [&](Section& sm) {
               if (const auto position = readMasterPosition(sm, layoutContext + ".master")) {
                 overrides.master.position = position;
               }
               sm.real("default_width_fraction", 0.1, 0.9, overrides.master.defaultWidthFraction)
                   .boolean("new_on_top", overrides.master.newOnTop)
-                  .boolean("new_becomes_master", overrides.master.newBecomesMaster)
-                  .boolean("new_exits_fullscreen", overrides.master.newExitsFullscreen);
+                  .boolean("new_becomes_master", overrides.master.newBecomesMaster);
             });
           },
           layoutContext
@@ -1530,6 +1612,9 @@ namespace umbriel {
         if (auto presets = readExtentPresets(s, "layout")) {
           loaded.layout.extentPresets = std::move(*presets);
         }
+        if (const auto scope = readFullscreenExitScope(s, "layout")) {
+          loaded.layout.newExitsFullscreen = *scope;
+        }
         s.sub("scrolling", [&](Section& sc) {
           sc.real("default_extent_fraction", 0.1, 1.0, loaded.layout.scrolling.defaultExtentFraction)
               .boolean("center_underfull_strip", loaded.layout.scrolling.centerUnderfullStrip);
@@ -1537,18 +1622,14 @@ namespace umbriel {
             loaded.layout.scrolling.centerFocused = *centerFocused;
           }
         });
-        s.sub("dwindle", [&](Section& sd) {
-          sd.boolean("preserve_split", loaded.layout.dwindle.preserveSplit)
-              .boolean("new_exits_fullscreen", loaded.layout.dwindle.newExitsFullscreen);
-        });
+        s.sub("dwindle", [&](Section& sd) { sd.boolean("preserve_split", loaded.layout.dwindle.preserveSplit); });
         s.sub("master", [&](Section& sm) {
           if (const auto position = readMasterPosition(sm, "layout.master")) {
             loaded.layout.master.position = *position;
           }
           sm.real("default_width_fraction", 0.1, 0.9, loaded.layout.master.defaultWidthFraction)
               .boolean("new_on_top", loaded.layout.master.newOnTop)
-              .boolean("new_becomes_master", loaded.layout.master.newBecomesMaster)
-              .boolean("new_exits_fullscreen", loaded.layout.master.newExitsFullscreen);
+              .boolean("new_becomes_master", loaded.layout.master.newBecomesMaster);
         });
       });
     }
@@ -1736,11 +1817,13 @@ namespace umbriel {
             .integer("repeat_delay", 0, 10000, device.repeatDelay)
             .boolean("tap", device.tap)
             .boolean("natural_scroll", device.naturalScroll)
+            .boolean("left_handed", device.leftHanded)
             .real("sensitivity", -1.0, 1.0, device.sensitivity)
             .boolean("disable_while_typing", device.disableWhileTyping)
             .boolean("scroll_button_lock", device.scrollButtonLock);
         device.accelProfile = readAccelProfile(keys, "accel_profile", "input.device");
         device.clickMethod = readClickMethod(keys, "input.device");
+        device.tapButtonMap = readTapButtonMap(keys, "input.device");
         device.scrollButton = readScrollButton(keys, "input.device");
 
         if (!validName) {
@@ -1809,15 +1892,18 @@ namespace umbriel {
         s.sub("touchpad", [&](Section& t) {
           t.boolean("tap", in.touchpad.tap)
               .boolean("natural_scroll", in.touchpad.naturalScroll)
+              .boolean("left_handed", in.touchpad.leftHanded)
               .real("sensitivity", -1.0, 1.0, in.touchpad.sensitivity)
               .boolean("disable_while_typing", in.touchpad.disableWhileTyping)
               .boolean("disable_on_external_mouse", in.touchpad.disableOnExternalMouse);
           in.touchpad.scrollFactor = readScrollFactor(t);
           in.touchpad.accelProfile = readAccelProfile(t, "accel_profile", "input.touchpad");
           in.touchpad.clickMethod = readClickMethod(t, "input.touchpad");
+          in.touchpad.tapButtonMap = readTapButtonMap(t, "input.touchpad");
         });
         s.sub("mouse", [&](Section& m) {
           m.boolean("natural_scroll", in.mouse.naturalScroll)
+              .boolean("left_handed", in.mouse.leftHanded)
               .real("sensitivity", -1.0, 1.0, in.mouse.sensitivity)
               .integer("scroll_wheel_step", 1, 1000, in.mouse.scrollWheelStep)
               .boolean("scroll_button_lock", in.mouse.scrollButtonLock);
@@ -1907,7 +1993,8 @@ namespace umbriel {
             scrolling.real("default_extent_fraction", 0.1, 1.0, rule.layout.scrolling.defaultExtentFraction);
           });
         });
-        keys.integer("min_workspaces", 1, static_cast<int>(kMaxWorkspaces), rule.minWorkspaces);
+        keys.integer("min_workspaces", 1, static_cast<int>(kMaxWorkspaces), rule.minWorkspaces)
+            .boolean("cyclic_workspaces", rule.cyclicWorkspaces);
         if (const toml::node* axisNode = keys.take("workspace_axis")) {
           const auto value = axisNode->value<std::string>();
           if (value == "vertical") {
@@ -2026,6 +2113,15 @@ namespace umbriel {
         double sdrWhite = rule.sdrWhite;
         keys.real("sdr_white", 80.0, 1000.0, sdrWhite);
         rule.sdrWhite = static_cast<float>(sdrWhite);
+
+        if (const toml::node* bitDepthNode = keys.take("bit_depth")) {
+          const auto value = bitDepthNode->value<std::int64_t>();
+          if (value && (*value == 8 || *value == 10)) {
+            rule.bitDepth = static_cast<int>(*value);
+          } else {
+            warnAt(bitDepthNode->source(), "ignoring output.{}.bit_depth (expected 8 or 10)", name);
+          }
+        }
 
         if (const toml::node* transformNode = keys.take("transform")) {
           const auto value = transformNode->value<std::string>();

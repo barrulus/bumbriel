@@ -184,6 +184,26 @@ namespace umbriel {
       }
     }
 
+    void applyLeftHanded(
+        libinput_device* libinputDevice, const wlr_input_device* device, const std::optional<bool>& configured,
+        std::string_view setting
+    ) {
+      if (libinput_device_config_left_handed_is_available(libinputDevice) == 0) {
+        if (configured) {
+          kLog.warn("input: '{}' does not support {}", deviceName(device), setting);
+        }
+        return;
+      }
+      const bool enabled = configured.value_or(libinput_device_config_left_handed_get_default(libinputDevice) != 0);
+      if (libinput_device_config_left_handed_set(libinputDevice, enabled) != LIBINPUT_CONFIG_STATUS_SUCCESS) {
+        if (configured) {
+          kLog.warn("input: failed to apply {} to '{}'", setting, deviceName(device));
+        } else {
+          kLog.warn("input: failed to restore the default left-handed state for '{}'", deviceName(device));
+        }
+      }
+    }
+
     void applyClickMethod(
         libinput_device* libinputDevice, const wlr_input_device* device, std::optional<ClickMethod> configured,
         std::string_view setting
@@ -219,6 +239,32 @@ namespace umbriel {
         } else {
           kLog.warn("input: failed to restore the default click method for '{}'", deviceName(device));
         }
+      }
+    }
+
+    void applyTapButtonMap(
+        libinput_device* libinputDevice, const wlr_input_device* device, std::optional<TapButtonMap> configured,
+        std::string_view setting
+    ) {
+      if (!configured) {
+        if (libinput_device_config_tap_set_button_map(
+                libinputDevice, libinput_device_config_tap_get_default_button_map(libinputDevice)
+            )
+            != LIBINPUT_CONFIG_STATUS_SUCCESS) {
+          kLog.warn("input: failed to restore the default tap button map for '{}'", deviceName(device));
+        }
+        return;
+      }
+      enum libinput_config_tap_button_map requested = LIBINPUT_CONFIG_TAP_MAP_LRM;
+      switch (*configured) {
+      case TapButtonMap::LeftRightMiddle:
+        break;
+      case TapButtonMap::LeftMiddleRight:
+        requested = LIBINPUT_CONFIG_TAP_MAP_LMR;
+        break;
+      }
+      if (libinput_device_config_tap_set_button_map(libinputDevice, requested) != LIBINPUT_CONFIG_STATUS_SUCCESS) {
+        kLog.warn("input: failed to apply {} to '{}'", setting, deviceName(device));
       }
     }
 
@@ -424,6 +470,13 @@ namespace umbriel {
               deviceName(device)
           );
         }
+        const bool hasTapMapOverride = override != nullptr && override->tapButtonMap.has_value();
+        const std::optional<TapButtonMap>& tapButtonMap =
+            hasTapMapOverride ? override->tapButtonMap : input.touchpad.tapButtonMap;
+        applyTapButtonMap(
+            libinputDevice, device, tapButtonMap,
+            hasTapMapOverride ? "input.device.tap_button_map" : "input.touchpad.tap_button_map"
+        );
       }
 
       const bool hasClickOverride = override != nullptr && override->clickMethod.has_value();
@@ -444,6 +497,16 @@ namespace umbriel {
           override != nullptr && override->naturalScroll ? "input.device.natural_scroll"
               : isTouchpad                               ? "input.touchpad.natural_scroll"
                                                          : "input.mouse.natural_scroll"
+      );
+
+      const std::optional<bool>& leftHanded = override != nullptr && override->leftHanded ? override->leftHanded
+          : isTouchpad                                                                    ? input.touchpad.leftHanded
+                                                                                          : input.mouse.leftHanded;
+      applyLeftHanded(
+          libinputDevice, device, leftHanded,
+          override != nullptr && override->leftHanded ? "input.device.left_handed"
+              : isTouchpad                            ? "input.touchpad.left_handed"
+                                                      : "input.mouse.left_handed"
       );
 
       // Button scrolling has no `[input.touchpad]` counterpart: a touchpad only gets it from its own device rule,
@@ -2728,13 +2791,29 @@ namespace umbriel {
     wlr_output_manager_v1_set_configuration(m_outputManager, cfg);
   }
 
-  void Server::applyOutputManagerConfig(wlr_output_configuration_v1* config, bool testOnly) {
+  bool Server::commitOutputEnabled(Output& target, bool enabled) {
+    wlr_output_configuration_v1* config = wlr_output_configuration_v1_create();
+    for (const auto& output : m_outputs) {
+      wlr_output_configuration_head_v1* head = wlr_output_configuration_head_v1_create(config, output->wlr());
+      head->state.enabled = output.get() == &target ? enabled : output->desktopEnabled();
+      const wlr_box box = output->layoutBox();
+      head->state.x = box.x;
+      head->state.y = box.y;
+    }
+    return applyOutputManagerConfig(config, false);
+  }
+
+  bool Server::setOutputEnabled(Output& output, bool enabled) {
+    return output.desktopEnabled() == enabled || commitOutputEnabled(output, enabled);
+  }
+
+  bool Server::applyOutputManagerConfig(wlr_output_configuration_v1* config, bool testOnly) {
     size_t statesLen = 0;
     wlr_backend_output_state* states = wlr_output_configuration_v1_build_state(config, &statesLen);
     if (states == nullptr) {
       wlr_output_configuration_v1_send_failed(config);
       wlr_output_configuration_v1_destroy(config);
-      return;
+      return false;
     }
 
     struct RequestedHead {
@@ -3039,6 +3118,7 @@ namespace umbriel {
     if (commitAttempted) {
       updateOutputManagerConfig();
     }
+    return ok;
   }
 
   void Server::onToplevelCaptureRequest(wl_listener* listener, void* data) {

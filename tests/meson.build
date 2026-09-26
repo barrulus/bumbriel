@@ -22,7 +22,9 @@ unit_tests = [
   ['output-identity', ['unit/output_identity.cpp'], []],
   ['output-mode-selection', ['unit/output_mode_selection.cpp'], []],
   ['output-frame-schedule', ['unit/output_frame_schedule.cpp'], []],
+  ['output-format-sequence', ['unit/output_format_sequence.cpp'], []],
   ['hdr-format', ['unit/hdr_format.cpp'], []],
+  ['sdr-format', ['unit/sdr_format.cpp'], []],
   ['layout-struts', ['unit/layout_struts.cpp'], []],
   ['layout-motion', ['unit/layout_motion.cpp'], []],
   ['scrolling-layout', ['unit/scrolling_layout.cpp'], []],
@@ -319,6 +321,8 @@ seat_log_client = executable(
     xdg_foreign_client_c,
     keyboard_shortcuts_inhibit_client_h,
     keyboard_shortcuts_inhibit_client_c,
+    text_input_client_h,
+    text_input_client_c,
   ],
   dependencies: [wayland_client_dep],
 )

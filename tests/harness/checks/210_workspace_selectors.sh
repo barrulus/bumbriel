@@ -88,7 +88,7 @@ name = "vesktop"
 output = "HEADLESS-2"
 
 [[workspace]]
-name = "fluxer"
+name = "chat"
 output = "HEADLESS-2"
 
 [[workspace]]
@@ -110,7 +110,7 @@ expect_workspace_layout HEADLESS-1 2 dwindle
 expect_workspace_layout HEADLESS-1 3 master
 accepts "workspace-switch:vesktop/HEADLESS-2"
 accepts "workspace-switch:2"
-expect_focused HEADLESS-2 fluxer true
+expect_focused HEADLESS-2 chat true
 accepts "workspace-switch:3"
 expect_focused HEADLESS-2 3 false
 
@@ -133,7 +133,7 @@ name = "vesktop"
 output = "HEADLESS-2"
 
 [[workspace]]
-name = "fluxer"
+name = "chat"
 output = "HEADLESS-2"'
 accepts "workspace-switch:vesktop/HEADLESS-2"
 accepts "workspace-switch:3"
@@ -146,7 +146,7 @@ expect_focused HEADLESS-1 3 true
 accepts 'workspace-switch:"2"'
 expect_focused HEADLESS-1 2 true
 accepts "workspace-switch:2/HEADLESS-2"
-expect_focused HEADLESS-2 fluxer true
+expect_focused HEADLESS-2 chat true
 accepts 'workspace-switch:"3"/HEADLESS-1'
 accepts "workspace-switch:vesktop"
 expect_focused HEADLESS-2 vesktop true

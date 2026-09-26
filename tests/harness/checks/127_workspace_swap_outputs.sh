@@ -5,8 +5,8 @@
 # each strip's scroll offset arrive on the other output unchanged, which the
 # translation of each window box by the output offset observes exactly. Swapping
 # back has to land on the original boxes, so an asymmetric transfer fails here
-# even when the first swap looked right. The seat follows the focused window
-# across the swap, and the pointer follows the seat even without a follow-warp.
+# even when the first swap looked right. Without a follow-warp the pointer and
+# seat stay on the invoking output; with one they follow the focused window.
 set -euo pipefail
 
 readonly POINTER="${UMBRIEL_POINTER_CLIENT:-./build-debug/tests/pointer-client}"
@@ -16,6 +16,18 @@ readonly OFFSET=1280
 accepts() {
   if ! out=$("$UMBRIEL" msg "$1" 2>&1); then
     echo "expected '$1' to be accepted, got: $out"
+    exit 1
+  fi
+}
+
+rejects_with() {
+  local action=$1 expected=$2 out=
+  if out=$("$UMBRIEL" msg "$action" 2>&1); then
+    echo "expected '$action' to fail, got: $out"
+    exit 1
+  fi
+  if [[ $out != *"$expected"* ]]; then
+    echo "expected '$action' to report '$expected', got: $out"
     exit 1
   fi
 }
@@ -106,6 +118,9 @@ default_extent_fraction = 0.5
 [animation]
 enabled = false
 
+[input.cursor]
+follows_focus = false
+
 [output.HEADLESS-1]
 position = [0, 0]
 workspaces = ["LEFT"]
@@ -192,9 +207,24 @@ assert_box stack-bottom "$right" "$OFFSET" "$bottom_dwindle"
 assert_box wide "$right" "$OFFSET" "$wide_dwindle"
 assert_box lone "$left" "-$OFFSET" "$lone_dwindle"
 
-# Without a follow-warp (the default) the pointer still has to follow the seat
-# to the output the focused window travelled to.
+# Without a follow-warp the pointer and seat stay on the invoking output while
+# that output receives the other workspace's remembered focus.
 "$POINTER" 2560 720 move 640 360
+accepts "window-focus:$(field_of lone id)"
+assert_seat_on "$left" lone
+
+accepts workspace-swap-active-output-next
+wait_for_workspace lone "$right"
+assert_seat_on "$left" wide
+rejects_with workspace-swap-active-output-left "no output to the left"
+
+# Swap back, opt into follow-warp, and repeat. The original focused window and
+# pointer now travel together, preserving the enabled behavior in both
+# directions.
+accepts workspace-swap-active-output-next
+wait_for_workspace lone "$left"
+sed -i 's/follows_focus = false/follows_focus = true/' "$UMBRIEL_CONFIG"
+accepts config-reload
 accepts "window-focus:$(field_of lone id)"
 assert_seat_on "$left" lone
 
@@ -202,10 +232,8 @@ accepts workspace-swap-active-output-next
 wait_for_workspace lone "$right"
 assert_seat_on "$right" lone
 
-# A swap resolves its source from the pointer, and only the right output has a
-# neighbour to its left, so this is accepted only if the pointer followed.
 accepts workspace-swap-active-output-left
 wait_for_workspace lone "$left"
 assert_seat_on "$left" lone
 
-echo "active workspace swap exchanged both outputs' windows with their scrolling widths, row splits, scroll offset and dwindle split ratios intact, and carried the seat and pointer with the focused window"
+echo "active workspace swap preserved geometry and kept pointer, seat, and remembered focus consistent with follows_focus"

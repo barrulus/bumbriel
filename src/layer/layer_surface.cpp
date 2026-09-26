@@ -221,14 +221,18 @@ namespace umbriel {
   }
 
   bool LayerSurface::exclusiveKeyboard() const {
-    return m_mapped
-        && m_layerSurface != nullptr
+    return acceptsKeyboard()
         && m_layerSurface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE;
   }
 
   bool LayerSurface::acceptsKeyboard() const {
     if (!m_mapped || m_layerSurface == nullptr) {
       return false;
+    }
+    if (m_layerSurface->current.layer == ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
+      if (Output* out = output(); out != nullptr && out->hasFullscreenView()) {
+        return false;
+      }
     }
     const auto interactivity = m_layerSurface->current.keyboard_interactive;
     return interactivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE
@@ -433,7 +437,9 @@ namespace umbriel {
       notifyDesktopStack();
     }
 
-    if ((m_layerSurface->current.committed & WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY) != 0) {
+    if ((m_layerSurface->current.committed
+         & (WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY | WLR_LAYER_SURFACE_V1_STATE_LAYER))
+        != 0) {
       if (exclusiveKeyboard()) {
         focus();
       } else if (hasKeyboardFocus() && !acceptsKeyboard()) {

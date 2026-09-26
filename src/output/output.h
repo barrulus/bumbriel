@@ -24,6 +24,7 @@ extern "C" {
 
 namespace umbriel {
 
+  enum class FormatTier : uint8_t;
   enum class HdrMode;
   class Server;
   class View;
@@ -95,10 +96,15 @@ namespace umbriel {
     [[nodiscard]] HdrMode hdrMode() const;
     [[nodiscard]] bool hdrRequested() const;
     [[nodiscard]] bool hdrActive() const;
+    [[nodiscard]] bool bitDepthActive() const;
     [[nodiscard]] const std::string& hdrFallbackReason() const { return m_hdrFallbackReason; }
     [[nodiscard]] float configuredSdrWhite() const;
+    [[nodiscard]] int configuredBitDepth() const;
+    [[nodiscard]] const std::string& bitDepthFallbackReason() const { return m_bitDepthFallbackReason; }
     [[nodiscard]] bool configuredDirectScanoutEnabled() const;
     [[nodiscard]] bool configuredTearingAllowed() const;
+    // Whether a workspace step wraps around the ends of this output's inventory.
+    [[nodiscard]] bool configuredCyclicWorkspaces() const;
     [[nodiscard]] bool tearingRequested() const;
     [[nodiscard]] bool lastCommitTearing() const { return m_lastCommitTearing; }
     [[nodiscard]] const std::optional<uint32_t>& lastPresentationFlags() const { return m_lastPresentationFlags; }
@@ -149,6 +155,7 @@ namespace umbriel {
     [[nodiscard]] View* findAutoHdrCandidate() const;
     [[nodiscard]] bool configuredVrrEnabled() const;
     void setHdrFallbackReason(std::string_view reason);
+    void setBitDepthFallbackReason(std::string_view reason);
     void updateSceneSdrWhite();
     void rejectGammaControl(wlr_gamma_control_v1* control);
     void armFrameRetry();
@@ -189,6 +196,7 @@ namespace umbriel {
     bool m_dpmsOff = false;
     bool m_hdrGammaWarningLogged = false;
     bool m_modeFallbackWarned = false;
+    std::optional<FormatTier> m_vrrDroppedTier;
     bool m_fullscreenHdrRequested = false;
     bool m_lastHdrRequested = false;
     bool m_lastCommitTearing = false;
@@ -207,6 +215,7 @@ namespace umbriel {
     View* m_autoHdrOwner = nullptr;
     std::string m_hdrFallbackReason;
     std::string m_tearingFallbackReason;
+    std::string m_bitDepthFallbackReason;
     std::optional<bool> m_lastPresentationPresented;
     std::optional<uint32_t> m_lastPresentationFlags;
     uint32_t m_trackedPresentationCommitSeq = 0;

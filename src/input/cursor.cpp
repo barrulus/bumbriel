@@ -2045,6 +2045,7 @@ namespace umbriel {
     } else if (output != nullptr && output->workspaceGroup() != nullptr) {
       if (Workspace* target = output->workspaceGroup()->active(); view->workspace() != target) {
         view->moveToWorkspace(target);
+        target->exitFullscreenForIncomingView(view);
       }
     }
     // Drag presentation moves only the scene node. Commit its final position

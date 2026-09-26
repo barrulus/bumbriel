@@ -315,8 +315,9 @@ namespace umbriel {
     // The bind this press would fire, without running it. Null when nothing
     // matches (locked sessions match nothing, matching handleKeybind).
     [[nodiscard]] const Keybind* matchKeybind(uint32_t keysym, uint32_t rawKeysym, uint32_t modifiers) const;
-    // Combined state across keyboard devices. Media and brightness keys are
-    // commonly exposed by a separate device from the held modifier keys.
+    // Combined state across independent keyboard devices. Media and brightness
+    // keys commonly come from a device separate from held modifiers. An input
+    // method's mirrored keyboard is not independent and is excluded.
     [[nodiscard]] uint32_t keyboardModifiers() const;
     [[nodiscard]] bool keyboardShortcutsInhibited() const;
     bool toggleKeyboardShortcutsInhibit();
@@ -339,6 +340,9 @@ namespace umbriel {
     [[nodiscard]] Output* outputFromName(const std::string& name) const;
     [[nodiscard]] wlr_box usableAreaAt(double lx, double ly) const;
     void updateOutputManagerConfig();
+    // Change logical desktop membership through the same atomic transaction as
+    // wlr-output-management. Unlike DPMS, this displaces and restores views.
+    bool setOutputEnabled(Output& output, bool enabled);
     // Recompute the mapping for every tablet: focused window, focused output, named output, or full layout. Called at
     // the start of every tablet event so dynamic targets reflect current focus without signal hooks.
     void remapTablets();
@@ -511,7 +515,8 @@ namespace umbriel {
     void setLockBlankEnabled(bool enabled);
     void handleWorkspaceCommit(void* data);
     [[nodiscard]] Workspace* workspaceFromHandle(wlr_ext_workspace_handle_v1* handle) const;
-    void applyOutputManagerConfig(wlr_output_configuration_v1* config, bool testOnly);
+    bool applyOutputManagerConfig(wlr_output_configuration_v1* config, bool testOnly);
+    bool commitOutputEnabled(Output& output, bool enabled);
     void restoreDisplacedViews();
     [[nodiscard]] WorkspaceGroup* workspaceGroupFromHandle(wlr_ext_workspace_group_handle_v1* handle) const;
 

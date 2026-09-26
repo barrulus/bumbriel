@@ -243,7 +243,11 @@ namespace umbriel {
       if (floating) {
         view.rememberFloatingPosition();
       }
-      view.moveToWorkspace(&target); // layoutAttach self-guards on tiled()
+      view.moveToWorkspace(&target, true, LayoutAttachOrigin::MovedView); // layoutAttach self-guards on tiled()
+      if (workspaceChanged && !view.tiled()) {
+        // layoutAttach only handles tiled arrivals.
+        target.exitFullscreenForIncomingView(&view);
+      }
       if (widthFrac.has_value()) {
         ScrollingLayout* targetLayout = target.scrollingLayout();
         const int column = targetLayout != nullptr ? targetLayout->columnOf(&view) : -1;
@@ -300,6 +304,8 @@ namespace umbriel {
       if (column.views.empty()) {
         return false;
       }
+
+      target.exitFullscreenForIncomingView(focused);
 
       const int focusedTargetColumn = target.layout().columnOf(target.focusedView());
       const int targetIndex =
@@ -521,6 +527,51 @@ namespace umbriel {
       }
       if (!changed) {
         return reject(error, "no enabled outputs");
+      }
+      return true;
+    }
+
+    enum class OutputEnableAction {
+      Disable,
+      Enable,
+      Toggle,
+    };
+
+    template <OutputEnableAction Action>
+    bool actionOutputEnablement(Server& server, const Keybind& bind, std::string* error) {
+      const auto* arg = payloadIf<OutputArg>(bind);
+      if (arg == nullptr || arg->output.empty()) {
+        return reject(error, "output name is required");
+      }
+
+      Output* target = nullptr;
+      OutputNameMatch targetMatch = OutputNameMatch::None;
+      for (const auto& output : server.outputs()) {
+        const OutputNameMatch match = outputNameMatch(output->identity(), arg->output);
+        if (match == OutputNameMatch::None) {
+          continue;
+        }
+        if (match == OutputNameMatch::Connector) {
+          target = output.get();
+          targetMatch = match;
+          break;
+        }
+        if (target != nullptr && targetMatch == OutputNameMatch::Descriptor) {
+          return reject(error, "output descriptor is ambiguous: " + arg->output);
+        }
+        target = output.get();
+        targetMatch = match;
+      }
+      if (target == nullptr) {
+        return reject(error, "unknown output: " + arg->output);
+      }
+
+      bool enabled = Action == OutputEnableAction::Enable;
+      if constexpr (Action == OutputEnableAction::Toggle) {
+        enabled = !target->desktopEnabled();
+      }
+      if (!server.setOutputEnabled(*target, enabled)) {
+        return reject(error, "failed to change logical output state: " + arg->output);
       }
       return true;
     }
@@ -800,6 +851,25 @@ namespace umbriel {
       return true;
     }
 
+    // The workspace one step from `index`, wrapping around the ends of the
+    // inventory when the output enables cyclic workspaces. Null means the step
+    // leaves the inventory, or that the output owns no workspace at all.
+    Workspace* stepWorkspace(WorkspaceGroup& group, size_t index, int step) {
+      const size_t count = group.workspaceCount();
+      if (count == 0) {
+        return nullptr;
+      }
+      const long long target = static_cast<long long>(index) + step;
+      if (target >= 0 && target < static_cast<long long>(count)) {
+        return group.workspaceAt(static_cast<size_t>(target));
+      }
+      const Output* output = group.output();
+      if (output == nullptr || !output->configuredCyclicWorkspaces()) {
+        return nullptr;
+      }
+      return step < 0 ? group.workspaceAt(count - 1) : group.workspaceAt(0);
+    }
+
     template <int Direction>
     bool actionMoveVerticalOrWorkspace(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
       if (Workspace* workspace = windowActionWorkspace(server)) {
@@ -808,12 +878,7 @@ namespace umbriel {
           if (source->group() == nullptr) {
             return true;
           }
-          WorkspaceGroup* group = source->group();
-          const size_t index = source->index();
-          if (Direction < 0 && index == 0) {
-            return true;
-          }
-          Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+          Workspace* target = stepWorkspace(*source->group(), source->index(), Direction);
           if (target == nullptr || target == source) {
             return true;
           }
@@ -1219,11 +1284,7 @@ namespace umbriel {
       if (group == nullptr) {
         return true;
       }
-      const size_t index = group->active()->index();
-      if (Direction < 0 && index == 0) {
-        return true; // no wrap-around; silent no-op at the first workspace
-      }
-      Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+      Workspace* target = stepWorkspace(*group, group->active()->index(), Direction);
       if (target == nullptr || target == group->active()) {
         return true;
       }
@@ -1237,12 +1298,7 @@ namespace umbriel {
       if (workspace == nullptr || workspace->group() == nullptr) {
         return true;
       }
-      WorkspaceGroup* group = workspace->group();
-      const size_t index = workspace->index();
-      if (Direction < 0 && index == 0) {
-        return true;
-      }
-      Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+      Workspace* target = stepWorkspace(*workspace->group(), workspace->index(), Direction);
       if (target == nullptr || target == workspace) {
         return true;
       }
@@ -1258,12 +1314,7 @@ namespace umbriel {
       if (source == nullptr || source->group() == nullptr) {
         return true;
       }
-      WorkspaceGroup* group = source->group();
-      const size_t index = source->index();
-      if (Direction < 0 && index == 0) {
-        return true;
-      }
-      Workspace* target = group->workspaceAt(index + static_cast<size_t>(Direction));
+      Workspace* target = stepWorkspace(*source->group(), source->index(), Direction);
       if (target == nullptr || target == source) {
         return true;
       }
@@ -1589,12 +1640,20 @@ namespace umbriel {
         sourceWs->setFocusedView(sourceWs->allViews().front());
       }
 
-      // Gesture keeps the seat focus where it is without revealing its column: the restored scroll offset above is
-      // what both strips must settle on.
-      View* seatTarget = seatFocus != nullptr && seatFocus->mapped() ? seatFocus : sourceWs->focusedView();
+      // Without follow-warp, keep the seat on the pointer-selected source output and use the focus that arrived there.
+      // With it enabled, retain the previously focused view so the seat and pointer travel together. Gesture avoids
+      // revealing either target's column: the restored scroll offset above is what both strips must settle on.
+      const bool followFocus = config().input.cursor.followsFocus;
+      View* seatTarget =
+          followFocus && seatFocus != nullptr && seatFocus->mapped() ? seatFocus : sourceWs->focusedView();
+      if (seatTarget == nullptr && seatFocus != nullptr && seatFocus->mapped()) {
+        seatTarget = seatFocus;
+      }
       if (seatTarget != nullptr) {
         server.focusView(seatTarget, FocusReason::Gesture);
-        finishWorkspaceTransfer(server, *seatTarget);
+        if (followFocus) {
+          finishWorkspaceTransfer(server, *seatTarget);
+        }
       }
 
       sourceWs->markArrange(true);
@@ -1827,6 +1886,9 @@ namespace umbriel {
         &actionWorkspaceSetLayout,
         &actionDpms<false>,
         &actionDpms<true>,
+        &actionOutputEnablement<OutputEnableAction::Disable>,
+        &actionOutputEnablement<OutputEnableAction::Enable>,
+        &actionOutputEnablement<OutputEnableAction::Toggle>,
         &actionWorkspaceMove<1>,
         &actionWorkspaceMove<-1>,
         &actionColumnCenter,

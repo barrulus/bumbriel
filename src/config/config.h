@@ -37,6 +37,16 @@ namespace umbriel {
     Shift,
   };
 
+  // Which kinds of joining window are allowed to push a fullscreen window out of
+  // fullscreen (new_exits_fullscreen). A bitmask so any combination is expressible.
+  enum class FullscreenExitScope : uint8_t {
+    None = 0,
+    Tiled = 1 << 0,
+    Floating = 1 << 1,
+    Pinned = 1 << 2,
+    All = Tiled | Floating | Pinned,
+  };
+
   struct AccelProfile {
     enum class Kind {
       Flat,
@@ -54,6 +64,7 @@ namespace umbriel {
     std::optional<int> gap;
     LayoutStrutOverrides struts;
     std::optional<std::vector<double>> extentPresets;
+    std::optional<FullscreenExitScope> newExitsFullscreen;
     struct Scrolling {
       std::optional<double> defaultExtentFraction;
       std::optional<bool> centerUnderfullStrip;
@@ -62,14 +73,12 @@ namespace umbriel {
     } scrolling;
     struct Dwindle {
       std::optional<bool> preserveSplit;
-      std::optional<bool> newExitsFullscreen;
       bool operator==(const Dwindle&) const = default;
     } dwindle;
     struct Master {
       std::optional<double> defaultWidthFraction;
       std::optional<bool> newOnTop;
       std::optional<bool> newBecomesMaster;
-      std::optional<bool> newExitsFullscreen;
       std::optional<MasterPosition> position;
       bool operator==(const Master&) const = default;
     } master;
@@ -100,6 +109,7 @@ namespace umbriel {
     int gap = 8;
     LayoutStruts struts;
     std::vector<double> extentPresets{1.0 / 3, 0.5, 2.0 / 3};
+    FullscreenExitScope newExitsFullscreen = FullscreenExitScope::None;
     struct Scrolling {
       std::optional<double> defaultExtentFraction;
       bool centerUnderfullStrip = true;
@@ -110,14 +120,12 @@ namespace umbriel {
     } scrolling;
     struct Dwindle {
       bool preserveSplit = false;
-      bool newExitsFullscreen = false;
       bool operator==(const Dwindle&) const = default;
     } dwindle;
     struct Master {
       double defaultWidthFraction = 0.55;
       bool newOnTop = true;
       bool newBecomesMaster = false;
-      bool newExitsFullscreen = false;
       MasterPosition position = MasterPosition::Left;
       bool operator==(const Master&) const = default;
     } master;
@@ -160,6 +168,12 @@ namespace umbriel {
   enum class ClickMethod : uint8_t {
     ButtonAreas,
     ClickFinger,
+  };
+
+  // Which buttons one-, two-, and three-finger taps produce.
+  enum class TapButtonMap : uint8_t {
+    LeftRightMiddle,
+    LeftMiddleRight,
   };
 
   enum class WindowDragToggle : uint8_t {
@@ -222,6 +236,8 @@ namespace umbriel {
     HdrMode hdr = HdrMode::Off;
     float sdrWhite = 203.0F;
     std::optional<std::string> screenEffect; // "off" disables the default
+    // Render bit depth for SDR output: 8 (default) or 10 for 10-bit SDR.
+    int bitDepth = 8;
     // Explicit workspace inventory. A count creates anonymous positional
     // members, while a string list creates named members. Omitted is dynamic.
     using WorkspaceInventory = std::variant<size_t, std::vector<std::string>>;
@@ -229,6 +245,10 @@ namespace umbriel {
     // Smallest workspace count a dynamic output keeps. Rejected alongside an
     // explicit inventory, which already states an exact count.
     int minWorkspaces = 1;
+    // Wrap a workspace step around the ends of the inventory instead of stopping
+    // there: workspace-next/previous and the window and column move variants that
+    // name a step.
+    bool cyclicWorkspaces = false;
     // Direction this output's workspaces are arranged along. Scrolling layouts on
     // it scroll perpendicular to this.
     WorkspaceAxis workspaceAxis = WorkspaceAxis::Vertical;
@@ -738,6 +758,7 @@ namespace umbriel {
       int gap = 8;
       LayoutStruts struts;
       std::vector<double> extentPresets{1.0 / 3, 0.5, 2.0 / 3};
+      FullscreenExitScope newExitsFullscreen = FullscreenExitScope::None;
       struct Scrolling {
         std::optional<double> defaultExtentFraction;
         bool centerUnderfullStrip = true;
@@ -746,14 +767,12 @@ namespace umbriel {
       } scrolling;
       struct Dwindle {
         bool preserveSplit = false;
-        bool newExitsFullscreen = false;
         bool operator==(const Dwindle&) const = default;
       } dwindle;
       struct Master {
         double defaultWidthFraction = 0.55;
         bool newOnTop = true;
         bool newBecomesMaster = false;
-        bool newExitsFullscreen = false;
         MasterPosition position = MasterPosition::Left;
         bool operator==(const Master&) const = default;
       } master;
@@ -837,6 +856,7 @@ namespace umbriel {
       struct Touchpad {
         std::optional<bool> tap = true;
         std::optional<bool> naturalScroll;
+        std::optional<bool> leftHanded;
         std::optional<AccelProfile> accelProfile;
         std::optional<double> sensitivity;
         // Touchpad scroll speed multiplier. `scroll_factor` is either one number
@@ -852,11 +872,13 @@ namespace umbriel {
         std::optional<bool> disableWhileTyping;
         std::optional<bool> disableOnExternalMouse;
         std::optional<ClickMethod> clickMethod;
+        std::optional<TapButtonMap> tapButtonMap;
         bool operator==(const Touchpad&) const = default;
       } touchpad;
 
       struct Mouse {
         std::optional<bool> naturalScroll;
+        std::optional<bool> leftHanded;
         std::optional<AccelProfile> accelProfile;
         // Evdev BTN_* code libinput turns into a scroll modifier: holding it makes pointer motion scroll instead of
         // clicking. Unset leaves the device's libinput default alone.
@@ -907,10 +929,12 @@ namespace umbriel {
         std::optional<int> repeatDelay;
         std::optional<bool> tap;
         std::optional<bool> naturalScroll;
+        std::optional<bool> leftHanded;
         std::optional<AccelProfile> accelProfile;
         std::optional<double> sensitivity;
         std::optional<bool> disableWhileTyping;
         std::optional<ClickMethod> clickMethod;
+        std::optional<TapButtonMap> tapButtonMap;
         std::optional<uint32_t> scrollButton;
         std::optional<bool> scrollButtonLock;
         bool operator==(const Device&) const = default;

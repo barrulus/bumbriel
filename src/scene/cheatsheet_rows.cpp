@@ -221,6 +221,7 @@ namespace {
           return label;
         }
         return name;
+      case umbriel::ActionArgKind::Output:
       case umbriel::ActionArgKind::OptionalOutput:
         if (const auto* output = umbriel::payloadIf<umbriel::OutputArg>(bind);
             output != nullptr && !output->output.empty()) {
@@ -403,6 +404,9 @@ namespace {
     case A::ConfigReload:
     case A::DpmsOff:
     case A::DpmsOn:
+    case A::OutputDisable:
+    case A::OutputEnable:
+    case A::OutputToggle:
     case A::SessionQuit:
     case A::Submap:
     case A::CheatsheetToggle:

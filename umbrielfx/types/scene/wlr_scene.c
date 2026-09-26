@@ -3164,10 +3164,14 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
       fx_corner_radii_transform(transform, &buffer_corners);
     }
 
-    struct wlr_color_primaries primaries = {0};
-    if (scene_buffer->primaries != 0) {
-      wlr_color_primaries_from_named(&primaries, scene_buffer->primaries);
+    // Scene buffers use zero for unset colorimetry. Resolve that implicit
+    // sRGB state before calling the strict named-primaries converter.
+    enum wlr_color_named_primaries named_primaries = scene_buffer->primaries;
+    if (named_primaries == 0) {
+      named_primaries = WLR_COLOR_NAMED_PRIMARIES_SRGB;
     }
+    struct wlr_color_primaries primaries;
+    wlr_color_primaries_from_named(&primaries, named_primaries);
 
     struct wlr_color_luminances src_lum, srgb_lum;
     wlr_color_transfer_function_get_default_luminance(scene_buffer->transfer_function, &src_lum);
@@ -3269,7 +3273,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
                     ? WLR_RENDER_BLEND_MODE_PREMULTIPLIED
                     : WLR_RENDER_BLEND_MODE_NONE,
                 .transfer_function = scene_buffer->transfer_function,
-                .primaries = scene_buffer->primaries != 0 ? &primaries : NULL,
+                .primaries = &primaries,
                 .color_encoding = scene_buffer->color_encoding,
                 .color_range = scene_buffer->color_range,
                 .luminance_multiplier = &luminance_multiplier,

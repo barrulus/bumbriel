@@ -533,6 +533,12 @@ UMBRIEL_TEST(outputStateAndWorkspaceInventoryAreIndependent) {
   CHECK(sdrWhiteEffects.outputState);
   CHECK(!sdrWhiteEffects.workspaceInventory);
 
+  Config bitDepthChanged = before;
+  bitDepthChanged.outputs[0].bitDepth = 10;
+  const ConfigEffects bitDepthEffects = ConfigEffects::between(before, bitDepthChanged);
+  CHECK(bitDepthEffects.outputState);
+  CHECK(!bitDepthEffects.workspaceInventory);
+
   Config inventoryChanged = before;
   inventoryChanged.outputs[0].workspaces = std::vector<std::string>{"1", "dev"};
   const ConfigEffects inventoryEffects = ConfigEffects::between(before, inventoryChanged);

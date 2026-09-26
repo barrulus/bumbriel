@@ -202,6 +202,7 @@ if build_tests
   )
   foreach case_name : [
     'implicit-srgb-target',
+    'scene-unset-primaries',
     'gamma22-to-srgb',
     'pq-roundtrip',
     'bt2020-to-srgb',
@@ -209,6 +210,8 @@ if build_tests
     'fp16-blur',
     'fp16-blur-effects',
     'fp16-save-restore',
+    'sdr10-blur-buffer-format',
+    'optimized-blur-format-cache',
     'shared-output-buffers',
     'output-lut-cache',
     'shared-sdr-capture',

@@ -999,6 +999,7 @@ namespace umbriel {
       }
     }
     if (workspace != nullptr) {
+      workspace->exitFullscreenForIncomingView(view);
       workspace->syncViewPresentation(view);
     }
 

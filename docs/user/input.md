@@ -95,12 +95,14 @@ surface layouts.
 [input.touchpad]
 tap = true
 natural_scroll = true
+left_handed = false
 # accel_profile = "adaptive"
 # sensitivity = 0.5
 # scroll_factor = 1.5
 # disable_while_typing = true
 # disable_on_external_mouse = true
 # click_method = "clickfinger"
+# tap_button_map = "left_middle_right"
 ```
 
 Omitted values preserve the device's libinput defaults. Explicit unsupported
@@ -110,12 +112,14 @@ settings are reported in the log.
 | --- | --- |
 | `tap` | Enable tap-to-click. |
 | `natural_scroll` | Reverse scrolling and three-finger gesture direction. |
+| `left_handed` | Swap the primary and secondary buttons. |
 | `accel_profile` | Use `"flat"`, `"adaptive"`, or a custom acceleration curve. |
 | `sensitivity` | Pointer speed from -1.0 to 1.0. |
 | `scroll_factor` | Application scroll multiplier from 0.1 to 10.0. |
 | `disable_while_typing` | Disable the touchpad during keyboard input. |
 | `disable_on_external_mouse` | Disable the touchpad while an external mouse is connected. |
 | `click_method` | Use `"button_areas"` or `"clickfinger"`. |
+| `tap_button_map` | Buttons for one-, two-, and three-finger taps: `"left_right_middle"` or `"left_middle_right"`. |
 
 `scroll_factor` also accepts per-axis values:
 
@@ -132,6 +136,7 @@ navigation uses the factors documented in
 ```toml
 [input.mouse]
 natural_scroll = false
+left_handed = false
 # accel_profile = "flat"
 sensitivity = 0.0
 scroll_wheel_step = 60
@@ -140,7 +145,8 @@ scroll_wheel_step = 60
 ```
 
 `sensitivity` ranges from -1.0 to 1.0. `scroll_wheel_step` accepts 1 to 1000
-logical pixels per layout-scroll action.
+logical pixels per layout-scroll action. `left_handed` swaps the primary and
+secondary buttons; omit it to preserve the device default.
 
 Omitting `accel_profile` preserves the device default. A custom libinput curve
 uses this form:
@@ -174,6 +180,7 @@ repeat_delay = 250
 name = "Acme Precision Touchpad"
 tap = true
 natural_scroll = false
+left_handed = false
 click_method = "clickfinger"
 
 [[input.device]]
@@ -239,7 +246,9 @@ inactive cursor; `0` disables the timeout.
 `follows_focus = true` moves the cursor to a newly focused window after
 keyboard-driven focus and transfer actions. Pointer-driven focus, gestures, and
 automatic replacement focus do not move it. `window-focus-warp:<id>` always
-moves the cursor regardless of this setting.
+moves the cursor regardless of this setting. Active-workspace output swaps keep
+the cursor and seat focus on the invoking output when this setting is false;
+when it is true, both follow the previously focused window to its new output.
 
 ### Focus
 
