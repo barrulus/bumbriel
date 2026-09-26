@@ -27,9 +27,9 @@ namespace umbriel {
 })";
 
     // The drag slot's built-in program. uv spans the drawn rectangle (node plus
-    // expand); the inverse lookup contracts by DragPhysics::kContraction (0.7) per
-    // step, so 22 steps reach 0.1 px on a 200 px displacement and most fragments
-    // stop earlier. Uniform indices are constants for GLSL ES 1.00.
+    // expand); the inverse lookup contracts by DragPhysics::kContraction per step,
+    // so 22 steps reach 0.1 px on a 200 px displacement and most fragments stop
+    // earlier. Uniform indices are constants for GLSL ES 1.00.
     constexpr const char* kDeformation = R"(uniform vec2 umbriel_deformation[16];
 vec2 physics_row(float t, vec2 a, vec2 b, vec2 c, vec2 d) {
   float u = 1.0 - t;
