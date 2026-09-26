@@ -3538,4 +3538,27 @@ UMBRIEL_TEST(duplicateEffectPresetsInSiblingIncludesNameTheFirstSibling) {
   CHECK(duplicate->file.ends_with("second.toml"));
 }
 
+UMBRIEL_TEST(bundledEffectPresetsDefineWithoutSelecting) {
+  const TempConfigTree tree;
+  std::string includes = "[include]\nfiles = [\n";
+  for (const char* effect :
+       {"animation/reveal", "animation/squash", "border/pulse", "window/scanlines", "screen/vignette", "cursor/glow"}) {
+    includes += std::format("  \"{}/examples/effects/{}/effect.toml\",\n", UMBRIEL_SOURCE_ROOT, effect);
+  }
+  includes += "]\n";
+  tree.write("config.toml", includes);
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  CHECK(!containsDiagnostic(store, "unknown key"));
+  CHECK(!containsDiagnostic(store, "cannot read shader"));
+  const auto& effects = store.config().effects;
+  CHECK_EQ(effects.presets.size(), size_t{6});
+  CHECK(effects.border.empty() && effects.window.empty() && effects.screen.empty() && effects.cursor.empty());
+  const umbriel::EffectPreset* pulse = umbriel::findEffectPreset(effects, "pulse");
+  CHECK(pulse != nullptr && pulse->kind == umbriel::EffectKind::Border && pulse->light.has_value());
+  const umbriel::EffectPreset* glow = umbriel::findEffectPreset(effects, "glow");
+  CHECK(glow != nullptr && glow->kind == umbriel::EffectKind::Cursor && glow->radius > 0);
+}
+
 int main() { return RUN_TESTS(); }
