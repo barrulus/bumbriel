@@ -262,8 +262,8 @@ animation lock and minus export-dmabuf frames on that output (`:176-188`), so
 an export-dmabuf client reads the displayed frame.
 
 With a capture pending and an in-place slot or output effect visible on the
-output, `wlr_scene_output_build_state` composes twice (`wlr_scene.c:5266-5308`,
-`:5611-5626`). The unfiltered composition skips in-place slots, output
+output, `wlr_scene_output_build_state` composes twice (`wlr_scene.c:5270-5312`,
+`:5615-5630`). The unfiltered composition skips in-place slots, output
 effects, and light emission, runs capture composites (the border effect and
 every transient slot) with capture-role histories, and draws the software
 cursor; `fx_render_pass_save_effect_capture` (`fx_pass.c:2820-2854`) then
@@ -271,7 +271,7 @@ copies the target into the output buffer's effect capture. The display
 composition then starts again from the background. This pass damages the whole
 output. When the save fails, it logs once, and the unfiltered composition
 serves display and captures alike for that frame, with no output effects
-(`:5650-5653`). `fx_texture_from_dmabuf`
+(`:5654-5657`). `fx_texture_from_dmabuf`
 ([`fx_texture.c:533-555`](../../umbrielfx/render/fx_renderer/fx_texture.c))
 substitutes a valid effect capture for any import of that output buffer, which
 is how screencopy and image-copy receive the unfiltered frame.
@@ -288,7 +288,7 @@ frame; shadow captures read history but never promote it. A new transition or
 program resets every role; a renderer, output transform, or format change
 drops the affected entry's buffers. When a capture ends or the capture policy
 changes, the output's capture-role entries and effect captures are released
-(`wlr_scene.c:4057-4080`, `:5297-5303`), and
+(`wlr_scene.c:4057-4080`, `:5301-5307`), and
 `Output::scheduleEffectCaptureRelease` draws one more frame so that happens
 promptly.
 
@@ -309,7 +309,7 @@ a screen or cursor slot, `in_capture = true`, or an unfiltered composition.
 transient slot anywhere keeps the scene-wide conservative policy on every
 output; persistent slots never contribute to it.
 
-`render_data.persistent_visible` (`:5266-5286`) is true when a render-list
+`render_data.persistent_visible` (`:5270-5290`) is true when a render-list
 entry sits under a node with a persistent slot, or the output has a screen
 effect or a shown cursor effect.
 
@@ -317,10 +317,10 @@ effect or a shown cursor effect.
 | --- | --- | --- |
 | `scene_node_opaque_region` (`:684-769`) | No node is opaque. | A node at or under a node with slots contributes no opaque region; every other node keeps its own. |
 | `scene_entry_try_direct_scanout` (`:4674-4684`) | Veto on every output. | Veto only where `persistent_visible`. |
-| Animation-buffer release (`:5287-5289`) | Buffers kept. | Kept only where `persistent_visible`; released elsewhere. |
+| Animation-buffer release (`:5291-5293`) | Buffers kept. | Kept only where `persistent_visible`; released elsewhere. |
 | `calculate_visibility` | Render-list culling off (`:5240`). | Culling stays on. The update pass keeps an occluded node under a persistent effect visible, so it keeps output membership and frame callbacks (`:1097-1105`); an entry whose visible region, grown by the effect's `expand`, reaches the output is kept (`:4562-4579`); the background-color skip exempts nodes under an effect (`:4540`, `:4552`). |
-| Whole-output damage (`:5310-5312`) | Every frame. | Never from presence alone. `expand_damage_to_effects` (`:5102-5142`) grows commit (`:5350`) and render (`:5467`) damage to every effect box it touches, until nothing grows, because a program may read any texel of its box. Only the unfiltered capture pass damages the whole output (`:5305-5308`). |
-| `fx_render_pass_init_offscreen_buffers` (`:5550-5559`) | Always. | Only where `persistent_visible`. |
+| Whole-output damage (`:5314-5316`) | Every frame. | Never from presence alone. `expand_damage_to_effects` (`:5102-5142`) grows commit (`:5354`) and render (`:5471`) damage to every effect box it touches, until nothing grows, because a program may read any texel of its box. Only the unfiltered capture pass damages the whole output (`:5309-5312`). |
+| `fx_render_pass_init_offscreen_buffers` (`:5554-5563`) | Always. | Only where `persistent_visible`. |
 
 A drawn box is the node's bounds grown by its `expand`, plus the light proxy
 (`persistent_effect_box`, `:5050-5079`); a screen or cursor box is the output
