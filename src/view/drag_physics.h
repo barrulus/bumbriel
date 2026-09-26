@@ -13,8 +13,9 @@ namespace umbriel {
   public:
     static constexpr int kPoints = 16;
     using Sheet = std::array<std::array<float, 2>, kPoints>;
-    // `grabX`/`grabY` are the grab point as fractions of the window (0-1).
-    void begin(float width, float height, float grabX, float grabY);
+    // `grabX`/`grabY` are the grab point as fractions of the window (0-1). `transitionId` comes from the
+    // shared transition-id source (never 0), since this class mints no ids of its own.
+    void begin(float width, float height, float grabX, float grabY, uint64_t transitionId);
     // Pointer delta in logical pixels since the previous call.
     void move(float dx, float dy);
     void release();

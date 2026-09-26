@@ -5,9 +5,8 @@
 
 namespace umbriel {
   namespace {
-    // Spring sheet tuning. Stiffness pulls each mass home, coupling ties it
-    // to its neighbours, damping bleeds energy, pointer response scales how
-    // far a motion loads the sheet. Behaviour, not these numbers, is tested.
+    // Spring sheet tuning: stiffness pulls each mass home, coupling ties it to its neighbours, damping
+    // bleeds energy, pointer response scales how far a motion loads the sheet.
     constexpr float kStiffness = 36.0F;
     constexpr float kCoupling = 100.0F;
     constexpr float kDamping = 6.5F;
@@ -16,20 +15,24 @@ namespace umbriel {
     constexpr double kSettleAfterPause = 0.25;
     constexpr float kMaxDisplacementPx = 200.0F;
     constexpr float kMaxVelocity = 4000.0F;
-    constexpr float kSettledDisplacement = 0.02F;
-    constexpr float kSettledVelocity = 0.2F;
-
-    uint64_t nextTransition() {
-      static uint64_t serial = 0;
-      return ++serial;
-    }
+    // Below these, the sheet reads as at rest to the eye; settling here (rather than at zero) ends the
+    // frame stream promptly instead of chasing an imperceptible decaying tail.
+    constexpr float kSettledDisplacement = 0.25F;
+    constexpr float kSettledVelocity = 2.5F;
+    // A pointer delta beyond this cannot come from real input; `move()` clamps to it so a single huge,
+    // finite delta cannot overflow to inf before `constrain()` gets a chance to bound the result.
+    constexpr float kMaxDelta = 1.0e6F;
   } // namespace
 
-  void DragPhysics::begin(float width, float height, float grabX, float grabY) {
+  void DragPhysics::begin(float width, float height, float grabX, float grabY, uint64_t transitionId) {
+    // Non-finite input stays inert rather than poisoning the sheet; a 0x0 window is valid (floored below).
+    if (!std::isfinite(width) || !std::isfinite(height) || !std::isfinite(grabX) || !std::isfinite(grabY)) {
+      return;
+    }
     *this = DragPhysics{};
     m_width = std::max(width, 1.0F);
     m_height = std::max(height, 1.0F);
-    m_transitionId = nextTransition();
+    m_transitionId = transitionId;
     m_grabbed = true;
     // One bicubic Bernstein surface couples the whole window; the shader
     // interpolates with the same weights, so the pin lands exactly on the pointer.
@@ -41,8 +44,8 @@ namespace umbriel {
     for (int i = 0; i < kPoints; ++i) {
       m_weights[i] = horizontal[i % 4] * vertical[i / 4];
     }
-    // Spread pointer response around the grab instead of a sharp bump in the
-    // nearest masses; normalise so the grab point itself does not move.
+    // Pointer response falls off with distance from the grab, so a move loads the whole sheet; normalised
+    // so the weighted sum at the grab point itself stays zero.
     const float x = u * 3, y = v * 3;
     float anchor = 0;
     for (int i = 0; i < kPoints; ++i) {
@@ -73,10 +76,11 @@ namespace umbriel {
         }
       }
     }
-    // Bound adjacent slopes so the shader's inverse lookup stays a contraction
-    // (no folding), then bound absolute excursion and speed. One global scale
-    // preserves the pin, unlike clamping each mass.
-    float ratio = 1;
+    // Bound each axis's own adjacent-mass slope so the shader's inverse lookup stays a contraction (no
+    // folding), then its absolute excursion and speed. Scaling each axis by its own ratio, rather than one
+    // ratio shared across axes, still keeps the pin exact (linear in each axis) without over-damping an
+    // axis that was not the one running into a bound.
+    float ratio[2] = {1, 1};
     for (int axis = 0; axis < 2; ++axis) {
       float horizontal = 0, vertical = 0;
       const float extent = axis == 0 ? m_width : m_height;
@@ -89,23 +93,21 @@ namespace umbriel {
             vertical = std::max(vertical, std::abs(m_displacement[i + 4][axis] - m_displacement[i][axis]));
         }
       }
-      ratio = std::max(ratio, 3 * (horizontal + vertical) / (extent * 0.7F));
-    }
-    for (int i = 0; i < kPoints; ++i) {
-      ratio = std::max(ratio, std::abs(m_displacement[i][0]) / std::min(kMaxDisplacementPx, m_width / 5));
-      ratio = std::max(ratio, std::abs(m_displacement[i][1]) / std::min(kMaxDisplacementPx, m_height / 5));
-      for (int axis = 0; axis < 2; ++axis) {
-        ratio = std::max(ratio, std::abs(m_velocity[i][axis]) / kMaxVelocity);
+      ratio[axis] = std::max(ratio[axis], 3 * (horizontal + vertical) / (extent * 0.7F));
+      const float maxDisplacement = std::min(kMaxDisplacementPx, extent / 5);
+      for (int i = 0; i < kPoints; ++i) {
+        ratio[axis] = std::max(ratio[axis], std::abs(m_displacement[i][axis]) / maxDisplacement);
+        ratio[axis] = std::max(ratio[axis], std::abs(m_velocity[i][axis]) / kMaxVelocity);
       }
     }
-    if (ratio > 1) {
-      for (auto& point : m_displacement) {
-        point[0] /= ratio;
-        point[1] /= ratio;
-      }
-      for (auto& point : m_velocity) {
-        point[0] /= ratio;
-        point[1] /= ratio;
+    for (int axis = 0; axis < 2; ++axis) {
+      if (ratio[axis] > 1) {
+        for (auto& point : m_displacement) {
+          point[axis] /= ratio[axis];
+        }
+        for (auto& point : m_velocity) {
+          point[axis] /= ratio[axis];
+        }
       }
     }
   }
@@ -114,6 +116,9 @@ namespace umbriel {
     if (!m_grabbed || !std::isfinite(dx) || !std::isfinite(dy) || (dx == 0 && dy == 0)) {
       return;
     }
+    // Bounded so a huge finite delta cannot overflow to inf before it reaches the sheet.
+    dx = std::clamp(dx, -kMaxDelta, kMaxDelta);
+    dy = std::clamp(dy, -kMaxDelta, kMaxDelta);
     for (int i = 0; i < kPoints; ++i) {
       m_displacement[i][0] -= kPointerResponse * dx * m_drag[i];
       m_displacement[i][1] -= kPointerResponse * dy * m_drag[i];

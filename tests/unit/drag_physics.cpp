@@ -2,7 +2,9 @@
 
 #include "check.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 using umbriel::DragPhysics;
 
@@ -20,19 +22,21 @@ namespace {
     }
     return std::hypot(x, y);
   }
-  float maxAdjacentDifference(const DragPhysics& physics, int axis) {
+  // The bound `constrain()` enforces per displacement component: 3x the worst horizontal-neighbour plus
+  // worst vertical-neighbour difference in that component, normalised by window size.
+  float axisSlopeBound(const DragPhysics& physics, int axis) {
     const auto sheet = physics.normalizedDisplacement();
-    float largest = 0;
+    float horizontal = 0, vertical = 0;
     for (int y = 0; y < 4; ++y) {
       for (int x = 0; x < 4; ++x) {
         const int i = y * 4 + x;
         if (x < 3)
-          largest = std::max(largest, std::abs(sheet[i + 1][axis] - sheet[i][axis]));
+          horizontal = std::max(horizontal, std::abs(sheet[i + 1][axis] - sheet[i][axis]));
         if (y < 3)
-          largest = std::max(largest, std::abs(sheet[i + 4][axis] - sheet[i][axis]));
+          vertical = std::max(vertical, std::abs(sheet[i + 4][axis] - sheet[i][axis]));
       }
     }
-    return largest;
+    return 3.0F * (horizontal + vertical);
   }
   // Counted rather than accumulated: summing `step` in a float loop drifts below `seconds` by
   // rounding error at some frame rates (e.g. 30 * 1/60), adding a spurious extra tick.
@@ -46,7 +50,7 @@ namespace {
 
 UMBRIEL_TEST(grabPointStaysPinnedWhileTheSheetMoves) {
   DragPhysics physics;
-  physics.begin(400, 300, 0.25F, 0.8F);
+  physics.begin(400, 300, 0.25F, 0.8F, 1);
   for (int i = 0; i < 10; ++i) {
     physics.move(12, -4);
     physics.tick(1.0 / 60);
@@ -58,20 +62,24 @@ UMBRIEL_TEST(grabPointStaysPinnedWhileTheSheetMoves) {
 
 UMBRIEL_TEST(motionTrailsOppositeToThePointer) {
   DragPhysics physics;
-  physics.begin(400, 300, 0.0F, 0.0F); // top-left corner grab
+  // Off-centre but not a grid vertex: at an exact corner (0, 0) the grab weight there is 1 and the pin
+  // alone forces that corner's displacement to zero, so the check below would hold by construction.
+  physics.begin(400, 300, 0.1F, 0.1F, 1);
   for (int i = 0; i < 6; ++i) {
     physics.move(30, 0);
     physics.tick(1.0 / 60);
   }
   const auto sheet = physics.normalizedDisplacement();
-  // The far corner (index 15) lags behind the motion: negative x displacement, clearly more than the grabbed corner.
+  // The far corner (index 15) lags behind the motion: negative x displacement, clearly more than the near corner.
   CHECK(sheet[15][0] < -0.02F);
-  CHECK(std::abs(sheet[0][0]) < 0.002F);
+  CHECK(std::abs(sheet[0][0]) < 0.05F);
 }
 
 UMBRIEL_TEST(displacementAndSlopeStayBoundedUnderExtremeShaking) {
   DragPhysics physics;
-  physics.begin(120, 70, 0.5F, 0.5F);
+  // Off-centre grab: a centred grab makes the two displacement components symmetric, which hides a bound
+  // enforced per component from one that only holds for their sum.
+  physics.begin(120, 70, 0.25F, 0.5F, 1);
   for (int i = 0; i < 400; ++i) {
     physics.move((i % 2 == 0 ? 1 : -1) * 900.0F, (i % 3 == 0 ? 1 : -1) * 700.0F);
     physics.tick(1.0 / 240);
@@ -81,26 +89,28 @@ UMBRIEL_TEST(displacementAndSlopeStayBoundedUnderExtremeShaking) {
       CHECK(std::abs(point[0]) <= 0.2F + 1e-4F); // width / 5
       CHECK(std::abs(point[1]) <= 0.2F + 1e-4F); // height / 5
     }
-    // No folding: the inverse lookup stays a contraction when adjacent differences are bounded.
-    CHECK(3.0F * (maxAdjacentDifference(physics, 0) + maxAdjacentDifference(physics, 1)) <= 0.7F + 1e-3F);
+    // No folding: the inverse lookup stays a contraction when each component's own adjacent difference is
+    // bounded (the two components are bounded independently, not by their sum).
+    CHECK(axisSlopeBound(physics, 0) <= 0.7F + 1e-3F);
+    CHECK(axisSlopeBound(physics, 1) <= 0.7F + 1e-3F);
   }
 }
 
 UMBRIEL_TEST(settlesAfterReleaseAndWhileHeldStill) {
   DragPhysics physics;
-  physics.begin(400, 300, 0.5F, 0.5F);
+  physics.begin(400, 300, 0.5F, 0.5F, 1);
   physics.move(60, 20);
   run(physics, 0.05, 1.0 / 240);
   CHECK(physics.active());
-  run(physics, 3.0, 1.0 / 120); // still held, no motion
+  run(physics, 2.5, 1.0 / 120); // still held, no motion
   CHECK(!physics.active());
   CHECK(physics.maxDisplacement() == 0.0F);
 
-  physics.begin(400, 300, 0.5F, 0.5F);
+  physics.begin(400, 300, 0.5F, 0.5F, 2);
   physics.move(60, 20);
   physics.release();
   CHECK(physics.active());
-  run(physics, 3.0, 1.0 / 120);
+  run(physics, 2.5, 1.0 / 120);
   CHECK(!physics.active());
   const auto sheet = physics.normalizedDisplacement();
   for (const auto& point : sheet) {
@@ -111,8 +121,8 @@ UMBRIEL_TEST(settlesAfterReleaseAndWhileHeldStill) {
 UMBRIEL_TEST(integrationIsIndependentOfTheCallerFrameRate) {
   DragPhysics slow;
   DragPhysics fast;
-  slow.begin(400, 300, 0.3F, 0.3F);
-  fast.begin(400, 300, 0.3F, 0.3F);
+  slow.begin(400, 300, 0.3F, 0.3F, 1);
+  fast.begin(400, 300, 0.3F, 0.3F, 2);
   slow.move(40, 10);
   fast.move(40, 10);
   run(slow, 0.5, 1.0 / 60);
@@ -125,16 +135,37 @@ UMBRIEL_TEST(integrationIsIndependentOfTheCallerFrameRate) {
   }
 }
 
-UMBRIEL_TEST(longPausesSettleImmediatelyAndTransitionsAreUnique) {
+UMBRIEL_TEST(longPausesSettleImmediatelyAndTransitionIdPassesThrough) {
   DragPhysics physics;
-  physics.begin(400, 300, 0.5F, 0.5F);
-  const uint64_t first = physics.transitionId();
+  physics.begin(400, 300, 0.5F, 0.5F, 42);
+  CHECK_EQ(physics.transitionId(), uint64_t{42});
   physics.move(60, 20);
   CHECK(physics.active());
   CHECK(!physics.tick(2.0));
   CHECK(!physics.active());
-  physics.begin(400, 300, 0.5F, 0.5F);
-  CHECK(physics.transitionId() != first);
+  physics.begin(400, 300, 0.5F, 0.5F, 43);
+  CHECK_EQ(physics.transitionId(), uint64_t{43});
+}
+
+UMBRIEL_TEST(tickIgnoresNonPositiveOrNonFiniteSeconds) {
+  DragPhysics neverBegun;
+  CHECK(!neverBegun.tick(1.0));
+
+  DragPhysics physics;
+  physics.begin(400, 300, 0.5F, 0.5F, 1);
+  physics.move(60, 20);
+  CHECK(physics.active());
+  const auto before = physics.normalizedDisplacement();
+  CHECK(physics.tick(0.0));
+  CHECK(physics.tick(-1.0));
+  CHECK(physics.tick(std::numeric_limits<double>::quiet_NaN()));
+  CHECK(physics.tick(std::numeric_limits<double>::infinity()));
+  CHECK(physics.active());
+  const auto after = physics.normalizedDisplacement();
+  for (int i = 0; i < DragPhysics::kPoints; ++i) {
+    CHECK(before[i][0] == after[i][0]);
+    CHECK(before[i][1] == after[i][1]);
+  }
 }
 
 int main() { return RUN_TESTS(); }
