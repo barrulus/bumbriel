@@ -1288,7 +1288,7 @@ namespace umbriel {
       break;
     }
 
-    if (effectsEligible && !animationsActive && !commitFailed) {
+    if (effectsEligible && !commitFailed) {
       armEffectFrame(nowMsec);
     } else {
       disarmEffectFrame();
