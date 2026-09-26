@@ -38,8 +38,7 @@ namespace {
     }
     return 3.0F * (horizontal + vertical);
   }
-  // Counted rather than accumulated: summing `step` in a float loop drifts below `seconds` by
-  // rounding error at some frame rates (e.g. 30 * 1/60), adding a spurious extra tick.
+  // Ticks for exactly `seconds` of simulated time at `step`; the tick count is rounded, not accumulated.
   void run(DragPhysics& physics, double seconds, double step) {
     const auto steps = static_cast<int>(std::lround(seconds / step));
     for (int i = 0; i < steps; ++i) {

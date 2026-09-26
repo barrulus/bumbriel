@@ -76,10 +76,8 @@ namespace umbriel {
         }
       }
     }
-    // Bound each axis's own adjacent-mass slope so the shader's inverse lookup stays a contraction (no
-    // folding), then its absolute excursion and speed. Scaling each axis by its own ratio, rather than one
-    // ratio shared across axes, still keeps the pin exact (linear in each axis) without over-damping an
-    // axis that was not the one running into a bound.
+    // Bound each axis's adjacent-mass slope so the shader's inverse lookup stays a contraction (no folding),
+    // then its excursion and speed. The pin is linear in each axis, so a per-axis scale keeps it exact.
     float ratio[2] = {1, 1};
     for (int axis = 0; axis < 2; ++axis) {
       float horizontal = 0, vertical = 0;
