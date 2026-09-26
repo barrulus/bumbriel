@@ -548,8 +548,6 @@ namespace umbriel {
     wl_signal_add(&m_outputManager->events.apply, &m_outputManagerApply);
     m_outputManagerTest.notify = onOutputManagerTest;
     wl_signal_add(&m_outputManager->events.test, &m_outputManagerTest);
-    m_outputLayoutChange.notify = onOutputLayoutChange;
-    wl_signal_add(&m_outputLayout->events.change, &m_outputLayoutChange);
 
     m_xdgActivation = wlr_xdg_activation_v1_create(m_display);
     m_newActivationToken.notify = onNewActivationToken;
@@ -558,6 +556,9 @@ namespace umbriel {
     wl_signal_add(&m_xdgActivation->events.request_activate, &m_requestActivate);
 
     m_cursor = std::make_unique<Cursor>(*this);
+    // Added after the cursor attaches to the layout, so wlr_cursor has clamped the pointer when this listener runs.
+    m_outputLayoutChange.notify = onOutputLayoutChange;
+    wl_signal_add(&m_outputLayout->events.change, &m_outputLayoutChange);
     m_seat = std::make_unique<Seat>(*this);
     m_padKeyboardFocusChange.notify = onPadKeyboardFocusChange;
     wl_signal_add(&m_seat->wlr()->keyboard_state.events.focus_change, &m_padKeyboardFocusChange);

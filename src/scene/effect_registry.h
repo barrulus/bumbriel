@@ -13,10 +13,12 @@
 
 struct fx_effect_shader;
 struct fx_animation_parameters;
+struct wlr_output;
 struct wlr_renderer;
 
 namespace umbriel {
 
+  class Output;
   class Server;
 
   // One compiled program per referenced preset for the current renderer, plus
@@ -65,13 +67,15 @@ namespace umbriel {
     // Records an instance; schedules its output's effect frame when that output gains its first eligible instance.
     void updateInstance(const void* owner, const EffectInstanceState& state);
     void removeInstance(const void* owner);
-    void removeOutput(const void* output);
+    void removeOutput(const Output* output);
     // Keeps the scene's light layer while a compiled border preset has `light`, and removes it otherwise.
     void syncLightLayer();
     // Pushes the output-level effect settings to every output.
     void applyOutputEffects();
     // Forwards the pointer to every output's cursor slot; call only while cursorEffectActive().
     void pointerMoved(double lx, double ly, bool visible);
+    // The output layout changed: the next pointerMoved() re-applies every output.
+    void forgetPointerOutput() { m_pointerWlrOutput = nullptr; }
 
   private:
     struct Entry {
@@ -90,7 +94,7 @@ namespace umbriel {
     bool m_persistentReferenced = false;
     bool m_inPlaceReferenced = false;
     bool m_cursorActive = false;
-    const void* m_pointerOutput = nullptr; // the wlr_output under the pointer at the last forward
+    const wlr_output* m_pointerWlrOutput = nullptr; // under the pointer at the last forward
     bool m_pointerVisible = false;
     EffectLedger m_ledger;
     mutable uint64_t m_clockEpochMsec = 0;

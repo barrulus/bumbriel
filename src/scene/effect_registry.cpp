@@ -81,9 +81,11 @@ namespace umbriel {
     updateCursorActive();
   }
 
-  void EffectRegistry::removeOutput(const void* output) {
+  void EffectRegistry::removeOutput(const Output* output) {
     m_ledger.removeOutput(output);
-    m_pointerOutput = nullptr;
+    if (m_pointerWlrOutput == output->wlr()) {
+      m_pointerWlrOutput = nullptr;
+    }
   }
 
   void EffectRegistry::referencedNames(std::vector<std::string>& names) const {
@@ -194,9 +196,9 @@ namespace umbriel {
       wlr_scene_output_set_effect_pointer(output->sceneOutput(), lx, ly, visible);
     }
     // The cursor instance's visibility follows the output under the pointer.
-    const void* under = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly);
-    if (under != m_pointerOutput || visible != m_pointerVisible) {
-      m_pointerOutput = under;
+    const wlr_output* under = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly);
+    if (under != m_pointerWlrOutput || visible != m_pointerVisible) {
+      m_pointerWlrOutput = under;
       m_pointerVisible = visible;
       applyOutputEffects();
     }

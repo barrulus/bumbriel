@@ -124,6 +124,9 @@ namespace umbriel {
 
     [[nodiscard]] wlr_cursor* wlr() const { return m_cursor; }
     [[nodiscard]] bool visible() const { return !m_cursorHidden; }
+    // Re-sends the pointer to the cursor effect after outputs were added, moved or removed. wlr_cursor must have
+    // clamped the pointer onto the new layout first.
+    void handleOutputLayoutChange() const;
     [[nodiscard]] wlr_xcursor_manager* xcursorManager() const { return m_xcursorManager; }
     [[nodiscard]] bool isPassthrough() const;
     [[nodiscard]] View* grabbedView() const;

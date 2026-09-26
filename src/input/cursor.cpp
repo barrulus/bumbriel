@@ -283,6 +283,11 @@ namespace umbriel {
     }
   }
 
+  void Cursor::handleOutputLayoutChange() const {
+    m_server->effects().forgetPointerOutput();
+    forwardEffectPointer();
+  }
+
   int Cursor::onHideTimer(void* data) {
     static_cast<Cursor*>(data)->hideCursor();
     return 0;
@@ -1676,6 +1681,7 @@ namespace umbriel {
       double sy = 0;
       surfaceLocalCoordinates(m_server->scene(), state->v2->focused_surface, m_cursor->x, m_cursor->y, &sx, &sy);
       wlr_tablet_v2_tablet_tool_notify_motion(state->v2, sx, sy);
+      forwardEffectPointer();
       return;
     }
 
@@ -1705,6 +1711,7 @@ namespace umbriel {
     }
     wlr_tablet_v2_tablet_tool_notify_proximity_in(state->v2, v2tablet, surface);
     wlr_tablet_v2_tablet_tool_notify_motion(state->v2, sx, sy);
+    forwardEffectPointer();
   }
 
   void Cursor::handleTabletToolAxis(void* data) {

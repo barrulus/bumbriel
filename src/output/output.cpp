@@ -81,12 +81,13 @@ namespace umbriel {
     (void)applyConfiguredState();
     m_sceneOutput = wlr_scene_output_create(m_server->scene(), m_output);
     wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
-    applyOutputEffects();
     updateSceneSdrWhite();
     if (desktopEnabled()) {
       wlr_output_layout_output* layoutOutput = addToLayout();
       wlr_scene_output_layout_add_output(m_server->sceneLayout(), layoutOutput, m_sceneOutput);
     }
+    // After the layout binding: the cursor slot needs this output's layout position.
+    applyOutputEffects();
 
     for (uint32_t layer = 0; layer < kLayerCount; ++layer) {
       m_layerTrees[layer] = wlr_scene_tree_create(m_server->shellLayerTree(layer));
@@ -122,11 +123,10 @@ namespace umbriel {
     }
     wlr_scene_output_set_effect_capture_policy(m_sceneOutput, settings.inCapture);
     const std::string screenName = resolveScreenEffectName(settings, findOutputRule(config(), identity()));
-    fx_effect_shader* screen =
-        registry.ledger().suspended() ? nullptr : registry.preset(screenName, EffectKind::Screen);
+    const bool suspended = registry.ledger().suspended();
+    fx_effect_shader* screen = suspended ? nullptr : registry.preset(screenName, EffectKind::Screen);
     const EffectPreset* screenPreset = screen != nullptr ? registry.presetConfig(screenName) : nullptr;
-    fx_effect_shader* cursor =
-        registry.cursorEffectActive() ? registry.preset(settings.cursor, EffectKind::Cursor) : nullptr;
+    fx_effect_shader* cursor = suspended ? nullptr : registry.preset(settings.cursor, EffectKind::Cursor);
     const EffectPreset* cursorPreset = cursor != nullptr ? registry.presetConfig(settings.cursor) : nullptr;
     bool advancing = true;
 #ifdef UMBRIEL_TEST_IPC
@@ -138,7 +138,7 @@ namespace umbriel {
       fx_animation_parameters parameters{};
       registry.fillTimeUniforms(parameters, m_effectSeconds, preset, shader);
       const bool readsTime = fx_effect_shader_reads(shader, "umbriel_time");
-      m_outputEffectsTimed = m_outputEffectsTimed || readsTime;
+      m_outputEffectsTimed = m_outputEffectsTimed || (readsTime && visible);
       registry.updateInstance(
           owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing}
       );
@@ -678,6 +678,7 @@ namespace umbriel {
     } else {
       wlr_output_layout_remove(m_server->outputLayout(), m_output);
     }
+    applyOutputEffects();
     markDirty(Dirty::LayerArrange | Dirty::Banner);
     if (m_server->sessionLocked()) {
       m_server->updateLockBlank();
@@ -705,6 +706,7 @@ namespace umbriel {
     } else {
       wlr_output_layout_remove(m_server->outputLayout(), m_output);
     }
+    applyOutputEffects();
     handleExternalConfigChange();
     kLog.info(
         "output '{}': {} by output management, power {}", m_output->name, desktopEnabled() ? "enabled" : "disabled",
@@ -730,6 +732,7 @@ namespace umbriel {
       m_dpmsOff = previous;
       return false;
     }
+    applyOutputEffects();
 
     if (powered) {
       m_gammaDirty = true;

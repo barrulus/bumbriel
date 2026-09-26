@@ -2705,6 +2705,7 @@ namespace umbriel {
     if (!self->m_deferOutputManagerConfig) {
       self->updateOutputManagerConfig();
     }
+    self->m_cursor->handleOutputLayoutChange();
   }
 
   void Server::updateOutputManagerConfig() {
