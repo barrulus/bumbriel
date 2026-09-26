@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Mod+drag deforms a held floating window as an elastic sheet that trails past its own box, relaxes back to a
+# rectangular box after release, and hands its frozen deformation to the close snapshot when the window closes
+# mid-drag. With physics off the same drag stays rigid and leaves nothing running after release.
+set -euo pipefail
+source "$UMBRIEL_HARNESS_LIB"
+readonly BTN_LEFT=272
+readonly OUTPUT_W=1280
+readonly OUTPUT_H=720
+readonly DRAG_DX=180
+readonly IMAGE="$UMBRIEL_RUNTIME_DIR/drag-physics.png"
+cat >> "$UMBRIEL_CONFIG" <<'EOF'
+
+[colors]
+backdrop = "#000000FF"
+[appearance]
+border_width = 0
+outer_border_width = 0
+corner_radius = 0
+drag_opacity = 1.0
+[appearance.shadow]
+enabled = false
+[animation]
+duration_ms = 1
+curve = "linear"
+[animation.windows_in]
+enabled = false
+[animation.windows_out]
+enabled = true
+duration_ms = 3000
+[animation.windows_drag]
+physics = true
+[[window_rule]]
+match.title = "^physics$"
+default_floating = true
+EOF
+"$UMBRIEL" msg config-reload > /dev/null
+
+green_count() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'g > 0.9 && r < 0.1 && b < 0.1' "$1"; }
+
+spawn() {
+  FILL_COLOR=0xFF00FF00 "$UMBRIEL_UNMAP_CLIENT" physics 400 300 > "$UMBRIEL_RUNTIME_DIR/physics.log" 2>&1 &
+  for _ in $(seq 80); do
+    window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "physics")')
+    [[ -n $window ]] && break
+    sleep 0.025
+  done
+  [[ -n $window ]]
+  "$UMBRIEL" settle > /dev/null
+}
+
+# Mod must be held before the button press and released after, or it leaks into the next drag. The grabbed corner
+# tracks the pointer exactly, so the window's rigid (undeformed) position is the grab point plus this delta; the
+# logical position IPC reports only updates once the drag finishes, so it cannot be used mid-drag.
+drag_right() {
+  local grab_x=$1 grab_y=$2
+  pointer_hold "$OUTPUT_W" "$OUTPUT_H" move "$grab_x" "$grab_y" mod super press "$BTN_LEFT" \
+    move $((grab_x + 60)) "$grab_y" move $((grab_x + 120)) "$grab_y" move $((grab_x + DRAG_DX)) "$grab_y" \
+    -- release "$BTN_LEFT" mod none
+}
+
+spawn
+read -r x y w h id < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
+
+# Grab the window near its top-left and pull it right quickly: the far (right) edge trails, so green appears left of
+# the window's rigid new left edge, where the trailing sheet is drawn past the box.
+"$UMBRIEL" clock-freeze
+grab_x=$((x + 40))
+grab_y=$((y + 40))
+drag_right "$grab_x" "$grab_y"
+"$UMBRIEL" clock-advance 16 > /dev/null
+grim "$IMAGE"
+new_x=$((x + DRAG_DX))
+if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") < 100 )); then
+  echo "no deformation trailed past the dragged window's box"
+  exit 1
+fi
+pointer_release
+
+# Settling after release: a frozen clock with an animation in flight makes settle block, so each attempt times out;
+# advancing the clock between attempts lets drag physics relax and eventually finish.
+for _ in $(seq 40); do
+  "$UMBRIEL" clock-advance 50 > /dev/null
+  if timeout 0.3 "$UMBRIEL" settle > /dev/null 2>&1; then
+    break
+  fi
+done
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "physics")')
+read -r x y w h < <(jq -r '"\(.x) \(.y) \(.w) \(.h)"' <<< "$window")
+if (( $(green_count "8x40+$((x - 10))+$((y + h / 2))") > 0 )); then
+  echo "the sheet did not settle back into the window box after release"
+  exit 1
+fi
+if (( $(green_count "${w}x${h}+${x}+${y}") < w * h * 9 / 10 )); then
+  echo "the settled window is not drawn plainly"
+  exit 1
+fi
+
+# Close during a drag: the snapshot inherits the frozen deformation and fades out with it.
+grab_x=$((x + 40))
+grab_y=$((y + 40))
+drag_right "$grab_x" "$grab_y"
+"$UMBRIEL" clock-advance 16 > /dev/null
+new_x=$((x + DRAG_DX))
+"$UMBRIEL" msg "window-close:$id" > /dev/null
+"$UMBRIEL" clock-advance 100 > /dev/null
+grim "$IMAGE"
+if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") < 50 )); then
+  echo "the close snapshot did not keep the frozen deformation"
+  exit 1
+fi
+pointer_release
+"$UMBRIEL" clock-advance 4000 > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+if (( $(green_count "${OUTPUT_W}x${OUTPUT_H}+0+0") > 0 )); then
+  echo "the close snapshot did not retire"
+  exit 1
+fi
+"$UMBRIEL" clock-resume
+
+# physics = false: the drag stays rigid, and releasing it leaves no animation for settle to wait for.
+sed -i 's/^physics = true$/physics = false/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+spawn
+read -r x y w h id < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
+"$UMBRIEL" clock-freeze
+grab_x=$((x + 40))
+grab_y=$((y + 40))
+drag_right "$grab_x" "$grab_y"
+"$UMBRIEL" clock-advance 16 > /dev/null
+grim "$IMAGE"
+new_x=$((x + DRAG_DX))
+if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") > 0 )); then
+  echo "physics = false still deformed the dragged window past its box"
+  exit 1
+fi
+pointer_release
+if ! timeout 0.3 "$UMBRIEL" settle > /dev/null 2>&1; then
+  echo "physics = false left an animation running after release"
+  exit 1
+fi
+"$UMBRIEL" clock-resume
+
+echo "drag physics deformed the held window, settled after release, handed its deformation to the close snapshot, and stayed rigid with physics off"
