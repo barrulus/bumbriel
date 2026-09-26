@@ -178,6 +178,10 @@ void wlr_scene_shadow_set_animation_source(
     struct wlr_scene_shadow* shadow, struct wlr_scene_node* source, const float color[4]
 );
 
+// With in_capture false (the default), dmabuf imports of a frame rendered with
+// a capture pending read a composition without the output's in-place effects.
+void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output, bool in_capture);
+
 // Exist for tests/effects.c: damage the whole output, and acknowledge a built
 // state's damage the way a commit of its buffer does.
 void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_output);

@@ -1132,6 +1132,192 @@ static bool test_damage_expansion(struct fixture *fixture) {
 	return ok;
 }
 
+// With in_capture off and a capture pending, a dmabuf import of the rendered
+// buffer sees the unfiltered composition while the display keeps the effect.
+static bool test_capture_policy(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float blue[4] = { 0, 0, 1, 1 }, red[4] = { 1, 0, 0, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 8, 8, red);
+	wlr_scene_node_set_position(&window->node, 4, 4);
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }", "capture-policy");
+	bool ok = check(program != NULL, "window program compiles");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, program, &parameters);
+	wlr_scene_output_set_effect_capture_policy(scene_output, false);
+
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	struct wlr_swapchain *swapchain = wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format);
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	struct wlr_scene_output_state_options options = { .swapchain = swapchain, .effect_capture_pending = true };
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL,
+		"renders with a pending capture");
+	if (ok) {
+		uint8_t display[4], captured[4];
+		// The swapchain buffer holds the display composition. Read it through its framebuffer: a texture import
+		// of the same buffer is exactly what the capture policy redirects.
+		ok &= fixture_read_display_pixel(fixture, state.buffer, 8, 8, display);
+		ok &= check(display[1] > 250 && display[2] < 5, "the display shows the window effect");
+		// A dmabuf import (what screencopy and image-copy do) resolves to the unfiltered capture.
+		struct wlr_texture *import = wlr_texture_from_buffer(fixture->renderer, state.buffer);
+		uint8_t pixels[TEST_WIDTH * TEST_HEIGHT * 4];
+		ok &= check(import != NULL && wlr_texture_read_pixels(import, &(struct wlr_texture_read_pixels_options) {
+			.data = pixels, .format = DRM_FORMAT_ARGB8888, .stride = TEST_WIDTH * 4 }), "import reads");
+		memcpy(captured, &pixels[(8 * TEST_WIDTH + 8) * 4], 4);
+		ok &= check(captured[2] > 250 && captured[1] < 5, "the capture sees the plain red window");
+		wlr_texture_destroy(import);
+	}
+	wlr_output_state_finish(&state);
+	// in_capture = true: the import sees the effect too.
+	wlr_scene_output_set_effect_capture_policy(scene_output, true);
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL, "renders again");
+	if (state.buffer != NULL) {
+		struct wlr_texture *import = wlr_texture_from_buffer(fixture->renderer, state.buffer);
+		uint8_t pixels[TEST_WIDTH * TEST_HEIGHT * 4];
+		ok &= check(import != NULL && wlr_texture_read_pixels(import, &(struct wlr_texture_read_pixels_options) {
+			.data = pixels, .format = DRM_FORMAT_ARGB8888, .stride = TEST_WIDTH * 4 }), "import reads");
+		ok &= check(pixels[(8 * TEST_WIDTH + 8) * 4 + 1] > 250, "with in_capture the capture includes the effect");
+		wlr_texture_destroy(import);
+	}
+	wlr_output_state_finish(&state);
+	wlr_swapchain_destroy(swapchain);
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
+// Feedback history is keyed by composition role: the unfiltered capture pass
+// never reads or advances the display's history, and a role without history
+// yet reads its own current input.
+static bool test_capture_feedback(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, blue[4] = { 0, 0, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 8, 8, blue);
+	wlr_scene_node_set_position(&window->node, 4, 4);
+	// Each frame adds 0.25 red to the previous result and moves the previous blue into green; the first
+	// frame sees its input as the previous result.
+	struct fx_effect_shader *accumulate = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { vec4 p = umbriel_sample_previous(uv); "
+		"return vec4(min(p.r + 0.25, 1.0), p.b, umbriel_sample(uv).b, 1.0); }", "accumulate");
+	struct fx_effect_shader *green = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }", "green");
+	bool ok = check(accumulate != NULL && green != NULL, "programs compile");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1, .transition_id = 7 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, green, &parameters);
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOWS_IN, accumulate, &parameters);
+	wlr_scene_output_set_effect_capture_policy(scene_output, false);
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	struct wlr_swapchain *swapchain = wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format);
+	uint8_t display[4], captured[4];
+	uint8_t pixels[TEST_WIDTH * TEST_HEIGHT * 4];
+	// Holding frame 1's buffer makes frame 2 render into another one.
+	struct wlr_buffer *held = NULL;
+	for (int frame = 0; frame < 3; frame++) {
+		struct wlr_output_state state;
+		wlr_output_state_init(&state);
+		// Frames 0 and 1 have a capture pending; frame 2 does not.
+		struct wlr_scene_output_state_options options = { .swapchain = swapchain, .effect_capture_pending = frame < 2 };
+		wlr_scene_output_damage_whole_for_test(scene_output);
+		ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL, "renders");
+		if (!ok) {
+			wlr_output_state_finish(&state);
+			break;
+		}
+		ok &= fixture_read_display_pixel(fixture, state.buffer, 8, 8, display);
+		if (frame < 2) {
+			struct wlr_texture *import = wlr_texture_from_buffer(fixture->renderer, state.buffer);
+			ok &= check(import != NULL && wlr_texture_read_pixels(import, &(struct wlr_texture_read_pixels_options) {
+				.data = pixels, .format = DRM_FORMAT_ARGB8888, .stride = TEST_WIDTH * 4 }), "import reads");
+			memcpy(captured, &pixels[(8 * TEST_WIDTH + 8) * 4], 4);
+			wlr_texture_destroy(import);
+			// Capture role: first frame red 0.25 (fallback to its own input), second 0.5; blue from the plain client.
+			ok &= check(captured[0] > 250, "the capture role sees the plain client");
+			// Green is the previous blue: the capture's own (blue client), never the display's (green client).
+			ok &= check(captured[1] > 250, "the capture role reads only its own history");
+			ok &= check(captured[2] > 55 && captured[2] < 75 + 64 * frame, "the capture role accumulates on its own");
+		}
+		// Display role: red grows by 0.25 per frame regardless of captures, and the window is green underneath (blue 0).
+		const int expected = 64 * (frame + 1);
+		ok &= check(display[2] > expected - 12 && display[2] < expected + 12, "the display role accumulates once per frame");
+		ok &= check(display[0] < 5, "the display role never sees the capture's plain client");
+		if (frame == 1) {
+			held = wlr_buffer_lock(state.buffer);
+		}
+		wlr_output_state_finish(&state);
+	}
+	// The capture ended with frame 2: no swapchain buffer keeps a copy.
+	struct fx_framebuffer *framebuffer;
+	wl_list_for_each(framebuffer, &fx_get_renderer(fixture->renderer)->buffers, link) {
+		ok &= check(framebuffer->effect_capture_buffer == NULL, "no capture buffer outlives the capture");
+	}
+	if (held != NULL) {
+		wlr_buffer_unlock(held);
+	}
+	wlr_swapchain_destroy(swapchain);
+	fx_effect_shader_unref(accumulate);
+	fx_effect_shader_unref(green);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
+// The capture is encoded like what an import reads without one: the plain
+// frame, the transformed frame, or the SDR view of a transformed output.
+static bool test_capture_policy_encoding(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float half_blue[4] = { 0, 0, 0.5f, 1 }, red[4] = { 1, 0, 0, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, half_blue);
+	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 8, 8, red);
+	wlr_scene_node_set_position(&window->node, 4, 4);
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }", "capture-policy-encoding");
+	struct wlr_color_transform *transform =
+		wlr_color_transform_init_linear_to_inverse_eotf(WLR_COLOR_TRANSFER_FUNCTION_SRGB);
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	struct wlr_swapchain *swapchain = wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format);
+	bool ok = check(program != NULL && transform != NULL && swapchain != NULL, "program, transform and swapchain");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, program, &parameters);
+	// Mode 0 renders without a transform, 1 with one, 2 with one and the SDR view.
+	for (int mode = 0; ok && mode < 3; mode++) {
+		uint8_t backgrounds[2][4];
+		// Frame 0 has a capture pending; frame 1 does not, so its import reads the usual view.
+		for (int frame = 0; ok && frame < 2; frame++) {
+			struct wlr_output_state state;
+			wlr_output_state_init(&state);
+			struct wlr_scene_output_state_options options = { .swapchain = swapchain,
+				.color_transform = mode > 0 ? transform : NULL, .capture_sdr = mode == 2,
+				.effect_capture_pending = frame == 0 };
+			wlr_scene_output_damage_whole_for_test(scene_output);
+			ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL,
+				"renders");
+			if (ok) {
+				ok &= check(fixture_read_pixel(fixture, state.buffer, 1, 1, backgrounds[frame]), "import reads");
+			}
+			if (ok && frame == 0) {
+				uint8_t display[4], captured[4];
+				ok &= fixture_read_display_pixel(fixture, state.buffer, 8, 8, display);
+				ok &= check(display[1] > 250 && display[2] < 5, "the display shows the window effect");
+				ok &= check(fixture_read_pixel(fixture, state.buffer, 8, 8, captured), "import reads");
+				ok &= check(captured[2] > 250 && captured[1] < 5, "the capture sees the plain red window");
+			}
+			wlr_output_state_finish(&state);
+		}
+		ok &= check(abs(backgrounds[0][0] - backgrounds[1][0]) <= 2, "the capture is encoded like the usual view");
+	}
+	wlr_swapchain_destroy(swapchain);
+	wlr_color_transform_unref(transform);
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -1180,6 +1366,12 @@ int main(int argc, char *argv[]) {
 		ok = test_in_place(&fixture);
 	} else if (strcmp(argv[1], "damage-expansion") == 0) {
 		ok = test_damage_expansion(&fixture);
+	} else if (strcmp(argv[1], "capture-policy") == 0) {
+		ok = test_capture_policy(&fixture);
+	} else if (strcmp(argv[1], "capture-policy-encoding") == 0) {
+		ok = test_capture_policy_encoding(&fixture);
+	} else if (strcmp(argv[1], "capture-feedback") == 0) {
+		ok = test_capture_feedback(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

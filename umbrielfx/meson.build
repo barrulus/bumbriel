@@ -269,6 +269,9 @@ if build_tests
     'visible-in-box',
     'in-place',
     'damage-expansion',
+    'capture-policy',
+    'capture-policy-encoding',
+    'capture-feedback',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

@@ -803,8 +803,11 @@ struct render_data {
   struct render_list_entry* entries;
   int entry_count;
   bool shadow_capture;
-  // Rendering an unfiltered effect capture: in-place slots do not run.
+  // Rendering an unfiltered effect capture: in-place slots do not run and
+  // capture composites use the capture role's history.
   bool effect_capture;
+  // A later composition this frame emits output_sample.
+  bool sample_later;
   // The scene's effect state for this frame, NULL when it has none. Nothing may
   // add or remove slots while entries render: output_sample listeners run then.
   struct scene_effects* effects;
@@ -3251,7 +3254,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
         .release_timeline = data->output->in_timeline,
         .release_point = data->output->in_point,
     };
-    if (!data->shadow_capture) {
+    if (!data->shadow_capture && !data->sample_later) {
       wl_signal_emit_mutable(&scene_buffer->events.output_sample, &sample_event);
     }
 
@@ -3714,9 +3717,10 @@ static void render_animated_range(
             .update_history = !data->shadow_capture,
             .geometry = has_geometry ? &geometry : NULL,
             .light = slot == FX_SLOT_BORDER_EFFECT && animation->light != NULL && animation->light->rect->node.enabled
-                    && !data->shadow_capture
+                    && !data->shadow_capture && !data->effect_capture
                 ? animation->light->cache
                 : NULL,
+            .role = data->effect_capture ? 1 : 0,
         };
         fx_render_pass_end_effect(pass, &composite);
       }
@@ -3850,6 +3854,100 @@ scene_output_acknowledge_damage(struct wlr_scene_output* scene_output, const str
     pixman_region32_fini(&scene_output->pending_commit_damage);
     pixman_region32_init(&scene_output->pending_commit_damage);
   }
+}
+
+struct scene_output_effects {
+  struct wlr_addon addon;
+  struct wlr_scene_output* output;
+  struct wl_listener destroy;
+  bool in_capture;
+  bool capture_was_pending;
+};
+
+// Drops the effect captures this scene output saved into its swapchain buffers.
+static void output_effects_release_capture(struct wlr_scene_output* scene_output) {
+  struct wlr_renderer* renderer = scene_output->output->renderer;
+  if (renderer == NULL || !wlr_renderer_is_fx(renderer)) {
+    return;
+  }
+  struct fx_renderer* fx_renderer = fx_get_renderer(renderer);
+  // Dropping a capture removes its framebuffer from this list: rescan after each.
+  bool released;
+  do {
+    released = false;
+    struct fx_framebuffer* buffer;
+    wl_list_for_each(buffer, &fx_renderer->buffers, link) {
+      if (buffer->effect_capture_owner == scene_output) {
+        fx_framebuffer_release_effect_capture(buffer);
+        released = true;
+        break;
+      }
+    }
+  } while (released);
+}
+
+static void scene_output_effects_destroy(struct wlr_addon* addon) {
+  struct scene_output_effects* effects = wl_container_of(addon, effects, addon);
+  output_effects_release_capture(effects->output);
+  wl_list_remove(&effects->destroy.link);
+  wlr_addon_finish(addon);
+  free(effects);
+}
+
+static const struct wlr_addon_interface scene_output_effects_impl = {
+    .name = "scene_output_effects",
+    .destroy = scene_output_effects_destroy,
+};
+
+static void scene_output_effects_handle_destroy(struct wl_listener* listener, void* data) {
+  struct scene_output_effects* effects = wl_container_of(listener, effects, destroy);
+  scene_output_effects_destroy(&effects->addon);
+}
+
+static struct scene_output_effects* scene_output_effects_get(struct wlr_scene_output* output, bool create) {
+  struct wlr_addon* addon = wlr_addon_find(&output->output->addons, output, &scene_output_effects_impl);
+  if (addon != NULL) {
+    struct scene_output_effects* effects = wl_container_of(addon, effects, addon);
+    return effects;
+  }
+  if (!create) {
+    return NULL;
+  }
+  struct scene_output_effects* effects = calloc(1, sizeof(*effects));
+  if (effects == NULL) {
+    return NULL;
+  }
+  effects->output = output;
+  wlr_addon_init(&effects->addon, &output->output->addons, output, &scene_output_effects_impl);
+  effects->destroy.notify = scene_output_effects_handle_destroy;
+  wl_signal_add(&output->events.destroy, &effects->destroy);
+  return effects;
+}
+
+// Drops the capture-role feedback history of every effect on `output` only.
+static void scene_reset_capture_histories(struct wlr_scene* scene, struct wlr_output* output) {
+  struct scene_effects* effects = scene_effects_get(scene, false);
+  if (effects == NULL) {
+    return;
+  }
+  struct scene_animation* animation;
+  wl_list_for_each(animation, &effects->animations, link) {
+    for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
+      fx_animation_history_reset_role(&animation->histories[slot], output, 1);
+    }
+  }
+}
+
+void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output, bool in_capture) {
+  // The default (false) needs no state, so only true creates the addon.
+  struct scene_output_effects* effects = scene_output_effects_get(output, in_capture);
+  if (effects == NULL || effects->in_capture == in_capture) {
+    return;
+  }
+  effects->in_capture = in_capture;
+  scene_reset_capture_histories(output->scene, output->output);
+  output_effects_release_capture(output);
+  scene_output_damage_whole(output);
 }
 
 void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_output) {
@@ -4821,6 +4919,29 @@ bool wlr_scene_output_build_state(
     fx_renderer_clear_animation_buffers(output);
   }
 
+  // Absent state is the default policy: effects are excluded from captures. The
+  // addon is created only once an unfiltered composition runs.
+  struct scene_output_effects* output_effects = scene_output_effects_get(scene_output, false);
+  const bool capture_pending = options->effect_capture_pending;
+  bool unfiltered_pass = capture_pending && render_data.persistent_visible
+      && (output_effects == NULL || !output_effects->in_capture);
+  if (unfiltered_pass && output_effects == NULL) {
+    output_effects = scene_output_effects_get(scene_output, true);
+    unfiltered_pass = output_effects != NULL;
+  }
+  if (output_effects != NULL) {
+    if (output_effects->capture_was_pending && !capture_pending) {
+      // The capture ended: its histories and buffers go with it.
+      scene_reset_capture_histories(scene_output->scene, output);
+      output_effects_release_capture(scene_output);
+    }
+    output_effects->capture_was_pending = capture_pending;
+  }
+  if (unfiltered_pass) {
+    // The display composition redraws everything the unfiltered one drew.
+    scene_output_damage_whole(scene_output);
+  }
+
   if (debug_damage == WLR_SCENE_DEBUG_DAMAGE_RERENDER || transient_effects) {
     scene_output_damage_whole(scene_output);
   }
@@ -5125,6 +5246,35 @@ bool wlr_scene_output_build_state(
   );
   pixman_region32_fini(&background);
 
+  if (unfiltered_pass) {
+    struct render_data clean = render_data;
+    clean.effect_capture = true;
+    clean.sample_later = true;
+    render_animated_range(list_data, list_len - 1, 0, NULL, &clean);
+    wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
+    if (fx_render_pass_save_effect_capture(fx_pass)) {
+      fx_pass->output_buffer->effect_capture_owner = scene_output;
+    } else {
+      // Show the unfiltered frame rather than a filtered one without its capture.
+      render_data.effect_capture = true;
+    }
+    // Start the display composition from the background again.
+    wlr_render_pass_add_rect(
+        render_pass,
+        &(struct wlr_render_rect_options){
+            .box = {.width = buffer->width, .height = buffer->height},
+            .color =
+                {
+                    .r = scene_output->scene->background_color[0],
+                    .g = scene_output->scene->background_color[1],
+                    .b = scene_output->scene->background_color[2],
+                    .a = scene_output->scene->background_color[3],
+                },
+            .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+            .clip = &render_data.damage,
+        }
+    );
+  }
   render_animated_range(list_data, list_len - 1, 0, NULL, &render_data);
   for (int i = list_len - 1; i >= 0; i--) {
     struct render_list_entry* entry = &list_data[i];

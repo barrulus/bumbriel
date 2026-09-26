@@ -1013,6 +1013,12 @@ struct wlr_scene_output_state_options {
 	 * wlr_output_state or output size if not specified.
 	 */
 	struct wlr_swapchain *swapchain;
+
+	/**
+	 * A screencopy or image-copy client will read this frame. With effects
+	 * excluded from captures, the scene composes an unfiltered frame for it.
+	 */
+	bool effect_capture_pending;
 };
 
 /**

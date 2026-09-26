@@ -209,4 +209,28 @@ static inline bool fixture_read_pixel(struct fixture *fixture, struct wlr_buffer
 	memcpy(out, &pixels[(y * TEST_WIDTH + x) * 4], 4);   // B G R A byte order
 	return true;
 }
+
+// Reads one pixel of the buffer's own framebuffer with glReadPixels. Unlike
+// read_buffer this never imports the buffer as a texture, so it sees the
+// display composition even while a capture substitute is valid.
+static inline bool fixture_read_display_pixel(struct fixture *fixture, struct wlr_buffer *buffer, int x, int y, uint8_t out[4]) {
+	struct fx_renderer *renderer = fx_get_renderer(fixture->renderer);
+	struct wlr_egl_context previous;
+	if (!wlr_egl_make_current(renderer->egl, &previous)) {
+		return false;
+	}
+	GLuint fbo = fx_renderer_get_buffer_fbo(fixture->renderer, buffer);
+	bool ok = fbo != 0;
+	if (ok) {
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		uint8_t rgba[4];
+		// The pass projects with FLIPPED_180, so GL row y is buffer row y.
+		glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+		ok = glGetError() == GL_NO_ERROR;
+		out[0] = rgba[2]; out[1] = rgba[1]; out[2] = rgba[0]; out[3] = rgba[3];   // B G R A like fixture_read_pixel
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
+	wlr_egl_restore_context(&previous);
+	return ok;
+}
 #endif

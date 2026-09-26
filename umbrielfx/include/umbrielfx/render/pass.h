@@ -49,6 +49,9 @@ struct fx_gles_render_pass {
 	struct wl_list animation_history_updates;
 	// An in-place effect could not copy its target this pass; logged once.
 	bool in_place_failed;
+	// The target's unfiltered composition was copied into the output buffer's
+	// effect capture; it becomes readable once the pass submits.
+	bool effect_capture_saved;
 };
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass *pass);

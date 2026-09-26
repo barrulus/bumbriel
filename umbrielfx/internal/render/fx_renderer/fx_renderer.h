@@ -61,6 +61,12 @@ struct fx_framebuffer {
 	struct fx_framebuffer *sdr_capture_parent;
 	bool capture_sdr;
 	bool sdr_capture_valid;
+	// Unfiltered composition of this swapchain buffer while a capture is pending
+	// with effects excluded from captures. dmabuf imports read it instead.
+	struct fx_framebuffer *effect_capture_buffer;
+	struct fx_framebuffer *effect_capture_parent;
+	bool effect_capture_valid;
+	const void *effect_capture_owner;
 
 	EGLImageKHR image;
 	GLuint rbo;
@@ -89,6 +95,15 @@ void fx_framebuffer_bind(struct fx_framebuffer *buffer);
  * Note: Doesn't drop the wlr_buffer, so should only be used internally.
  */
 void fx_framebuffer_destroy(struct fx_framebuffer *buffer);
+
+// Drops the buffer's effect capture and clears its owner.
+void fx_framebuffer_release_effect_capture(struct fx_framebuffer *buffer);
+
+// Draws all of `source` over `target` in a pass of its own, decoding `source`
+// with `transfer_function`. Leaves no framebuffer bound.
+bool fx_framebuffer_copy(struct fx_framebuffer *target,
+		struct fx_framebuffer *source,
+		enum wlr_color_transfer_function transfer_function);
 
 ///
 /// fx_texture

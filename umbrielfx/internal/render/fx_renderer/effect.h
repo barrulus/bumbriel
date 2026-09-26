@@ -105,5 +105,9 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
 // already be drawn. Reads and promotes history like a capture composite.
 // `expand` is ignored: the mask rounds the node box.
 void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
+// Copies the target, encoded as a dmabuf import of the output buffer reads it,
+// into the output buffer's effect capture. Imports read the copy once the pass
+// submits. The target stays bound.
+bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass);
 
 #endif

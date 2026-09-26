@@ -423,6 +423,10 @@ static bool render_pass_submit(struct wlr_render_pass* wlr_pass) {
 
 out:
   animation_history_commit_updates(pass, ok);
+  pass->output_buffer->effect_capture_valid = ok && pass->effect_capture_saved;
+  if (!pass->effect_capture_saved) {
+    fx_framebuffer_release_effect_capture(pass->output_buffer);
+  }
   if (pass->output_buffers != NULL) {
     if (ok) {
       pass->output_buffers->blend_valid = true;
@@ -2803,6 +2807,38 @@ done:
   return copied;
 }
 
+bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass) {
+  struct fx_framebuffer* output = pass->output_buffer;
+  struct fx_renderer* renderer = output->renderer;
+  struct fx_framebuffer** capture = &output->effect_capture_buffer;
+  const int width = output->buffer->width, height = output->buffer->height;
+  if (*capture != NULL && (*capture)->buffer->n_locks > 0) {
+    // A reader still holds the previous copy; it keeps that one.
+    fx_framebuffer_release_effect_capture(output);
+  }
+  struct wlr_allocator* allocator =
+      pass->fx_offscreen_buffers != NULL ? pass->fx_offscreen_buffers->allocator : renderer->allocator;
+  bool failed = allocator == NULL, ok = false;
+  fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, output->drm_format, capture, &failed);
+  if (!failed && *capture != NULL) {
+    (*capture)->effect_capture_parent = output;
+    if (!pass->has_color_transform) {
+      ok = fx_framebuffer_copy(*capture, pass->buffer, WLR_COLOR_TRANSFER_FUNCTION_SRGB);
+    } else if (output->capture_sdr) {
+      // The SDR view of a transformed output: its linear blend buffer, sRGB-encoded.
+      ok = fx_framebuffer_copy(*capture, pass->buffer, WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR);
+    } else {
+      pass->output_buffer = *capture;
+      ok = pixman_region32_not_empty(&pass->updated_region) && render_pass_apply_output_transform(pass);
+      pass->output_buffer = output;
+    }
+  }
+  fx_framebuffer_bind(pass->buffer);
+  glViewport(0, 0, pass->buffer->buffer->width, pass->buffer->buffer->height);
+  pass->effect_capture_saved = ok;
+  return ok;
+}
+
 void fx_renderer_fail_target_copies_for_test(struct wlr_renderer* renderer, bool fail) {
   fx_get_renderer(renderer)->fail_target_copies_for_test = fail;
 }
@@ -2830,6 +2866,7 @@ struct fx_gles_render_pass* fx_begin_buffer_pass(
   const bool has_color_transform = color_transform != NULL;
   buffer->capture_sdr = false;
   buffer->sdr_capture_valid = false;
+  buffer->effect_capture_valid = false;
   buffer->output_buffers = output_buffers;
   buffer->output_generation = 0;
 
