@@ -285,10 +285,10 @@ namespace umbriel {
     const bool borderVisible = decorated && innerWidth + outerWidth > 0;
     wlr_scene_node_set_enabled(&card.border->node, borderVisible);
     if (borderVisible) {
-      const int padding = scaledWidth(view->borderEffectPadding());
+      card.borderPadding = scaledWidth(view->borderEffectPadding());
       applyBorderGeometry(
-          card.border, makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth, padding), innerWidth,
-          outerWidth
+          card.border, makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth, card.borderPadding),
+          innerWidth, outerWidth
       );
       const std::array<float, 4> innerColor = tint(cardBorderColor(card, liveTarget), presentedOpacity);
       const std::array<float, 4> outerColor = tint(view->borderColors().outer, presentedOpacity);
@@ -572,7 +572,7 @@ namespace umbriel {
         .focused = workspace != nullptr && workspace->focusedView() == view && &card != m_dragCard,
         .decorated = card.border != nullptr && card.border->node.enabled && card.tree->node.enabled,
         .urgent = view->urgent(),
-        .fullscreen = view->toplevel()->current.fullscreen,
+        .fullscreen = view->toplevel()->scheduled.fullscreen,
     };
     view->syncAnimationShaders(
         card.tree, card.border != nullptr ? &card.border->node : nullptr,
@@ -1109,31 +1109,19 @@ namespace umbriel {
 
     std::vector<BorderSnapshot> borders;
     if (card.border != nullptr && card.border->node.enabled) {
-      wlr_scene_border* copy = wlr_scene_border_create(snapshot, card.border->inner_color, card.border->outer_color);
-      if (copy != nullptr) {
-        wlr_scene_border_set_geometry(
-            copy, card.border->width, card.border->height, card.border->inner_width, card.border->outer_width,
-            card.border->clipped_region, card.border->seam_corners, card.border->outer_corners
-        );
-        wlr_scene_node_set_position(
-            &copy->node, card.tree->node.x + card.border->node.x, card.tree->node.y + card.border->node.y
-        );
-        std::array<float, 4> innerColor = cardBorderColor(card, liveTargetView());
-        std::array<float, 4> outerColor = card.view->borderColors().outer;
-        const float presentedOpacity = card.view->presentedOpacity();
-        innerColor[3] *= presentedOpacity;
-        outerColor[3] *= presentedOpacity;
-        borders.push_back(
-            BorderSnapshot{
-                .node = copy,
-                .innerColor = innerColor,
-                .outerColor = outerColor,
-                .innerWidth = card.view->decorationBorderWidth(),
-                .outerWidth = card.view->decorationOuterBorderWidth(),
-                .cornerRadius = card.view->decorationCornerRadius(),
-            }
-        );
-      }
+      snapshotBorder(
+          snapshot, *card.border, card.tree->node.x + card.border->node.x, card.tree->node.y + card.border->node.y,
+          &card.border->node,
+          {
+              .innerColor = cardBorderColor(card, liveTargetView()),
+              .outerColor = card.view->borderColors().outer,
+              .innerWidth = card.view->decorationBorderWidth(),
+              .outerWidth = card.view->decorationOuterBorderWidth(),
+              .cornerRadius = card.view->decorationCornerRadius(),
+              .padding = card.borderPadding,
+          },
+          card.view->presentedOpacity(), borders
+      );
     }
 
     if (buffersCopied == 0 && borders.empty()) {

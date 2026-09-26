@@ -170,6 +170,7 @@ namespace umbriel {
       size_t workspaceIndex = 0; // workspace index inside the output's group
       wlr_scene_tree* tree = nullptr;
       wlr_scene_border* border = nullptr;
+      int borderPadding = 0; // effect padding the ring was last laid out with, scaled
       SurfaceBlur blur;
       // Scaled copy of the view's drop shadow. Its tree lives under `tree` or, for a view whose shadow the workspace
       // pools below every tile, under the output's `tileShadows`.

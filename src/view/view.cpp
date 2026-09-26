@@ -1366,7 +1366,7 @@ namespace umbriel {
     );
     // Persistent effects. With none configured this costs one string check per slot and never reads the clock.
     if (m_effects.configured() || effectRegistry().active()) {
-      if (ownTrees) {
+      if (ownTrees && m_effects.needsSurface()) {
         surface = toplevelSurfaceTreeNode(m_contentTree, m_toplevel->base->surface);
       }
       const BorderEffectGate ownGate{
@@ -4627,16 +4627,20 @@ namespace umbriel {
     const ResolvedWindowRule& rule = resolved != nullptr ? *resolved : resolvedRules();
     m_appliedRuleState = ruleState();
     // Tile spacing stays on the global border width, so a decoration change redraws this window without an arrange.
-    if (m_decoration.applyRule(rule)) {
+    const bool ringChanged = m_decoration.applyRule(rule);
+    m_effects.resolve(config().effects, rule);
+    const bool paddingChanged = m_decoration.setBorderPadding(m_effects.borderPadding());
+    if (ringChanged || paddingChanged) {
       updateBorderGeometry();
       applyCornerRadius();
       updateShadow();
     }
-    m_effects.resolve(config().effects, rule);
-    if (m_decoration.setBorderPadding(m_effects.borderPadding())) {
-      updateBorderGeometry();
-      applyCornerRadius();
-      updateShadow();
+    if (paddingChanged) {
+      // Overview cards lay their rings out from the padding too.
+      if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
+        overview->onViewPresentationChanged(this);
+        scheduleFrame();
+      }
     }
     const Config::Colors::Border& colors = m_decoration.borderColors();
     const std::array<float, 4>& targetBorder = m_borderFocusedState ? colors.focused : colors.unfocused;

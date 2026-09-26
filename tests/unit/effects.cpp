@@ -175,4 +175,13 @@ UMBRIEL_TEST(borderEffectsApplyOnlyToFocusedDecoratedCalmWindows) {
   CHECK(!umbriel::borderEffectApplies({.focused = true, .decorated = true, .urgent = false, .fullscreen = true}));
 }
 
+UMBRIEL_TEST(borderPaddingNeedsACompiledBorderPreset) {
+  const EffectPreset border{.name = "ring", .kind = EffectKind::Border, .padding = 20};
+  CHECK_EQ(umbriel::borderPresetPadding(&border, true), 20);
+  CHECK_EQ(umbriel::borderPresetPadding(&border, false), 0);
+  CHECK_EQ(umbriel::borderPresetPadding(nullptr, true), 0);
+  const EffectPreset window{.name = "tint", .kind = EffectKind::Window, .padding = 20};
+  CHECK_EQ(umbriel::borderPresetPadding(&window, true), 0);
+}
+
 int main() { return RUN_TESTS(); }

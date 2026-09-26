@@ -28,6 +28,8 @@ namespace umbriel {
     bool fullscreen = false;
   };
   [[nodiscard]] bool borderEffectApplies(const BorderEffectGate& gate);
+  // A border preset's padding, 0 unless its program compiled.
+  [[nodiscard]] int borderPresetPadding(const EffectPreset* preset, bool compiled);
 
   // Persistent effects of one view. Ledger instances are keyed by the scene node carrying the slot, so the live
   // window and its overview card track visibility and output separately.
@@ -36,7 +38,7 @@ namespace umbriel {
     void resolve(const Effects& effects, const ResolvedWindowRule& rule);
     [[nodiscard]] const std::string& borderName() const { return m_border; }
     [[nodiscard]] const std::string& windowName() const { return m_window; }
-    // Preset padding, 0 when no usable border preset is selected.
+    // Preset padding, 0 when no border preset with a compiled program is selected.
     [[nodiscard]] int borderPadding() const;
     struct ApplyInput {
       wlr_scene_node* surface = nullptr;
@@ -49,6 +51,8 @@ namespace umbriel {
     };
     // True when a border or window preset is selected for this view: the caller reads the clock only then.
     [[nodiscard]] bool configured() const { return !m_border.empty() || !m_window.empty(); }
+    // True when apply() reads `surface`: a window preset is selected or a node of this view is in the ledger.
+    [[nodiscard]] bool needsSurface() const { return !m_window.empty() || !m_owners.empty(); }
     void apply(const ApplyInput& input);
     // Ledger removal for every node this object registered; slots are cleared by the caller.
     void detach();

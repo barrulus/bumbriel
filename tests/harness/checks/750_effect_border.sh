@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A border preset paints the focused window's ring and its padding, leaves the client hole alone, follows focus, can be
-# switched off per window, freezes with the animation clock, spills light onto a neighbour, and asks for frames only
-# while its clock advances.
+# switched off per window, freezes with the animation clock, spills light onto a neighbour, asks for frames only
+# while its clock advances, and stays on an overview card's close snapshot.
 set -euo pipefail
 
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-border.png"
@@ -222,4 +222,88 @@ if (( r < 15 )); then
 fi
 "$UMBRIEL" msg "window-close:$near_id" > /dev/null
 "$UMBRIEL" settle > /dev/null
-echo "border effect padding, hole, focus, off override, frame gating, and light verified"
+
+# An overview card closed while focused keeps the ring effect on its close snapshot: the red preset still paints the
+# top of the card's ring on the first snapshot frame instead of the plain green ring.
+cat "$BASE" > "$UMBRIEL_CONFIG"
+cat >> "$UMBRIEL_CONFIG" <<'EOF'
+
+[animation]
+enabled = true
+[animation.windows_in]
+enabled = false
+[animation.windows_move]
+enabled = false
+[animation.windows_out]
+enabled = true
+style = "fade"
+duration_ms = 5000
+curve = "linear"
+[appearance]
+border_width = 4
+outer_border_width = 0
+corner_radius = 0
+[appearance.shadow]
+enabled = false
+[colors]
+backdrop = "#000000FF"
+[colors.border]
+focused = "#00FF00FF"
+[colors.overview]
+background_tint = "#000000FF"
+workspace_background = "#000000FF"
+[overview]
+zoom = 0.5
+[effects]
+border = "ring"
+[effects.preset.ring]
+kind = "border"
+shader = "still.glsl"
+padding = 20
+[[window_rule]]
+match.title = "^effect-(one|two|plain)$"
+default_floating = true
+EOF
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" msg "window-focus:$id" > /dev/null
+"$UMBRIEL" settle > /dev/null
+"$UMBRIEL" msg overview-open > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+read -r card_x card_y card_w _ < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" bbox 'r > 0.9 && g < 0.1 && b < 0.1')
+if (( card_w == 0 )); then
+  echo "the focused overview card did not show the border effect"
+  exit 1
+fi
+# A reload that doubles the padding widens the open card's ring by the scaled difference (20 px at zoom 0.5 = 10 px).
+sed -i 's/^padding = 20$/padding = 40/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+padded_y=$card_y
+read -r card_x card_y card_w _ < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" bbox 'r > 0.9 && g < 0.1 && b < 0.1')
+if (( card_y > padded_y - 8 )); then
+  echo "the open overview card kept its ring padding across a reload: top $padded_y -> $card_y"
+  exit 1
+fi
+readonly CARD_TOP="${card_w}x6+${card_x}+${card_y}"
+card_red=$(red_at "$CARD_TOP")
+"$UMBRIEL" clock-freeze
+"$UMBRIEL" msg "window-close:$id" > /dev/null
+# Settle refuses while the frozen close animation runs, so poll the window list for the snapshot taking over.
+for _ in $(seq 100); do
+  [[ -z $("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "effect-one")') ]] && break
+  sleep 0.02
+done
+"$UMBRIEL" clock-advance 1
+grim "$IMAGE"
+snapshot_red=$(red_at "$CARD_TOP")
+if (( snapshot_red * 2 < card_red )); then
+  echo "the overview card's close snapshot dropped the border effect: red $card_red -> $snapshot_red"
+  exit 1
+fi
+"$UMBRIEL" clock-advance 5000
+"$UMBRIEL" clock-resume
+"$UMBRIEL" msg overview-close > /dev/null
+"$UMBRIEL" settle > /dev/null
+echo "border effect padding, hole, focus, off override, frame gating, light, and overview close snapshots verified"
