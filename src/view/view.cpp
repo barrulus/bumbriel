@@ -1380,7 +1380,7 @@ namespace umbriel {
           .surface = surface,
           .border = border,
           .gate = gate != nullptr ? *gate : ownGate,
-          .seconds = m_effects.configured() ? effectRegistry().clockSeconds() : 0.0F,
+          .seconds = m_effects.configured() && output != nullptr ? output->effectSeconds() : 0.0F,
 #ifdef UMBRIEL_TEST_IPC
           .clockAdvancing = !m_server->animationClockFrozen(),
 #endif

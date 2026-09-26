@@ -42,7 +42,7 @@ namespace umbriel {
       wlr_scene_node* surface = nullptr;
       wlr_scene_node* border = nullptr;
       BorderEffectGate gate;
-      float seconds = 0.0F; // animation clock; only read when an effect is configured
+      float seconds = 0.0F; // the output's effect time; only read when an effect is configured
       bool clockAdvancing = true;
       const void* output = nullptr; // the output driving this instance's frames
       wlr_box outputBox{};          // that output's layout box: an instance is visible only inside it

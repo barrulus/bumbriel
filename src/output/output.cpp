@@ -99,8 +99,8 @@ namespace umbriel {
   }
 
   void Output::scheduleEffectFrame() {
-    if (m_inFrame) {
-      return; // handleFrame arms the follow-up itself
+    if (m_handlingFrame) {
+      return; // handleFrame arms the next effect frame after its tick
     }
     m_effectFrameDue = true;
     wlr_output_schedule_frame(m_output);
@@ -932,6 +932,7 @@ namespace umbriel {
 
   int Output::onEffectFrameTimer(void* data) {
     auto* output = static_cast<Output*>(data);
+    output->m_effectFrameArmed = false;
     output->m_effectFrameDue = true;
     wlr_output_schedule_frame(output->m_output);
     return 0;
@@ -940,8 +941,12 @@ namespace umbriel {
   void Output::armEffectFrame(uint64_t nowMsec) {
     const uint64_t delay = effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec);
     if (delay == 0) {
+      disarmEffectFrame();
       m_effectFrameDue = true;
       wlr_output_schedule_frame(m_output);
+      return;
+    }
+    if (m_effectFrameArmed) {
       return;
     }
     if (m_effectFrameTimer == nullptr) {
@@ -949,6 +954,14 @@ namespace umbriel {
           wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onEffectFrameTimer, this);
     }
     wl_event_source_timer_update(m_effectFrameTimer, static_cast<int>(delay));
+    m_effectFrameArmed = true;
+  }
+
+  void Output::disarmEffectFrame() {
+    if (m_effectFrameArmed) {
+      wl_event_source_timer_update(m_effectFrameTimer, 0);
+      m_effectFrameArmed = false;
+    }
   }
 
   void Output::applyMode(int width, int height) {
@@ -1030,6 +1043,7 @@ namespace umbriel {
     if (m_frameRetryTimer != nullptr) {
       wl_event_source_timer_update(m_frameRetryTimer, 0);
     }
+    m_handlingFrame = true;
 
     flushDirty();
     if (m_hasDeferredMode) {
@@ -1039,6 +1053,16 @@ namespace umbriel {
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
     const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
+    const bool effectFrame = m_effectFrameDue;
+    m_effectFrameDue = false;
+    if (effectFrame) {
+      m_lastEffectFrameMsec = nowMsec;
+    }
+    // Effect time moves only on due effect frames, which is what caps them at max_fps. While nothing here needs frames
+    // of its own it follows the clock, so a new instance starts from the current time.
+    if (effectFrame || (effectEligible() == 0 && !config().effects.presets.empty())) {
+      m_effectSeconds = m_server->effects().clockSeconds();
+    }
     m_server->tickAnimations(m_server->animationClockMsec());
 
     // Surface commits reset scene-buffer opacity to the protocol alpha. Repair
@@ -1049,8 +1073,6 @@ namespace umbriel {
     // the first workspace-switch frame waiting on the old client, so the compositor never gets a vblank to advance the
     // slide. Keep animated outputs on the render path until their final composed frame has settled.
     const bool animationsActive = m_server->animationsActiveFor(this);
-    const bool effectFrame = m_effectFrameDue;
-    m_effectFrameDue = false;
     // Persistent effects reading time keep an output drawing on their own timer, never through the animation
     // registry: settle, tearing, and the render lock keep their meanings.
     const bool effectsEligible = !m_server->sessionLocked() && effectEligible() > 0;
@@ -1112,6 +1134,7 @@ namespace umbriel {
 
     if (m_output->width <= 0 || m_output->height <= 0) {
       // Output not configured yet; no clients can be presenting on it either.
+      m_handlingFrame = false;
       return;
     }
 
@@ -1132,7 +1155,6 @@ namespace umbriel {
       m_inFrame = true;
       if (effectFrame) {
         ++m_effectFrames;
-        m_lastEffectFrameMsec = nowMsec;
       }
       UMBRIEL_ZONE("Output::render");
 
@@ -1254,9 +1276,10 @@ namespace umbriel {
 
     if (effectsEligible && !animationsActive && !commitFailed) {
       armEffectFrame(nowMsec);
-    } else if (m_effectFrameTimer != nullptr) {
-      wl_event_source_timer_update(m_effectFrameTimer, 0);
+    } else {
+      disarmEffectFrame();
     }
+    m_handlingFrame = false;
 
     if (Ipc* ipc = m_server->ipc()) {
       ipc->notifyOutputFrame(*this);

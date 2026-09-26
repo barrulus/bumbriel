@@ -39,9 +39,9 @@ animation is still running. `output-create` and `output-destroy` work only on
 the headless backend. `renderer-recover` emits two consecutive notifications
 through the renderer's real mutable lost signal. The recovery check uses them
 to assert that one deferred renderer replacement completes and draws a new
-frame. `effect-frames` reports, per output, how many frames were drawn for
-persistent effects and how many effect instances currently need frames of
-their own.
+frame. `effect-frames` reports, per output, how many drawn frames a
+persistent effect asked for and how many effect instances currently need
+frames of their own.
 
 ## Pointer drag completion
 
