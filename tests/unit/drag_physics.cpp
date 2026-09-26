@@ -47,8 +47,9 @@ namespace {
       for (int i = 0; i <= kSamples; ++i) {
         const float u = static_cast<float>(i) * kStep, v = static_cast<float>(j) * kStep;
         const auto here = physics.displacementAt(u, v);
-        for (const auto& [du, dv] : {std::array{kStep, 0.0F}, std::array{0.0F, kStep}, std::array{kStep, kStep}}) {
-          if (u + du > 1.0F + 1e-6F || v + dv > 1.0F + 1e-6F) {
+        for (const auto& [du, dv] :
+             {std::array{kStep, 0.0F}, std::array{0.0F, kStep}, std::array{kStep, kStep}, std::array{kStep, -kStep}}) {
+          if (u + du > 1.0F + 1e-6F || v + dv > 1.0F + 1e-6F || v + dv < -1e-6F) {
             continue;
           }
           const auto there = physics.displacementAt(u + du, v + dv);
@@ -110,21 +111,25 @@ UMBRIEL_TEST(displacementStaysBoundedAndTheSheetNeverFoldsUnderExtremeShaking) {
 }
 
 UMBRIEL_TEST(aShrinkingRetargetOfADisplacedSheetStaysAContraction) {
-  DragPhysics physics;
-  physics.begin(800, 600, 0.0F, 0.0F, 1);
-  for (int i = 0; i < 4; ++i) {
-    physics.move((i % 2 == 0 ? 1 : -1) * 400.0F, (i % 3 == 0 ? 1 : -1) * 300.0F);
+  // The mirrored run (flip = -1) puts the fold along the anti-diagonal.
+  for (const float flip : {1.0F, -1.0F}) {
+    const auto row = [flip](float v) { return flip > 0 ? v : 1.0F - v; };
+    DragPhysics physics;
+    physics.begin(800, 600, 0.0F, row(0.0F), 1);
+    for (int i = 0; i < 4; ++i) {
+      physics.move((i % 2 == 0 ? 1 : -1) * 400.0F, flip * (i % 3 == 0 ? 1 : -1) * 300.0F);
+      physics.tick(1.0 / 240);
+    }
+    CHECK(physics.maxDisplacement() > 20.0F);
+    CHECK(contracts(physics, 800, 600));
+    // The window halves under the pointer and the grab lands on the far corner, re-pinning the displaced sheet there.
+    physics.resize(400, 300, 1.0F, row(0.9F));
+    CHECK(contracts(physics, 400, 300));
+    CHECK(unfolded(physics, 400, 300));
+    physics.move(-60, flip * 40);
     physics.tick(1.0 / 240);
+    CHECK(contracts(physics, 400, 300));
   }
-  CHECK(physics.maxDisplacement() > 20.0F);
-  CHECK(contracts(physics, 800, 600));
-  // The window halves under the pointer and the grab lands on the far corner, re-pinning the displaced sheet there.
-  physics.resize(400, 300, 1.0F, 0.9F);
-  CHECK(contracts(physics, 400, 300));
-  CHECK(unfolded(physics, 400, 300));
-  physics.move(-60, 40);
-  physics.tick(1.0 / 240);
-  CHECK(contracts(physics, 400, 300));
 }
 
 UMBRIEL_TEST(velocityStaysBoundedWhenAResizeScalesAFastSheet) {
