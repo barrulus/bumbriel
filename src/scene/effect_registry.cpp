@@ -157,6 +157,13 @@ namespace umbriel {
       m_builtinFade.reset();
     }
     syncLightLayer();
+    applyOutputEffects();
+  }
+
+  void EffectRegistry::applyOutputEffects() {
+    for (const auto& output : m_server->outputs()) {
+      output->applyOutputEffects();
+    }
   }
 
   void EffectRegistry::updateInstance(const void* owner, const EffectInstanceState& state) {

@@ -1104,6 +1104,8 @@ namespace umbriel {
       wlr_scene_buffer_set_color_encoding(copy, source->color_encoding);
       wlr_scene_buffer_set_color_range(copy, source->color_range);
       wlr_scene_buffer_set_filter_mode(copy, WLR_SCALE_FILTER_BILINEAR);
+      // The card's window and overlay slots, with time frozen.
+      wlr_scene_node_copy_animations_for_snapshot(&copy->node, &source->node);
       ++buffersCopied;
     }
 

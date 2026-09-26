@@ -1366,8 +1366,12 @@ namespace umbriel {
     );
     // Persistent effects. With none configured this costs one string check per slot and never reads the clock.
     if (m_effects.configured() || effectRegistry().active()) {
+      wlr_scene_node* captureSurface = nullptr;
       if (ownTrees && m_effects.needsSurface()) {
         surface = toplevelSurfaceTreeNode(m_contentTree, m_toplevel->base->surface);
+        captureSurface = m_captureScene != nullptr
+            ? toplevelSurfaceTreeNode(&m_captureScene->tree, m_toplevel->base->surface)
+            : nullptr;
       }
       const BorderEffectGate ownGate{
           .focused = m_borderFocusedState,
@@ -1379,6 +1383,7 @@ namespace umbriel {
       m_effects.apply({
           .surface = surface,
           .border = border,
+          .captureSurface = captureSurface,
           .gate = gate != nullptr ? *gate : ownGate,
           .seconds = m_effects.configured() && output != nullptr ? output->effectSeconds() : 0.0F,
 #ifdef UMBRIEL_TEST_IPC
@@ -2344,6 +2349,13 @@ namespace umbriel {
     }
 
     wlr_scene_node_copy_animations_for_snapshot(&snap->node, &m_contentTree->node);
+    // Window and overlay effects live on the surface tree; the snapshot's content tree takes them over with time
+    // frozen.
+    if (m_effects.needsSurface()) {
+      if (wlr_scene_node* surface = toplevelSurfaceTreeNode(m_contentTree, m_toplevel->base->surface)) {
+        wlr_scene_node_copy_animations_for_snapshot(&content->node, surface);
+      }
+    }
     // A close snapshot owns its windows_out lifecycle. Keep a possible interrupted windows_in effect, but do not
     // freeze windows_move into the snapshot.
     wlr_scene_node_set_animation(&snap->node, static_cast<unsigned>(AnimationEvent::WindowsMove), nullptr, nullptr);
@@ -3109,6 +3121,14 @@ namespace umbriel {
     const CloseSnapshotId snapshot = beginCloseAnimation();
     // The closing snapshot must retain any in-flight opening shader first.
     wlr_scene_node_clear_animations(&m_contentTree->node);
+    // The window slots leave with the snapshot; a remap binds them again.
+    if (m_effects.needsSurface()) {
+      wlr_surface* surface = m_toplevel->base->surface;
+      clearWindowEffectSlots(toplevelSurfaceTreeNode(m_contentTree, surface));
+      if (m_captureScene != nullptr) {
+        clearWindowEffectSlots(toplevelSurfaceTreeNode(&m_captureScene->tree, surface));
+      }
+    }
     cancelFadeAnimation();
     // The workspace owns the snapshot's visibility and its slide translation from here.
     if (snapshot != kInvalidCloseSnapshot && m_workspace != nullptr) {

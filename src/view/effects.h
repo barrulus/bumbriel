@@ -30,6 +30,8 @@ namespace umbriel {
   [[nodiscard]] bool borderEffectApplies(const BorderEffectGate& gate);
   // A border preset's padding, 0 unless its program compiled.
   [[nodiscard]] int borderPresetPadding(const EffectPreset* preset, bool compiled);
+  // Removes the window and overlay slots from `node`; null is a no-op.
+  void clearWindowEffectSlots(wlr_scene_node* node);
 
   // Persistent effects of one view. Ledger instances are keyed by the scene node carrying the slot, so the live
   // window and its overview card track visibility and output separately.
@@ -43,6 +45,7 @@ namespace umbriel {
     struct ApplyInput {
       wlr_scene_node* surface = nullptr;
       wlr_scene_node* border = nullptr;
+      wlr_scene_node* captureSurface = nullptr; // the isolated capture scene's surface tree node
       BorderEffectGate gate;
       float seconds = 0.0F; // the output's effect time; only read when an effect is configured
       bool clockAdvancing = true;
@@ -51,8 +54,9 @@ namespace umbriel {
     };
     // True when a border or window preset is selected for this view: the caller reads the clock only then.
     [[nodiscard]] bool configured() const { return !m_border.empty() || !m_window.empty(); }
-    // True when apply() reads `surface`: a window preset is selected or a node of this view is in the ledger.
-    [[nodiscard]] bool needsSurface() const { return !m_window.empty() || !m_owners.empty(); }
+    // True when apply() reads `surface`: a window preset or a border preset with an overlay is selected, or a node of
+    // this view is in the ledger.
+    [[nodiscard]] bool needsSurface() const { return !m_window.empty() || m_overlay || !m_owners.empty(); }
     void apply(const ApplyInput& input);
     // Ledger removal for every node this object registered; slots are cleared by the caller.
     void detach();
@@ -62,8 +66,11 @@ namespace umbriel {
   private:
     void track(const void* owner);   // remember a ledger owner so detach() can drop it
     void untrack(const void* owner); // remove from the ledger and forget it; null is a no-op
+    void
+    applyWindowSlots(const ApplyInput& input, const EffectPreset* border, float borderSeconds, bool borderAdvancing);
     std::string m_border;
     std::string m_window;
+    bool m_overlay = false;            // the border preset names an overlay
     std::vector<const void*> m_owners; // nodes registered in the ledger
   };
 

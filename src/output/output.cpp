@@ -25,6 +25,10 @@
 #include "workspace/scratchpad.h"
 #include "workspace/workspace.h"
 
+extern "C" {
+#include <umbrielfx/render/effect.h>
+}
+
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
@@ -36,6 +40,7 @@ namespace umbriel {
   namespace {
     constexpr Logger kLog("output");
     constexpr int kFrameRetryDelayMs = 16;
+    constexpr int kEffectCapturePollMs = 250;
 
   } // namespace
 
@@ -76,6 +81,7 @@ namespace umbriel {
     (void)applyConfiguredState();
     m_sceneOutput = wlr_scene_output_create(m_server->scene(), m_output);
     wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
+    applyOutputEffects();
     updateSceneSdrWhite();
     if (desktopEnabled()) {
       wlr_output_layout_output* layoutOutput = addToLayout();
@@ -104,6 +110,56 @@ namespace umbriel {
     }
     m_effectFrameDue = true;
     wlr_output_schedule_frame(m_output);
+  }
+
+  void Output::applyOutputEffects() {
+    // Nothing configured: touch nothing (no addon, no scene calls). The registry's counts are zero too.
+    const Effects& effects = config().effects;
+    if (effects.presets.empty() && !effects.inCapture && !m_server->effects().active()) {
+      return;
+    }
+    wlr_scene_output_set_effect_capture_policy(m_sceneOutput, effects.inCapture);
+  }
+
+  int Output::captureRenderLocks() const {
+    int locks = m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0);
+    if (wlr_export_dmabuf_manager_v1* manager = m_server->exportDmabufManager()) {
+      wlr_export_dmabuf_frame_v1* frame;
+      wl_list_for_each(frame, &manager->frames, link) {
+        if (frame->output == m_output) {
+          --locks;
+        }
+      }
+    }
+    return locks;
+  }
+
+  bool Output::effectCapturePending() const {
+    // Close snapshots keep persistent slots after their window's instances leave the ledger.
+    const EffectRegistry& effects = m_server->effects();
+    return (effects.persistentReferenced() || effects.active()) && captureRenderLocks() > 0;
+  }
+
+  void Output::watchEffectCapture() {
+    if (!m_effectCaptureBuilt) {
+      return;
+    }
+    if (!effectCapturePending()) {
+      if (outputFrameAllowed(m_server->stopping(), m_server->session())) {
+        wlr_output_schedule_frame(m_output);
+      }
+      return;
+    }
+    if (m_effectCaptureTimer == nullptr) {
+      m_effectCaptureTimer =
+          wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onEffectCaptureTimer, this);
+    }
+    wl_event_source_timer_update(m_effectCaptureTimer, kEffectCapturePollMs);
+  }
+
+  int Output::onEffectCaptureTimer(void* data) {
+    static_cast<Output*>(data)->watchEffectCapture();
+    return 0;
   }
 
   unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
@@ -696,6 +752,10 @@ namespace umbriel {
       wl_event_source_remove(m_effectFrameTimer);
       m_effectFrameTimer = nullptr;
     }
+    if (m_effectCaptureTimer != nullptr) {
+      wl_event_source_remove(m_effectCaptureTimer);
+      m_effectCaptureTimer = nullptr;
+    }
     if (m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, false);
       m_animationRenderLocked = false;
@@ -1176,17 +1236,11 @@ namespace umbriel {
       wlr_output_state_init(&state);
 
       bool commitOk = false;
-      int captureLocks = externalRenderLocks;
-      if (wlr_export_dmabuf_manager_v1* manager = m_server->exportDmabufManager()) {
-        wlr_export_dmabuf_frame_v1* frame;
-        wl_list_for_each(frame, &manager->frames, link) {
-          if (frame->output == m_output) {
-            --captureLocks;
-          }
-        }
-      }
+      const int captureLocks = captureRenderLocks();
       wlr_scene_output_state_options sceneOptions{};
       sceneOptions.capture_sdr = hdrActive() && captureLocks > 0;
+      sceneOptions.effect_capture_pending = effectCapturePending();
+      m_effectCaptureBuilt = sceneOptions.effect_capture_pending;
       if (wlr_scene_output_build_state(m_sceneOutput, &state, &sceneOptions)) {
         // Hardware gamma only (DRM). Nested Wayland has no gamma LUT; leave that alone.
         // Apply only when dirty: uploading the LUT every frame stalls the compositor.
@@ -1259,6 +1313,8 @@ namespace umbriel {
       m_inFrame = false;
       commitFailed = !commitOk;
     }
+
+    watchEffectCapture();
 
     // A request_state that arrived mid-commit is applied now that we're out of it.
     if (m_hasDeferredMode) {

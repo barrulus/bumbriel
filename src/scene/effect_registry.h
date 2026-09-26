@@ -64,6 +64,8 @@ namespace umbriel {
     void removeOutput(const void* output) { m_ledger.removeOutput(output); }
     // Keeps the scene's light layer while a compiled border preset has `light`, and removes it otherwise.
     void syncLightLayer();
+    // Pushes the output-level effect settings to every output.
+    void applyOutputEffects();
 
   private:
     struct Entry {
