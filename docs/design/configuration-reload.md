@@ -72,6 +72,19 @@ Output state and workspace inventory are independent effects.
 - Changing an output's direct scanout policy damages and schedules only outputs
   whose resolved policy changed. It does not reapply output state or invalidate
   the overview.
+- Changing `[effects]`, any `[effects.preset.*]` table or its shader file, an
+  output's `screen_effect`, an animation event's `effect`,
+  `[animation.windows_drag]`, or any window rule while a rule sets
+  `border_effect` or `window_effect` sets the `effects` flag. The registry
+  re-prepares, compiling only presets whose kind or source changed; every mapped
+  window re-resolves its effects; outputs reapply screen and cursor effects,
+  and each output with an eligible instance schedules an effect frame. The flag
+  refreshes nothing else.
+- A `[colors]` change reaches palette uniforms without recompiling any program:
+  border and window slots rebind through `viewChrome`, animation slots at their
+  next update, and screen and cursor slots at the output's next
+  `Output::applyOutputEffects`, which runs on every effect frame of a program
+  that reads `umbriel_time`.
 - `general.autostart` commands run only during startup, never during reload.
 - `general.xwayland` changes require a compositor restart.
 - `[drm]` changes require a restart because GPU selection happens before backend creation.
@@ -103,6 +116,9 @@ The relevant regression coverage is in:
 - [`tests/harness/checks/744_rule_decoration.sh`](../../tests/harness/checks/744_rule_decoration.sh),
   which checks that a window rule's decoration keys reach the window on reload
   without moving it.
+- [`tests/harness/checks/780_effect_reload.sh`](../../tests/harness/checks/780_effect_reload.sh),
+  which checks effect recovery after a missing shader appears, reference
+  diagnostics, palette updates without recompilation, and light layer reloads.
 - [`tests/harness/checks/144_output_scrolling_width.sh`](../../tests/harness/checks/144_output_scrolling_width.sh),
   which checks per-output initial scrolling widths and preserves existing
   column widths when that default changes on reload.

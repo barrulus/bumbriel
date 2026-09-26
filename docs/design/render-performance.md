@@ -8,24 +8,31 @@ thing to establish when a frame rate is lower than expected.
 ## Scanout eligibility
 
 `scene_entry_try_direct_scanout`
-([`wlr_scene.c:3599`](../../umbrielfx/types/scene/wlr_scene.c)) is attempted only
+([`wlr_scene.c:4670`](../../umbrielfx/types/scene/wlr_scene.c)) is attempted only
 when the render list holds exactly one entry, no color transform applies, no
-gamma LUT upload is pending, and SDR capture is off (`:4086-4094`).
+gamma LUT upload is pending, SDR capture is off, and damage highlighting is off
+(`:5353-5357`).
 
-The fork adds two conditions upstream does not have:
+The fork adds three conditions upstream does not have:
 
-- A `scene_animation` anywhere in the scene vetoes scanout (`:3606`). The same
-  predicate also disables visibility and opaque culling (`:4026`) and forces
-  whole-output damage (`:4043`). It is scene-global, not per output and not per
-  subtree, so one animating node changes the cost of every frame on every
-  output until it settles.
-- A node's `visible` region must equal its full rect (`:3614-3628`), because
+- A transient animation slot anywhere in the scene vetoes scanout (`:4678`).
+  The same predicate also disables visibility and opaque culling (`:5236`,
+  `:687`) and forces whole-output damage (`:5303-5305`). It is scene-global,
+  not per output and not per subtree, so one animating node changes the cost
+  of every frame on every output until it settles.
+- A persistent effect visible on the output vetoes scanout there (`:4679`).
+  `render_data.persistent_visible` (`:5259-5279`) is set when a render-list
+  entry sits under a node carrying a window, overlay, or border-effect slot, or
+  when the output has a screen or cursor effect. Other outputs keep scanout;
+  [Effects](effects.md#state-scanout-damage-and-culling) has the damage and
+  culling rules.
+- A node's `visible` region must equal its full rect (`:4686-4698`), because
   scanout bypasses `node->visible`. An ancestor tree clip therefore forces
   composition even when nothing overlaps the node.
 
 Umbriel holds `wlr_output_lock_attach_render` while an output animates
-([`output.cpp:954-958`](../../src/output/output.cpp)) and vetoes tearing for the
-same frames (`:999`).
+([`output.cpp:1185-1188`](../../src/output/output.cpp)) and vetoes tearing for
+the same frames (`:1228-1229`). Persistent effects trigger neither.
 
 `direct_scanout = false` on an output, or `WLR_SCENE_DISABLE_DIRECT_SCANOUT=1`
 process-wide, forces composition. Both are documented in the
@@ -37,16 +44,16 @@ mispresent scanned-out buffers.
 Occlusion culling drops nodes beneath a fully opaque one, so a fullscreen client
 whose buffer is opaque normally leaves a single entry. Opacity comes from the
 buffer's format or from the client's declared opaque region
-(`wlr_scene.c:585-596`). What survives culling in practice:
+(`wlr_scene.c:732-738`). What survives culling in practice:
 
 - A per-surface blur node, created whenever the surface does not declare an
   opaque region covering its content box
-  ([`surface_blur.cpp:63-67`](../../src/scene/surface_blur.cpp)). `isTransparent`
-  at `:37-41` consults only `wlr_surface::opaque_region`, so a client presenting
-  an alpha-channel format without declaring one gets a blur node even though it
-  never blends.
+  ([`surface_blur.cpp:63-67`](../../src/scene/surface_blur.cpp)).
+  `surfaceTransparent` at `:39-44` consults only `wlr_surface::opaque_region`,
+  so a client presenting an alpha-channel format without declaring one gets a
+  blur node even though it never blends.
 - A backdrop rect whose color does not match the scene background. The skip
-  (`wlr_scene.c:3477-3484`) compares against `wlr_scene_set_background_color`,
+  (`wlr_scene.c:4533-4542`) compares against `wlr_scene_set_background_color`,
   which the output clear also paints, so a matching rect renders nothing the
   clear would not. Measured on a headless output with one fullscreen client:
   7 entries with `#000000FF` and 7 with `#26233aFF`, where before the clear
@@ -56,7 +63,7 @@ buffer's format or from the client's declared opaque region
   list is built top down, so "empty" means nothing is drawn over this rect. A
   fullscreen window is, so the skip cannot fire. That condition is upstream
   wlroots, added in `e34cc235`: fractional scaling expands the repaint region
-  in `scale_output_damage()`, so a neighbouring node can leak a pixel into the
+  in `scale_output_damage()`, so a neighboring node can leak a pixel into the
   area a skipped rect would have covered (`swaywm/sway#8233`). Relaxing it
   reintroduces that leak. Confirmed on `3840x2160` at scale `1.25` with a black
   backdrop: `2 render list entries: 1 buffer, 1 rect`.
@@ -66,7 +73,7 @@ buffer's format or from the client's declared opaque region
 
 Occlusion makes every backdrop condition above moot. A fullscreen client whose
 buffer the scene sees as opaque empties the rect's `visible` region, and it is
-dropped at `:3496-3502` regardless of color, scale, or the fractional guard. So
+dropped at `:4572-4575` regardless of color, scale, or the fractional guard. So
 backdrop rects only ever cost a client that presents an alpha-channel format
 without declaring an opaque region. `vkmark` is such a client, which is worth
 knowing before using it to investigate this.
@@ -77,7 +84,7 @@ size and sets a logical destination, so no plane scaling is involved. A client
 that ignores the protocol presents at the logical size, and then
 `scene_entry_try_direct_scanout` stages a `buffer_dst_box` larger than the
 buffer and asks the backend to accept primary-plane scaling
-(`wlr_scene.c:3697-3719`). Hyprland rejects that case outright
+(`wlr_scene.c:4765-4787`). Hyprland rejects that case outright
 (`bufferSize != m_pixelSize`, its `Monitor.cpp:1995`) but has no
 fractional-scale condition of its own, because it has no background node to
 skip and decides eligibility from window state instead of render-list
@@ -85,14 +92,14 @@ cardinality.
 
 ## Per-frame work outside the render pass
 
-`Output::handleFrame` (`output.cpp:925`) runs before any damage test:
+`Output::handleFrame` (`output.cpp:1124`) runs before any damage test:
 `flushDirty`, `Server::tickAnimations`, `flushPendingViewOpacities` over every
 view, and `WineColorManager::applySurfaceDescriptions`, which walks every
 `wlr_scene_buffer` in the scene with a map lookup per buffer
 ([`wine_color_manager.cpp:1061-1099`](../../src/server/wine_color_manager.cpp)).
 
 `wlr_scene_output_send_frame_done` at the end of that function is unconditional
-and must stay so (`output.cpp:1140`). Mailbox and FIFO clients block on
+and must stay so (`output.cpp:1394`). Mailbox and FIFO clients block on
 `wl_surface.frame`, so skipping it on the nothing-to-render path stalls them
 permanently.
 
@@ -167,20 +174,20 @@ cheapest test of whether the render list still holds one entry.
 - Confirm the surface is presented before trusting any uncapped number. A `fifo`
   run that does not pin to the output's refresh rate means the surface is not
   reaching the screen: Umbriel culls invisible nodes outright
-  (`wlr_scene.c:3469`), and a culled surface has its buffers released
+  (`wlr_scene.c:4525`), and a culled surface has its buffers released
   immediately, which looks like an excellent frame rate.
 - A connected profiler reschedules every output frame as soon as the previous
-  one lands (`wlr_scene.c:3218-3221`), so the compositor renders continuously
+  one lands (`wlr_scene.c:4283-4286`), so the compositor renders continuously
   instead of on damage. Zone costs stay comparable; frame rate and idle
-  behaviour do not. Take frame rates from an external overlay with the profiler
+  behavior do not. Take frame rates from an external overlay with the profiler
   disconnected.
 - Scanout state is logged only on transitions, as `Direct scan-out enabled` or
-  `disabled` with no output name (`wlr_scene.c:4111`). `prev_scanout` starts
+  `disabled` with no output name (`wlr_scene.c:5375`). `prev_scanout` starts
   false, so an output that never scanned out once logs nothing at all rather
   than logging a refusal, and on a multi-output machine the lines cannot be
   attributed. Every build records them, since the log file is unfiltered and
-  `wlr_log_init` asks wlroots for every level (`src/main.cpp:302-305`). The
-  neighbouring `types/output/render.c` lines are wlroots' render lock, which
+  `wlr_log_init` asks wlroots for every level (`src/main.cpp:303-305`). The
+  neighboring `types/output/render.c` lines are wlroots' render lock, which
   Umbriel takes while an output animates, not the scene's decision.
 - `umbriel tearing` reports per output `last_commit_tearing`,
   `last_presentation_presented`, and a `fallback_reason` naming whichever
