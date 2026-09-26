@@ -118,6 +118,11 @@ ensure_offscreen_buffer(struct fx_gles_render_pass* pass, struct fx_framebuffer*
   return ensure_offscreen_buffer_size(pass, slot, alpha, pass->buffer->buffer->width, pass->buffer->buffer->height);
 }
 
+// The offscreen set sized like the current target.
+static struct fx_target_buffers* target_buffers(struct fx_gles_render_pass* pass) {
+  return pass->group_depth != 0 ? &pass->fx_offscreen_buffers->group : &pass->fx_offscreen_buffers->output;
+}
+
 struct fx_animation_output_history {
   struct wl_list link;
   struct wlr_output* output;
@@ -458,6 +463,9 @@ out:
       pass->output_buffer->output_generation = 0;
     }
   }
+  if (pass->fx_offscreen_buffers != NULL && !pass->group_used) {
+    fx_offscreen_buffers_clear_group(pass->fx_offscreen_buffers);
+  }
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   pop_fx_debug(renderer);
@@ -624,14 +632,16 @@ static void set_tex_matrix(GLint loc, enum wl_output_transform trans, const stru
   glUniformMatrix3fv(loc, 1, GL_FALSE, tex_matrix);
 }
 
-bool fx_render_pass_begin_capture(struct fx_gles_render_pass* pass, const struct wlr_box* box) {
-  if (pass->fx_offscreen_buffers == NULL || pass->animation_depth == FX_ANIMATION_DEPTH) {
+static bool push_capture(struct fx_gles_render_pass* pass, const struct wlr_box* box, bool group) {
+  if (pass->fx_offscreen_buffers == NULL
+      || pass->animation_depth == FX_ANIMATION_DEPTH
+      || (group && pass->group_depth != 0)) {
     return false;
   }
+  struct fx_target_buffers* buffers = group ? &pass->fx_offscreen_buffers->group : target_buffers(pass);
   const int width = box->width, height = box->height;
-  struct fx_framebuffer* target = ensure_offscreen_buffer_size(
-      pass, &pass->fx_offscreen_buffers->animation_buffers[pass->animation_depth], true, width, height
-  );
+  struct fx_framebuffer* target =
+      ensure_offscreen_buffer_size(pass, &buffers->animation_buffers[pass->animation_depth], true, width, height);
   if (target == NULL) {
     return false;
   }
@@ -649,6 +659,10 @@ bool fx_render_pass_begin_capture(struct fx_gles_render_pass* pass, const struct
   pass->animation_suppress[pass->animation_depth] = pass->suppress_updated;
   pass->animation_boxes[pass->animation_depth] = *box;
   pass->animation_depth++;
+  if (group) {
+    pass->group_depth = pass->animation_depth;
+    pass->group_used = true;
+  }
   pass->buffer = target;
   pass->suppress_updated = true;
   fx_framebuffer_bind(target);
@@ -660,9 +674,13 @@ bool fx_render_pass_begin_capture(struct fx_gles_render_pass* pass, const struct
   return true;
 }
 
+bool fx_render_pass_begin_capture(struct fx_gles_render_pass* pass, const struct wlr_box* box) {
+  return push_capture(pass, box, true);
+}
+
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass) {
   const struct wlr_box box = {.width = pass->buffer->buffer->width, .height = pass->buffer->buffer->height};
-  return fx_render_pass_begin_capture(pass, &box);
+  return push_capture(pass, &box, false);
 }
 
 // Buffer pixels per logical pixel. Summing both sides keeps the ratio when a
@@ -810,6 +828,9 @@ static void draw_animation_texture(
 static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pass) {
   assert(pass->animation_depth > 0);
   pass->animation_depth--;
+  if (pass->animation_depth < pass->group_depth) {
+    pass->group_depth = 0;
+  }
   pass->buffer = pass->animation_parents[pass->animation_depth];
   pass->suppress_updated = pass->animation_suppress[pass->animation_depth];
   fx_framebuffer_bind(pass->buffer);
@@ -1287,7 +1308,7 @@ void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const stru
   }
   // Sampled from a copy: a program may read any texel of its rectangle while
   // writing others, which GL forbids on the bound target.
-  struct fx_framebuffer* source = ensure_offscreen_buffer(pass, &pass->fx_offscreen_buffers->in_place_source, true);
+  struct fx_framebuffer* source = ensure_offscreen_buffer(pass, &target_buffers(pass)->in_place_source, true);
   if (source == NULL) {
     return;
   }
@@ -1913,7 +1934,7 @@ static struct fx_framebuffer* animation_backdrop(struct fx_gles_render_pass* pas
     return pass->buffer;
   }
   struct fx_framebuffer* saved = pass->buffer;
-  struct fx_framebuffer* target = ensure_offscreen_buffer(pass, &pass->fx_offscreen_buffers->animation_backdrop, true);
+  struct fx_framebuffer* target = ensure_offscreen_buffer(pass, &target_buffers(pass)->animation_backdrop, true);
   if (target == NULL) {
     return saved;
   }
@@ -2365,10 +2386,10 @@ static void render_blur_segments(
   push_fx_debug(renderer);
 
   // Swap fbo
-  if (fx_options->current_buffer == pass->fx_offscreen_buffers->effects_buffer) {
-    fx_framebuffer_bind(pass->fx_offscreen_buffers->effects_buffer_swapped);
+  if (fx_options->current_buffer == target_buffers(pass)->effects_buffer) {
+    fx_framebuffer_bind(target_buffers(pass)->effects_buffer_swapped);
   } else {
-    fx_framebuffer_bind(pass->fx_offscreen_buffers->effects_buffer);
+    fx_framebuffer_bind(target_buffers(pass)->effects_buffer);
   }
 
   options->texture = fx_texture_from_buffer(&renderer->wlr_renderer, fx_options->current_buffer->buffer);
@@ -2434,10 +2455,10 @@ static void render_blur_segments(
   wlr_texture_destroy(options->texture);
 
   // Swap buffer. We don't want to draw to the same buffer
-  if (fx_options->current_buffer != pass->fx_offscreen_buffers->effects_buffer) {
-    fx_options->current_buffer = pass->fx_offscreen_buffers->effects_buffer;
+  if (fx_options->current_buffer != target_buffers(pass)->effects_buffer) {
+    fx_options->current_buffer = target_buffers(pass)->effects_buffer;
   } else {
-    fx_options->current_buffer = pass->fx_offscreen_buffers->effects_buffer_swapped;
+    fx_options->current_buffer = target_buffers(pass)->effects_buffer_swapped;
   }
 }
 
@@ -2524,9 +2545,9 @@ get_main_buffer_blur(struct fx_gles_render_pass* pass, struct fx_render_blur_pas
   }
   fx_options->blur_data = &blur_data;
 
-  struct fx_offscreen_buffers* fbos = pass->fx_offscreen_buffers;
-  if (ensure_offscreen_buffer(pass, &fbos->effects_buffer, true) == NULL
-      || ensure_offscreen_buffer(pass, &fbos->effects_buffer_swapped, true) == NULL) {
+  struct fx_target_buffers* buffers = target_buffers(pass);
+  if (ensure_offscreen_buffer(pass, &buffers->effects_buffer, true) == NULL
+      || ensure_offscreen_buffer(pass, &buffers->effects_buffer_swapped, true) == NULL) {
     return NULL;
   }
 
@@ -2607,19 +2628,19 @@ get_main_buffer_blur(struct fx_gles_render_pass* pass, struct fx_render_blur_pas
 
   // Render additional blur effects like saturation, noise, contrast, etc...
   if (blur_data_should_parameters_blur_effects(&blur_data) && pixman_region32_not_empty(&damage)) {
-    if (fx_options->current_buffer == pass->fx_offscreen_buffers->effects_buffer) {
-      fx_framebuffer_bind(pass->fx_offscreen_buffers->effects_buffer_swapped);
+    if (fx_options->current_buffer == target_buffers(pass)->effects_buffer) {
+      fx_framebuffer_bind(target_buffers(pass)->effects_buffer_swapped);
     } else {
-      fx_framebuffer_bind(pass->fx_offscreen_buffers->effects_buffer);
+      fx_framebuffer_bind(target_buffers(pass)->effects_buffer);
     }
     fx_options->tex_options.base.clip = &damage;
     fx_options->tex_options.base.texture =
         fx_texture_from_buffer(&renderer->wlr_renderer, fx_options->current_buffer->buffer);
     render_blur_effects(pass, fx_options);
-    if (fx_options->current_buffer != pass->fx_offscreen_buffers->effects_buffer) {
-      fx_options->current_buffer = pass->fx_offscreen_buffers->effects_buffer;
+    if (fx_options->current_buffer != target_buffers(pass)->effects_buffer) {
+      fx_options->current_buffer = target_buffers(pass)->effects_buffer;
     } else {
-      fx_options->current_buffer = pass->fx_offscreen_buffers->effects_buffer_swapped;
+      fx_options->current_buffer = target_buffers(pass)->effects_buffer_swapped;
     }
   }
 
@@ -2635,11 +2656,9 @@ get_main_buffer_blur(struct fx_gles_render_pass* pass, struct fx_render_blur_pas
 }
 
 static bool optimized_buffer_ready(const struct fx_gles_render_pass* pass, const struct fx_framebuffer* buffer) {
-  // Output blur cannot be reused in translated coordinates, even at the same size.
-  for (unsigned i = 0; i < pass->animation_depth; i++) {
-    if (pass->animation_boxes[i].x != 0 || pass->animation_boxes[i].y != 0) {
-      return false;
-    }
+  // Output blur cannot be reused inside a group capture's coordinates.
+  if (pass->group_depth != 0) {
+    return false;
   }
   return buffer != NULL
       && buffer->buffer->width == pass->buffer->buffer->width

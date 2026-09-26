@@ -389,7 +389,7 @@ static bool test_persistent_scene(struct fixture *fixture) {
 	}
 	wlr_output_state_finish(&state);
 	struct fx_offscreen_buffers *captured = fx_offscreen_buffers_try_get(fixture->output);
-	ok &= check(captured != NULL && captured->in_place_source != NULL && captured->animation_buffers[0] == NULL,
+	ok &= check(captured != NULL && captured->output.in_place_source != NULL && captured->output.animation_buffers[0] == NULL,
 		"the in-place window slot copies its target without a capture");
 
 	// With the slot removed nothing keeps the scene's effect list: the next
@@ -400,7 +400,7 @@ static bool test_persistent_scene(struct fixture *fixture) {
 	struct wlr_buffer *plain = fixture_render_scene(fixture, scene_output, &again);
 	ok &= check(plain != NULL, "scene renders after the slot is removed");
 	struct fx_offscreen_buffers *fbos = fx_offscreen_buffers_try_get(fixture->output);
-	ok &= check(fbos == NULL || (fbos->animation_buffers[0] == NULL && fbos->in_place_source == NULL),
+	ok &= check(fbos == NULL || (fbos->output.animation_buffers[0] == NULL && fbos->output.in_place_source == NULL),
 		"effect buffers are released without effects");
 	if (plain != NULL) wlr_buffer_unlock(plain);
 	wlr_output_state_finish(&again);

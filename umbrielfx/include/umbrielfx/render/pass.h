@@ -47,6 +47,10 @@ struct fx_gles_render_pass {
 	struct wlr_texture *animation_textures[FX_ANIMATION_DEPTH];
 	bool animation_suppress[FX_ANIMATION_DEPTH];
 	struct wlr_box animation_boxes[FX_ANIMATION_DEPTH];
+	// One past the capture index of the open group capture, or 0. Captures
+	// inside it allocate from the offscreen group set.
+	unsigned group_depth;
+	bool group_used;
 	struct wl_list animation_history_updates;
 	// The target's unfiltered composition was copied into the output buffer's
 	// effect capture; it becomes readable once the pass submits.
@@ -54,7 +58,8 @@ struct fx_gles_render_pass {
 };
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass *pass);
-// box is in parent pixels; translate draws into the capture before end_capture.
+// Opens the pass's single group capture. box is in parent pixels; translate
+// draws into the capture before end_capture.
 bool fx_render_pass_begin_capture(struct fx_gles_render_pass *pass, const struct wlr_box *box);
 void fx_render_pass_end_capture(struct fx_gles_render_pass *pass,
 	const struct wlr_box *box, const pixman_region32_t *clip);

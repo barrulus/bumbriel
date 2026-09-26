@@ -588,13 +588,13 @@ static bool test_sdr10_blur_buffer_format(struct fixture *fixture) {
 		struct fx_offscreen_buffers *fbos = fx_pass->fx_offscreen_buffers;
 		uint32_t expected = fx_get_renderer(fixture->renderer)->exts.half_float_linear
 			? DRM_FORMAT_ABGR16161616F : DRM_FORMAT_ABGR8888;
-		ok = check(fbos != NULL && fbos->effects_buffer != NULL &&
-			fbos->effects_buffer_swapped != NULL,
+		ok = check(fbos != NULL && fbos->output.effects_buffer != NULL &&
+			fbos->output.effects_buffer_swapped != NULL,
 			"10-bit blur allocates both effect buffers") && ok;
-		if (fbos != NULL && fbos->effects_buffer != NULL &&
-				fbos->effects_buffer_swapped != NULL) {
-			ok = check(fbos->effects_buffer->drm_format == expected &&
-				fbos->effects_buffer_swapped->drm_format == expected,
+		if (fbos != NULL && fbos->output.effects_buffer != NULL &&
+				fbos->output.effects_buffer_swapped != NULL) {
+			ok = check(fbos->output.effects_buffer->drm_format == expected &&
+				fbos->output.effects_buffer_swapped->drm_format == expected,
 				"untransformed 10-bit blur uses the expected effect format") && ok;
 		}
 	}

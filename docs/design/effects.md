@@ -160,8 +160,12 @@ When its drawn bounds cross an output edge, a group-sized capture retains the
 off-output input before the drag slot deforms it. A border outside the monitor
 can bend back onto it; only the finished group is clipped to output damage.
 A physical-pixel translation preserves fractional rounding and rotation.
-Enclosing backdrop layers use the same translation. Capture dimensions round
-up to 128-pixel blocks to reuse buffers as the spring's margin changes.
+Enclosing backdrop layers use the same translation. The group capture and
+everything nested in it allocate from a separate offscreen set
+(`fx_offscreen_buffers.group`), so output-sized captures elsewhere in the frame
+never resize them; a pass without a group capture drops that set. Capture
+dimensions round up to 128-pixel blocks to reuse buffers as the spring's
+margin changes.
 `drag/physics_edges` covers all four edges and nested effects on a
 rotated, fractionally scaled output.
 
