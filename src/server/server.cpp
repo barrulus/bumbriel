@@ -556,7 +556,7 @@ namespace umbriel {
     wl_signal_add(&m_xdgActivation->events.request_activate, &m_requestActivate);
 
     m_cursor = std::make_unique<Cursor>(*this);
-    // Added after the cursor attaches to the layout, so wlr_cursor has clamped the pointer when this listener runs.
+    // Registered after the cursor attaches to the layout: wlr_cursor's own listener clamps the pointer first.
     m_outputLayoutChange.notify = onOutputLayoutChange;
     wl_signal_add(&m_outputLayout->events.change, &m_outputLayoutChange);
     m_seat = std::make_unique<Seat>(*this);
