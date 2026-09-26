@@ -495,7 +495,7 @@ static void light_blur(struct fx_effect_light_cache* cache, int source, int targ
   // The Kawase shaders expect the level ratio in the UV scale.
   const struct wlr_fbox uv = {.width = down ? 0.5 : 2, .height = down ? 0.5 : 2};
   set_tex_matrix(shader->tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &uv);
-  render(&box, NULL, shader->pos);
+  render(&box, NULL, shader->pos_attrib);
 }
 ```
 (Confirm the `blur_shader` member names against `internal/render/fx_renderer/shaders.h`; `render_blur_segments` at `fx_pass.c:1859` shows how they are set today.)
@@ -1005,30 +1005,8 @@ namespace umbriel {
     return preset != nullptr && preset->kind == EffectKind::Border && !preset->inert() ? preset->padding : 0;
   }
 
-  namespace {
-    // Whether any of the node's leaves is visible inside `box` (layout coordinates). The scene keeps a leaf's
-    // `visible` region empty when it is disabled, clipped, off-workspace, or fully occluded.
-    bool nodeVisibleOn(const wlr_scene_node* node, const wlr_box& box) {
-      if (node == nullptr || !node->enabled) {
-        return false;
-      }
-      if (node->type != WLR_SCENE_NODE_TREE) {
-        pixman_region32_t onOutput;
-        pixman_region32_init(&onOutput);
-        pixman_region32_intersect_rect(&onOutput, &node->visible, box.x, box.y, box.width, box.height);
-        const bool visible = pixman_region32_not_empty(&onOutput);
-        pixman_region32_fini(&onOutput);
-        return visible;
-      }
-      const wlr_scene_node* child = nullptr;
-      wl_list_for_each(child, &wlr_scene_tree_from_node(const_cast<wlr_scene_node*>(node))->children, link) {
-        if (nodeVisibleOn(child, box)) {
-          return true;
-        }
-      }
-      return false;
-    }
-  } // namespace
+  // Visibility comes from umbrielfx: `wlr_scene_node_visible_in_box(node, &box)` (public `render/effect.h`) intersects
+  // the leaves' renderer-side `visible` regions with `box`; `wlr_scene_node::visible` is private outside umbrielfx.
 
   void ViewEffects::track(const void* owner) {
     if (std::ranges::find(m_owners, owner) == m_owners.end()) {
@@ -1084,7 +1062,7 @@ namespace umbriel {
           input.border,
           {
               .output = input.output,
-              .visible = nodeVisibleOn(input.border, input.outputBox),
+              .visible = wlr_scene_node_visible_in_box(input.border, &input.outputBox),
               .readsTime = fx_effect_shader_reads(shader, "umbriel_time"),
               .advancing = preset->animated && preset->speed > 0.0F && input.clockAdvancing,
           }
@@ -1251,8 +1229,9 @@ git add -A && GIT_AUTHOR_NAME=barrulus GIT_AUTHOR_EMAIL=b@rry.im GIT_COMMITTER_N
 - Test: `tests/unit/output_frame_schedule.cpp` (pure delay math)
 
 **Interfaces:**
-- Produces (`src/output/frame_schedule.h`): `[[nodiscard]] inline uint64_t effectFrameDelayMs(int maxFps, uint64_t nowMsec, uint64_t lastEffectFrameMsec)` — 0 when `maxFps == 0` (follow refresh); otherwise `max(1, 1000/maxFps - (now - last))`.
+- Produces (`src/output/frame_schedule.h`): `[[nodiscard]] inline uint64_t effectFrameDelayMs(int maxFps, uint64_t nowMsec, uint64_t lastEffectFrameMsec)` — 0 when `maxFps == 0` (follow refresh); otherwise `max(1, ceil(1000/maxFps) - (now - last))` (the interval rounds up so the cap is never exceeded).
 - Produces (`Output`): `void scheduleEffectFrame();` (public), private `static int onEffectFrameTimer(void*)`, `void armEffectFrame(uint64_t nowMsec)`, `wl_event_source* m_effectFrameTimer = nullptr; uint64_t m_lastEffectFrameMsec = 0; bool m_effectFrameDue = false; uint64_t m_effectFrames = 0;`, `[[nodiscard]] uint64_t effectFrames() const`, `[[nodiscard]] unsigned effectEligible() const`.
+- Produces (`Output`): a per-output effect time, stamped from the animation clock only when a due effect frame is handled (before the tick); `ViewEffects::apply` reads that stamp for the instance's output, so between due frames the pushed parameters are unchanged and nothing damages — this is what makes `max_fps` cap rendering rather than tag frames.
 - Produces (IPC, `UMBRIEL_TEST_IPC`): `effect-frames` → `{"ok":{"outputs":[{"name":"HEADLESS-1","effect_frames":N,"eligible":K}]}}`.
 
 - [ ] **Step 1: Write the failing unit test**
