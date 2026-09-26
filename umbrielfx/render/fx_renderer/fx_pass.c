@@ -71,21 +71,36 @@ bool fx_render_pass_init_offscreen_buffers(struct wlr_render_pass* render_pass, 
   return true;
 }
 
+// Returns the DRM format that offscreen effect buffers should use for the
+// current pass.
+static uint32_t offscreen_buffer_format(const struct fx_gles_render_pass* pass, bool alpha) {
+  struct fx_renderer* renderer = pass->buffer->renderer;
+  const bool ten_bit_output = pass->output_buffer != NULL
+      && (pass->output_buffer->drm_format == DRM_FORMAT_XRGB2101010
+          || pass->output_buffer->drm_format == DRM_FORMAT_XBGR2101010);
+
+  const bool fp16_renderable = renderer->wlr_renderer.features.output_color_transform;
+  const bool sdr10_fp16 = ten_bit_output && fp16_renderable && renderer->exts.half_float_linear;
+
+  const bool use_fp16 = pass->has_color_transform || sdr10_fp16;
+  if (use_fp16) {
+    return DRM_FORMAT_ABGR16161616F;
+  }
+
+  return alpha ? DRM_FORMAT_ABGR8888 : DRM_FORMAT_XBGR8888;
+}
+
 // Allocates the offscreen buffer in *slot on first use, matching the pass
-// target's size and its FP16 format under a color transform. Rebinds the pass
-// target. Returns NULL when the buffer could not be allocated.
+// target's size and the format returned by offscreen_buffer_format. Rebinds
+// the pass target on return. Returns NULL when the buffer could not be
+// allocated.
 static struct fx_framebuffer*
 ensure_offscreen_buffer(struct fx_gles_render_pass* pass, struct fx_framebuffer** slot, bool alpha) {
   struct fx_offscreen_buffers* fbos = pass->fx_offscreen_buffers;
   if (fbos == NULL) {
     return NULL;
   }
-  uint32_t format;
-  if (pass->has_color_transform) {
-    format = DRM_FORMAT_ABGR16161616F;
-  } else {
-    format = alpha ? DRM_FORMAT_ABGR8888 : DRM_FORMAT_XBGR8888;
-  }
+  const uint32_t format = offscreen_buffer_format(pass, alpha);
   bool failed = false;
   fx_framebuffer_get_or_create_custom(
       pass->buffer->renderer, fbos->allocator, pass->buffer->buffer->width, pass->buffer->buffer->height, format, slot,
@@ -632,7 +647,7 @@ static void draw_animation_texture(
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture->tex);
   const GLint filter =
-      pass->has_color_transform && !pass->buffer->renderer->exts.OES_texture_half_float_linear ? GL_NEAREST : GL_LINEAR;
+      pass->has_color_transform && !pass->buffer->renderer->exts.half_float_linear ? GL_NEAREST : GL_LINEAR;
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
   glUniform1i(shader->tex, 0);
@@ -719,7 +734,7 @@ void fx_render_pass_end_animation_with_history(
   struct fx_animation_output_history* output_history = NULL;
   struct wlr_texture* previous_texture = NULL;
   struct wlr_box previous_box = {0};
-  const uint32_t format = pass->has_color_transform ? DRM_FORMAT_ABGR16161616F : DRM_FORMAT_ABGR8888;
+  const uint32_t format = offscreen_buffer_format(pass, true);
   if (shader->previous_tex >= 0 && history != NULL && output != NULL) {
     output_history = animation_history_get_output(history, output, renderer, update_history);
     if (output_history != NULL && update_history && !animation_history_matches(output_history, format, transform)) {
@@ -943,7 +958,7 @@ bool fx_render_pass_end_animation_shadow(
   glUseProgram(vertical->program);
   glUniform1i(
       glGetUniformLocation(vertical->program, "shadow_nearest"),
-      pass->has_color_transform && !renderer->exts.OES_texture_half_float_linear
+      pass->has_color_transform && !renderer->exts.half_float_linear
   );
   glUniform2f(glGetUniformLocation(vertical->program, "shadow_step"), 0, softness / (8.0f * full.height));
   glUniform2f(glGetUniformLocation(vertical->program, "shadow_offset"), offset_x / full.width, offset_y / full.height);
@@ -2141,7 +2156,8 @@ get_main_buffer_blur(struct fx_gles_render_pass* pass, struct fx_render_blur_pas
 static bool optimized_buffer_ready(const struct fx_gles_render_pass* pass, const struct fx_framebuffer* buffer) {
   return buffer != NULL
       && buffer->buffer->width == pass->buffer->buffer->width
-      && buffer->buffer->height == pass->buffer->buffer->height;
+      && buffer->buffer->height == pass->buffer->buffer->height
+      && buffer->drm_format == offscreen_buffer_format(pass, false);
 }
 
 void fx_render_pass_add_blur(struct fx_gles_render_pass* pass, struct fx_render_blur_pass_options* fx_options) {

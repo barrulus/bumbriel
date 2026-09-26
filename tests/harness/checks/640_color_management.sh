@@ -629,3 +629,156 @@ if ! jq -e '
 fi
 
 echo "HDR diagnostics, Wine scRGB, automatic and fullscreen transitions, and focused window overrides verified"
+
+kill -TERM "$CLIENT_PID"
+wait "$CLIENT_PID" 2>/dev/null || true
+CLIENT_PID=
+
+# Exercise SDR render-format transitions with a live window and effects. The
+# 10-bit and returning 8-bit frames must match the initial 8-bit frame while
+# the configured backdrop stays correctly encoded in every capture.
+FX_CONFIG='
+[colors]
+backdrop = "#1e1e2eff"
+
+[appearance]
+corner_radius = 32
+
+[appearance.blur]
+enabled = true
+optimized = true
+passes = 2
+radius = 8
+noise = 0.0
+brightness = 1.0
+contrast = 1.0
+saturation = 1.0
+
+[[window_rule]]
+blur = true'
+SDR10_CONFIG='
+[output.HEADLESS-1]
+bit_depth = 10'
+SDR10_ACTIVE='
+  .outputs[0].bit_depth == 10
+  and .outputs[0].bit_depth_fallback_reason == ""
+  and .outputs[0].bit_depth_active == true
+  and (.outputs[0].render_format == "XR30" or .outputs[0].render_format == "XB30")'
+
+write_color_config() {
+  printf '%s\n%s\n' "$BASELINE" "${1:-}" > "$UMBRIEL_CONFIG"
+  "$UMBRIEL" msg config-reload > /dev/null
+}
+
+expect_color_state() {
+  local label=$1 filter=$2
+  local state
+  state=$("$UMBRIEL" color --json)
+  if ! jq -e "$filter" <<< "$state" > /dev/null; then
+    echo "$label: unexpected color state: $state"
+    exit 1
+  fi
+}
+
+expect_rgb_near() {
+  local label=$1 tolerance=$4
+  local -a actual expected
+  read -ra actual <<< "$2"
+  read -ra expected <<< "$3"
+  local i
+  for i in 0 1 2; do
+    if (( ${actual[i]} - ${expected[i]} > tolerance || ${expected[i]} - ${actual[i]} > tolerance )); then
+      echo "$label: got rgb $2, expected $3 (tolerance $tolerance)"
+      exit 1
+    fi
+  done
+}
+
+expect_rendered() {
+  local label=$1
+  local screenshot="$UMBRIEL_RUNTIME_DIR/sdr10-$label.png"
+  local lit backdrop
+  "$UMBRIEL" settle
+  grim "$screenshot"
+  lit=$("$UMBRIEL_PIXEL_PROBE" "$screenshot" count 'r > 0 || g > 0 || b > 0')
+  if (( lit == 0 )); then
+    echo "$label: screenshot is all-black"
+    exit 1
+  fi
+  backdrop=$("$UMBRIEL_PIXEL_PROBE" "$screenshot" pixel 2 2)
+  expect_rgb_near "$label backdrop at 2,2" "$backdrop" "30 30 46" 2
+  FRAME_MEAN=$("$UMBRIEL_PIXEL_PROBE" "$screenshot" mean)
+  echo "$label: frame rendered with blur/corner_radius active (backdrop=${backdrop}, mean=${FRAME_MEAN})"
+}
+
+write_color_config "$FX_CONFIG"
+foot --config=/dev/null sh -c 'while :; do sleep 1; done' > /dev/null 2>&1 &
+CLIENT_PID=$!
+for _ in $(seq 60); do
+  [[ $("$UMBRIEL" windows --json | jq 'length') -ge 1 ]] && break
+  sleep 0.1
+done
+if [[ $("$UMBRIEL" windows --json | jq 'length') -lt 1 ]]; then
+  echo "SDR10: foot window never mapped"
+  exit 1
+fi
+
+expect_rendered sdr8
+SDR8_MEAN=$FRAME_MEAN
+write_color_config "$FX_CONFIG"$'\n'"$SDR10_CONFIG"
+expect_rendered sdr10
+expect_rgb_near "sdr10 frame mean against sdr8" "$FRAME_MEAN" "$SDR8_MEAN" 2
+write_color_config "$FX_CONFIG"
+expect_rendered sdr8-return
+expect_rgb_near "sdr8-return frame mean against sdr8" "$FRAME_MEAN" "$SDR8_MEAN" 2
+
+write_color_config "$SDR10_CONFIG"
+expect_color_state sdr8-to-sdr10 "$SDR10_ACTIVE"
+if ! grep -F '10-bit SDR: active' <<< "$("$UMBRIEL" color)" > /dev/null; then
+  echo "sdr8-to-sdr10: missing active status in human color output"
+  exit 1
+fi
+
+# Re-enabling the output must re-select the 10-bit format, not just retain the
+# configured value while the output is powered off.
+"$UMBRIEL" msg dpms-off > /dev/null
+expect_color_state dpms-off '
+  .outputs[0].bit_depth == 10
+  and .outputs[0].bit_depth_active == false'
+"$UMBRIEL" msg dpms-on > /dev/null
+"$UMBRIEL" settle
+expect_color_state dpms-on "$SDR10_ACTIVE"
+echo "dpms-cycle: XR30/XB30 re-selected after DPMS off/on"
+
+write_color_config $'\n[output.HEADLESS-1]\nhdr = "on"'
+expect_color_state hdr-to-sdr10-setup '
+  .outputs[0].hdr_requested == true
+  and .outputs[0].hdr_active == false
+  and (.outputs[0].fallback_reason | length) > 0
+  and .outputs[0].render_format == "XR24"'
+
+write_color_config "$SDR10_CONFIG"
+expect_color_state hdr-to-sdr10 "$SDR10_ACTIVE"'
+  and .outputs[0].hdr_requested == false
+  and .outputs[0].hdr_active == false
+  and .outputs[0].fallback_reason == ""
+  and .outputs[0].transfer_function == "none"
+  and .outputs[0].primaries == "none"'
+
+write_color_config "$SDR10_CONFIG"$'\nhdr = "on"'
+expect_color_state hdr-unavailable-with-sdr10 "$SDR10_ACTIVE"'
+  and .outputs[0].hdr_requested == true
+  and .outputs[0].hdr_active == false
+  and (.outputs[0].fallback_reason | length) > 0'
+if ! grep -F '10-bit SDR: active' <<< "$("$UMBRIEL" color)" > /dev/null; then
+  echo "hdr-unavailable-with-sdr10: missing active status in human color output"
+  exit 1
+fi
+
+write_color_config
+expect_color_state sdr10-to-sdr8 '
+  .outputs[0].bit_depth == 8
+  and .outputs[0].bit_depth_fallback_reason == ""
+  and .outputs[0].bit_depth_active == false
+  and .outputs[0].render_format == "XR24"'
+echo "10-bit SDR rendering, HDR fallback, DPMS re-selection and SDR8 return verified"
