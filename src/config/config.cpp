@@ -1641,6 +1641,12 @@ namespace umbriel {
       });
     }
 
+    void readScreenCast(Section& root, Config& loaded) {
+      root.sub("screencast", [&](Section& s) {
+        s.boolean("disable_dynamic_confirmation", loaded.screenCast.disableDynamicConfirmation);
+      });
+    }
+
     void readGeneral(Section& root, Config& loaded) {
       root.sub("general", [&](Section& s) {
         if (const toml::node* node = s.take("mod_key")) {
@@ -2828,6 +2834,7 @@ namespace umbriel {
           readEnvironment(root, loaded);
           readEvents(root, loaded);
           readWorkspaceSettings(root, loaded);
+          readScreenCast(root, loaded);
           readInput(root, loaded);
           readOutputs(root, loaded, effectReferences);
           readKeybinds(root, loaded);

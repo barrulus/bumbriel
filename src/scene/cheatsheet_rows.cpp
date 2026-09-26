@@ -257,6 +257,8 @@ namespace {
     switch (group) {
     case Group::Apps:
       return "Apps";
+    case Group::Screencasting:
+      return "Screencasting";
     case Group::Focus:
       return "Focus";
     case Group::MoveSize:
@@ -281,6 +283,13 @@ namespace {
     switch (action) {
     case A::Spawn:
       return Group::Apps;
+    case A::ScreenCastClear:
+    case A::ScreenCastSetOutput:
+    case A::ScreenCastSetWindow:
+    case A::ScreenCastFollowWindow:
+    case A::ScreenCastFollowOutput:
+    case A::ScreenCastFollowStop:
+      return Group::Screencasting;
     case A::WindowFocusLeft:
     case A::WindowFocusRight:
     case A::WindowFocusOrOutputLeft:
@@ -496,8 +505,8 @@ namespace umbriel {
 
   std::span<const Group> fixedGroupOrder() {
     static constexpr Group kFixedGroups[] = {
-        Group::Apps,       Group::Focus,      Group::MoveSize, Group::Windows,
-        Group::Scratchpad, Group::Workspaces, Group::Overview, Group::System,
+        Group::Apps,       Group::Screencasting, Group::Focus,    Group::MoveSize, Group::Windows,
+        Group::Scratchpad, Group::Workspaces,    Group::Overview, Group::System,
     };
     return kFixedGroups;
   }

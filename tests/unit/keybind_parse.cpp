@@ -543,6 +543,12 @@ UMBRIEL_TEST(parsesOptionalOutputActions) {
   CHECK(parseAction("dpms-on:eDP-1", bind));
   CHECK_EQ(outputOf(bind), std::string{"eDP-1"});
 
+  CHECK(parseAction("screencast-set-output", bind));
+  CHECK(bind.action == KeybindAction::ScreenCastSetOutput);
+  CHECK(outputOf(bind).empty());
+  CHECK(parseAction("screencast-set-output:DP-1", bind));
+  CHECK_EQ(outputOf(bind), std::string{"DP-1"});
+
   CHECK(parseAction("output-disable:eDP-1", bind));
   CHECK(bind.action == KeybindAction::OutputDisable);
   CHECK_EQ(outputOf(bind), std::string{"eDP-1"});
@@ -593,6 +599,22 @@ UMBRIEL_TEST(parsesOptionalScratchpadActions) {
 
 UMBRIEL_TEST(parsesWindowIdActions) {
   Keybind bind;
+  CHECK(parseAction("screencast-clear", bind));
+  CHECK(bind.action == KeybindAction::ScreenCastClear);
+  CHECK(parseAction("screencast-follow-window", bind));
+  CHECK(bind.action == KeybindAction::ScreenCastFollowWindow);
+  CHECK(parseAction("screencast-follow-output", bind));
+  CHECK(bind.action == KeybindAction::ScreenCastFollowOutput);
+  CHECK(parseAction("screencast-follow-stop", bind));
+  CHECK(bind.action == KeybindAction::ScreenCastFollowStop);
+  CHECK(parseAction("screencast-set-window", bind));
+  CHECK(bind.action == KeybindAction::ScreenCastSetWindow);
+  CHECK_EQ(umbriel::payloadIf<umbriel::WindowIdArg>(bind)->id, std::string{});
+  CHECK(parseAction("screencast-set-window:abc123", bind));
+  CHECK_EQ(umbriel::payloadIf<umbriel::WindowIdArg>(bind)->id, std::string{"abc123"});
+  CHECK(!parseAction("dynamic-cast-window", bind));
+  CHECK(!parseAction("dynamic-cast-output", bind));
+  CHECK(!parseAction("dynamic-cast-clear", bind));
   CHECK(parseAction("window-close", bind));
   CHECK_EQ(umbriel::payloadIf<umbriel::WindowIdArg>(bind)->id, std::string{});
   CHECK(parseAction("window-close:abc123", bind));

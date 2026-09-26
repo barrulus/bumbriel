@@ -39,6 +39,16 @@ files = []
 # lid_open = "umbriel msg output-enable:eDP-1"
 
 # ==============================================================================
+# Screencast
+
+# By default, the first target-changing action during an active share asks for
+# confirmation. Disable that protection only if immediate keybind changes are
+# preferred.
+# https://docs.noctalia.dev/umbriel/configuration/#screencast
+# [screencast]
+# disable_dynamic_confirmation = true
+
+# ==============================================================================
 # Outputs
 
 # Outputs are machine-specific. Run `umbriel outputs` to find names and modes.

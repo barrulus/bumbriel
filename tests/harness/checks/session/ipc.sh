@@ -2,6 +2,9 @@
 # The IPC surface answers and returns well-formed JSON of the documented shape.
 set -euo pipefail
 
+printf '\n[screencast]\ndisable_dynamic_confirmation = true\n' >> "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+
 spawn_client() {
   foot --title="ipc-client" sh -c 'sleep 120' > /dev/null 2>&1 &
   CLIENT_PID=$!
@@ -315,6 +318,53 @@ action("submap:reset")
 expect_submap("outer", "resetting the inner layer")
 action("submap:reset")
 expect_submap(None, "resetting the outer layer")
+sub.close()
+
+# Screencast commands use an edge-triggered serial. Re-selecting the same target
+# must still wake the portal. A fresh compositor starts with a clear command.
+sub = connect()
+sub.sendall(b'{"cmd":"subscribe","events":["screencast"]}\n')
+buf = b""
+
+
+def expect_screencast(kind, serial, reason, field=None, value=None):
+    global buf
+    line, buf = read_one(sub, buf)
+    if line is None:
+        raise SystemExit(f"{reason} delivered no screencast event")
+    event = json.loads(line)
+    data = event.get("data", {})
+    if event.get("event") != "screencast" or data.get("kind") != kind or data.get("serial") != serial:
+        raise SystemExit(f"{reason} delivered the wrong screencast event: {event!r}")
+    if field is not None and data.get(field) != value:
+        raise SystemExit(f"{reason} delivered the wrong screencast target: {event!r}")
+
+
+expect_screencast("clear", 0, "subscribing")
+sub.sendall(b'{"cmd":"screencast-session","active":true}\n')
+line, buf = read_one(sub, buf)
+if line is None or json.loads(line) != {"ok": None}:
+    raise SystemExit(f"activating the screencast session returned an invalid response: {line!r}")
+action("screencast-clear")
+expect_screencast("clear", 1, "clearing an already empty target")
+output_name = initial["data"][0]["output"]
+action(f"screencast-set-output:{output_name}")
+expect_screencast("output", 2, "selecting an output", "output", output_name)
+action(f"screencast-set-output:{output_name}")
+expect_screencast("output", 3, "reselecting an output", "output", output_name)
+window_id = json.loads(
+    subprocess.run([umbriel, "windows", "--json"], check=True, capture_output=True, text=True, timeout=5).stdout
+)[0]["id"]
+action("screencast-set-window")
+expect_screencast("window", 4, "selecting the focused window", "identifier", window_id)
+action("screencast-follow-window")
+expect_screencast("follow_window", 5, "following the focused window")
+action("screencast-follow-output")
+expect_screencast("follow_output", 6, "following the focused output")
+action("screencast-follow-stop")
+expect_screencast("follow_stop", 7, "stopping automatic target changes")
+action("screencast-clear")
+expect_screencast("clear", 8, "clearing the output target")
 sub.close()
 
 # An unknown family is rejected by name, and the client exits instead of waiting on a stream that will never open.
