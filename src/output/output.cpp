@@ -98,7 +98,15 @@ namespace umbriel {
     return rule == nullptr || rule->enabled;
   }
 
-  void Output::scheduleEffectFrame() { wlr_output_schedule_frame(m_output); }
+  void Output::scheduleEffectFrame() {
+    if (m_inFrame) {
+      return; // handleFrame arms the follow-up itself
+    }
+    m_effectFrameDue = true;
+    wlr_output_schedule_frame(m_output);
+  }
+
+  unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
 
   wlr_box Output::layoutBox() const {
     wlr_box box{.x = m_arrangedLayoutX, .y = m_arrangedLayoutY, .width = 0, .height = 0};
@@ -684,6 +692,10 @@ namespace umbriel {
       wl_event_source_remove(m_frameRetryTimer);
       m_frameRetryTimer = nullptr;
     }
+    if (m_effectFrameTimer != nullptr) {
+      wl_event_source_remove(m_effectFrameTimer);
+      m_effectFrameTimer = nullptr;
+    }
     if (m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, false);
       m_animationRenderLocked = false;
@@ -918,6 +930,27 @@ namespace umbriel {
     }
   }
 
+  int Output::onEffectFrameTimer(void* data) {
+    auto* output = static_cast<Output*>(data);
+    output->m_effectFrameDue = true;
+    wlr_output_schedule_frame(output->m_output);
+    return 0;
+  }
+
+  void Output::armEffectFrame(uint64_t nowMsec) {
+    const uint64_t delay = effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec);
+    if (delay == 0) {
+      m_effectFrameDue = true;
+      wlr_output_schedule_frame(m_output);
+      return;
+    }
+    if (m_effectFrameTimer == nullptr) {
+      m_effectFrameTimer =
+          wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onEffectFrameTimer, this);
+    }
+    wl_event_source_timer_update(m_effectFrameTimer, static_cast<int>(delay));
+  }
+
   void Output::applyMode(int width, int height) {
     if (width <= 0 || height <= 0) {
       return;
@@ -1005,6 +1038,7 @@ namespace umbriel {
     }
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
+    const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
     m_server->tickAnimations(m_server->animationClockMsec());
 
     // Surface commits reset scene-buffer opacity to the protocol alpha. Repair
@@ -1015,6 +1049,11 @@ namespace umbriel {
     // the first workspace-switch frame waiting on the old client, so the compositor never gets a vblank to advance the
     // slide. Keep animated outputs on the render path until their final composed frame has settled.
     const bool animationsActive = m_server->animationsActiveFor(this);
+    const bool effectFrame = m_effectFrameDue;
+    m_effectFrameDue = false;
+    // Persistent effects reading time keep an output drawing on their own timer, never through the animation
+    // registry: settle, tearing, and the render lock keep their meanings.
+    const bool effectsEligible = !m_server->sessionLocked() && effectEligible() > 0;
     if (animationsActive != m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, animationsActive);
       m_animationRenderLocked = animationsActive;
@@ -1091,6 +1130,10 @@ namespace umbriel {
     }
     if (sceneChanged || m_gammaDirty) {
       m_inFrame = true;
+      if (effectFrame) {
+        ++m_effectFrames;
+        m_lastEffectFrameMsec = nowMsec;
+      }
       UMBRIEL_ZONE("Output::render");
 
       wlr_output_state state{};
@@ -1207,6 +1250,12 @@ namespace umbriel {
       break;
     case OutputFrameFollowup::None:
       break;
+    }
+
+    if (effectsEligible && !animationsActive && !commitFailed) {
+      armEffectFrame(nowMsec);
+    } else if (m_effectFrameTimer != nullptr) {
+      wl_event_source_timer_update(m_effectFrameTimer, 0);
     }
 
     if (Ipc* ipc = m_server->ipc()) {

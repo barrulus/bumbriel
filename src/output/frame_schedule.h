@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+
 extern "C" {
 #include <wlr/backend/session.h>
 }
@@ -25,6 +28,17 @@ namespace umbriel {
       return OutputFrameFollowup::RetryDelayed;
     }
     return animationsActive ? OutputFrameFollowup::Schedule : OutputFrameFollowup::None;
+  }
+
+  // Delay before the next effect-only frame. 0 follows the output's refresh (schedule immediately); otherwise the
+  // interval for max_fps minus the time already elapsed, at least 1 ms so a late timer never spins.
+  [[nodiscard]] inline uint64_t effectFrameDelayMs(int maxFps, uint64_t nowMsec, uint64_t lastEffectFrameMsec) {
+    if (maxFps <= 0) {
+      return 0;
+    }
+    const uint64_t interval = 1000 / static_cast<uint64_t>(maxFps);
+    const uint64_t elapsed = nowMsec > lastEffectFrameMsec ? nowMsec - lastEffectFrameMsec : 0;
+    return elapsed >= interval ? 1 : std::max<uint64_t>(1, interval - elapsed);
   }
 
   // An asynchronous page flip can pass the backend test and still fail at commit time. The generic frame retry must

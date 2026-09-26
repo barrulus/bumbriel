@@ -66,6 +66,10 @@ namespace umbriel {
     void markDirty(Dirty what);
     // Asks for a frame on behalf of persistent effects.
     void scheduleEffectFrame();
+    // Frames drawn on behalf of persistent effects.
+    [[nodiscard]] uint64_t effectFrames() const { return m_effectFrames; }
+    // Effect instances on this output that need frames of their own.
+    [[nodiscard]] unsigned effectEligible() const;
     void onGammaChanged(wlr_gamma_control_v1* control);
     void applyOutputState();
     // Adopt a successfully committed wlr-output-management state in two
@@ -125,6 +129,7 @@ namespace umbriel {
     static void onPresent(wl_listener* listener, void* data);
     static void onDestroy(wl_listener* listener, void* data);
     static int onFrameRetryTimer(void* data);
+    static int onEffectFrameTimer(void* data);
 
     void handleFrame();
     void handleRequestState(void* data);
@@ -139,6 +144,7 @@ namespace umbriel {
     void updateSceneSdrWhite();
     void rejectGammaControl(wlr_gamma_control_v1* control);
     void armFrameRetry();
+    void armEffectFrame(uint64_t nowMsec);
     wlr_output_layout_output* addToLayout();
     void arrangeLayer(wlr_scene_tree* tree, const wlr_box* fullArea, wlr_box* usableArea, bool exclusive);
     void updateOptimizedBlur(const wlr_box& fullArea);
@@ -173,6 +179,10 @@ namespace umbriel {
     bool m_trackingPresentation = false;
     bool m_appliedConfiguredScale = false;
     wl_event_source* m_frameRetryTimer = nullptr;
+    wl_event_source* m_effectFrameTimer = nullptr;
+    uint64_t m_lastEffectFrameMsec = 0;
+    bool m_effectFrameDue = false;
+    uint64_t m_effectFrames = 0;
     View* m_autoHdrOwner = nullptr;
     std::string m_hdrFallbackReason;
     std::string m_tearingFallbackReason;

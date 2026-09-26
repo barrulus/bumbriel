@@ -1304,6 +1304,7 @@ namespace umbriel {
       }
 
       m_sessionLocked = true;
+      m_effects.setSuspended(true);
       cancelModifierTap();
       m_overview->forceClose();
       if (m_cheatsheet != nullptr) {
@@ -1325,6 +1326,12 @@ namespace umbriel {
 
   void Server::unlockSession() {
     m_sessionLocked = false;
+    m_effects.setSuspended(false);
+    for (const auto& output : m_outputs) {
+      if (output->effectEligible() > 0) {
+        output->scheduleEffectFrame();
+      }
+    }
     updateIdleInhibit();
     setLockBlankEnabled(false);
     // The cursor need not sit on the output that had focus, so restore the

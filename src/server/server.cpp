@@ -1331,6 +1331,10 @@ namespace umbriel {
     if (!m_frozenAnimationClockMsec) {
       m_frozenAnimationClockMsec = animationClockMsec();
     }
+    // Views re-sync their effects' clockAdvancing on the next frame.
+    for (const auto& output : m_outputs) {
+      wlr_output_schedule_frame(output->wlr());
+    }
   }
 
   bool Server::advanceAnimationClock(uint64_t ms) {
@@ -1359,6 +1363,9 @@ namespace umbriel {
       m_animationClockOffsetMsec =
           static_cast<int64_t>(*m_frozenAnimationClockMsec) - static_cast<int64_t>(monotonicClockMsec());
       m_frozenAnimationClockMsec.reset();
+    }
+    for (const auto& output : m_outputs) {
+      wlr_output_schedule_frame(output->wlr());
     }
   }
 

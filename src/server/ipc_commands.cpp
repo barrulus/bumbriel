@@ -645,6 +645,18 @@ namespace umbriel {
     server.emitRendererLostForTest();
     return nlohmann::json{{"ok", nullptr}};
   }
+
+  nlohmann::json IpcCommands::effectFrames(Server& server, std::string_view /*arg*/) {
+    nlohmann::json outputs = nlohmann::json::array();
+    for (const auto& output : server.outputs()) {
+      outputs.push_back({
+          {"name", output->wlr()->name},
+          {"effect_frames", output->effectFrames()},
+          {"eligible", output->effectEligible()},
+      });
+    }
+    return nlohmann::json{{"ok", {{"outputs", std::move(outputs)}}}};
+  }
 #endif
 
   static constexpr IpcCommandSpec kIpcCommands[] = {
@@ -669,6 +681,8 @@ namespace umbriel {
       {"clock-resume", "", "let animation time follow the monotonic clock again, from where it stopped", false,
        &IpcCommands::clockResume, nullptr},
       {"renderer-recover", "", "emit renderer loss and exercise recovery", false, &IpcCommands::rendererRecover,
+       nullptr},
+      {"effect-frames", "", "count frames drawn for persistent effects per output", false, &IpcCommands::effectFrames,
        nullptr},
 #endif
   };

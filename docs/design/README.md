@@ -22,11 +22,12 @@ boundaries, or regression-sensitive behavior.
 ## Harness-only IPC
 
 `settle`, `clock-freeze`, `clock-advance`, `clock-resume`, `output-create`,
-`output-destroy`, and `renderer-recover` exist for `tests/harness` and are
-compiled only with the `test_ipc` option (auto: debug builds). `settle` replies
-once no animation is running, no workspace has an arrange pending, every mapped
-window has acknowledged and committed its latest configure, and every output
-has drawn a frame since the request; it errors after 30 seconds.
+`output-destroy`, `renderer-recover`, and `effect-frames` exist for
+`tests/harness` and are compiled only with the `test_ipc` option (auto: debug
+builds). `settle` replies once no animation is running, no workspace has an
+arrange pending, every mapped window has acknowledged and committed its latest
+configure, and every output has drawn a frame since the request; it errors
+after 30 seconds.
 
 Every animation ticks from `Server::animationClockMsec`. `clock-freeze` stops it,
 `clock-advance <ms>` moves it forward and replies once every output has drawn a
@@ -38,7 +39,9 @@ animation is still running. `output-create` and `output-destroy` work only on
 the headless backend. `renderer-recover` emits two consecutive notifications
 through the renderer's real mutable lost signal. The recovery check uses them
 to assert that one deferred renderer replacement completes and draws a new
-frame.
+frame. `effect-frames` reports, per output, how many frames were drawn for
+persistent effects and how many effect instances currently need frames of
+their own.
 
 ## Pointer drag completion
 
