@@ -68,6 +68,8 @@ namespace umbriel {
     void scheduleEffectFrame();
     // Pushes the effect capture policy to this output's scene.
     void applyOutputEffects();
+    // Captures are released only by a built frame: asks for one when the last frame kept effects out of a capture.
+    void scheduleEffectCaptureRelease();
     // Drawn frames that advanced persistent effects' time.
     [[nodiscard]] uint64_t effectFrames() const { return m_effectFrames; }
     // Seconds persistent effects on this output draw at. Advances on effect frames, follows the clock while nothing
@@ -135,7 +137,6 @@ namespace umbriel {
     static void onDestroy(wl_listener* listener, void* data);
     static int onFrameRetryTimer(void* data);
     static int onEffectFrameTimer(void* data);
-    static int onEffectCaptureTimer(void* data);
 
     void handleFrame();
     void handleRequestState(void* data);
@@ -151,12 +152,12 @@ namespace umbriel {
     void rejectGammaControl(wlr_gamma_control_v1* control);
     void armFrameRetry();
     void armEffectFrame(uint64_t nowMsec);
-    // Screencopy and image-copy render locks: the animation lock and export-dmabuf frames do not count.
-    [[nodiscard]] int captureRenderLocks() const;
-    [[nodiscard]] bool effectCapturePending() const;
-    // Captures are released only by a built frame: asks for one once the capture the last frame was built for has
-    // ended, polling while it lasts.
-    void watchEffectCapture();
+    // Render locks other than this output's animation lock.
+    [[nodiscard]] int externalRenderLocks() const;
+    // The screencopy and image-copy share of `externalLocks`: export-dmabuf frames do not count.
+    [[nodiscard]] int captureRenderLocks(int externalLocks) const;
+    // A capture holding `captureLocks` must see frames without in-place effects.
+    [[nodiscard]] bool effectCapturePending(int captureLocks) const;
     void disarmEffectFrame();
     wlr_output_layout_output* addToLayout();
     void arrangeLayer(wlr_scene_tree* tree, const wlr_box* fullArea, wlr_box* usableArea, bool exclusive);
@@ -199,7 +200,6 @@ namespace umbriel {
     bool m_effectFrameArmed = false;
     uint64_t m_effectFrames = 0;
     float m_effectSeconds = 0.0F;
-    wl_event_source* m_effectCaptureTimer = nullptr;
     bool m_effectCaptureBuilt = false; // the last built frame had an effect capture pending
     View* m_autoHdrOwner = nullptr;
     std::string m_hdrFallbackReason;

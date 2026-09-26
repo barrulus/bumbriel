@@ -533,7 +533,13 @@ namespace umbriel {
     wlr_screencopy_manager_v1_create(m_display);
     m_exportDmabufManager = wlr_export_dmabuf_manager_v1_create(m_display);
     wlr_ext_output_image_capture_source_manager_v1_create(m_display, 1);
-    wlr_ext_image_copy_capture_manager_v1_create(m_display, 1);
+    wlr_ext_image_copy_capture_manager_v1* imageCopyManager =
+        wlr_ext_image_copy_capture_manager_v1_create(m_display, 1);
+    if (imageCopyManager == nullptr) {
+      throw std::runtime_error("failed to create image-copy-capture manager");
+    }
+    m_newImageCopySession.notify = onNewImageCopySession;
+    wl_signal_add(&imageCopyManager->events.new_session, &m_newImageCopySession);
 
     // Create the manager so apply/test listeners stay wired, but leave heads empty (see updateOutputManagerConfig).
     // Advertising a full configuration on bind currently takes down the desktop shell from this flake.
@@ -593,6 +599,7 @@ namespace umbriel {
     wl_list_remove(&m_newVirtualPointer.link);
     wl_list_remove(&m_newIdleInhibitor.link);
     wl_list_remove(&m_newShortcutsInhibitor.link);
+    wl_list_remove(&m_newImageCopySession.link);
     wl_list_remove(&m_newActivationToken.link);
     wl_list_remove(&m_requestActivate.link);
     wl_list_remove(&m_workspaceCommit.link);

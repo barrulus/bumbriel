@@ -1006,6 +1006,28 @@ namespace umbriel {
     kLog.debug("idle inhibitor removed");
   }
 
+  void Server::onNewImageCopySession(wl_listener* listener, void* data) {
+    Server* self;
+    self = wl_container_of(listener, self, m_newImageCopySession);
+    auto* session = static_cast<wlr_ext_image_copy_capture_session_v1*>(data);
+    auto* watch = new ImageCopySessionWatch();
+    watch->server = self;
+    watch->destroy.notify = onImageCopySessionDestroy;
+    wl_signal_add(&session->events.destroy, &watch->destroy);
+  }
+
+  // The session's render lock is released after this signal; the frame it schedules runs from an idle, without it.
+  void Server::onImageCopySessionDestroy(wl_listener* listener, void* /*data*/) {
+    ImageCopySessionWatch* watch;
+    watch = wl_container_of(listener, watch, destroy);
+    Server* server = watch->server;
+    wl_list_remove(&watch->destroy.link);
+    delete watch;
+    for (const auto& output : server->m_outputs) {
+      output->scheduleEffectCaptureRelease();
+    }
+  }
+
   void Server::onNewShortcutsInhibitor(wl_listener* listener, void* data) {
     Server* self;
     self = wl_container_of(listener, self, m_newShortcutsInhibitor);

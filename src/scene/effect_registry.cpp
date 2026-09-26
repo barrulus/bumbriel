@@ -66,6 +66,7 @@ namespace umbriel {
     m_programs.clear();
     m_builtinFade.reset();
     m_persistentReferenced = false;
+    m_inPlaceReferenced = false;
     m_renderer = nullptr;
   }
 
@@ -144,6 +145,9 @@ namespace umbriel {
     }
     m_persistentReferenced = std::ranges::any_of(m_programs, [](const auto& item) {
       return item.second.kind != EffectKind::Animation && item.second.shader != nullptr;
+    });
+    m_inPlaceReferenced = std::ranges::any_of(m_programs, [](const auto& item) {
+      return item.second.kind == EffectKind::Window && item.second.shader != nullptr;
     });
     const bool fadeNeeded = builtinFadeApplies(settings.animation, AnimationEvent::WindowsIn)
         || builtinFadeApplies(settings.animation, AnimationEvent::WindowsOut);

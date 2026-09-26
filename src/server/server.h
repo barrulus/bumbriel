@@ -420,6 +420,8 @@ namespace umbriel {
     static void onIdleInhibitorDestroy(wl_listener* listener, void* data);
     static void onNewShortcutsInhibitor(wl_listener* listener, void* data);
     static void onShortcutsInhibitorDestroy(wl_listener* listener, void* data);
+    static void onNewImageCopySession(wl_listener* listener, void* data);
+    static void onImageCopySessionDestroy(wl_listener* listener, void* data);
     static void onNewActivationToken(wl_listener* listener, void* data);
     static void onActivationTokenDestroy(wl_listener* listener, void* data);
     static void onRequestActivate(wl_listener* listener, void* data);
@@ -520,6 +522,10 @@ namespace umbriel {
     struct ShortcutsInhibitorWatch {
       Server* server = nullptr;
       wlr_keyboard_shortcuts_inhibitor_v1* inhibitor = nullptr;
+      wl_listener destroy{};
+    };
+    struct ImageCopySessionWatch {
+      Server* server = nullptr;
       wl_listener destroy{};
     };
     struct PointerDevice {
@@ -757,6 +763,7 @@ namespace umbriel {
     wl_listener m_newVirtualPointer{};
     wl_listener m_newIdleInhibitor{};
     wl_listener m_newShortcutsInhibitor{};
+    wl_listener m_newImageCopySession{};
     wl_listener m_newActivationToken{};
     wl_listener m_requestActivate{};
     wl_listener m_workspaceCommit{};

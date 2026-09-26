@@ -40,7 +40,6 @@ namespace umbriel {
   namespace {
     constexpr Logger kLog("output");
     constexpr int kFrameRetryDelayMs = 16;
-    constexpr int kEffectCapturePollMs = 250;
 
   } // namespace
 
@@ -115,51 +114,35 @@ namespace umbriel {
   void Output::applyOutputEffects() {
     // Nothing configured: touch nothing (no addon, no scene calls). The registry's counts are zero too.
     const Effects& effects = config().effects;
-    if (effects.presets.empty() && !effects.inCapture && !m_server->effects().active()) {
+    if (effects.presets.empty() && !m_server->effects().active()) {
       return;
     }
     wlr_scene_output_set_effect_capture_policy(m_sceneOutput, effects.inCapture);
   }
 
-  int Output::captureRenderLocks() const {
-    int locks = m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0);
+  void Output::scheduleEffectCaptureRelease() {
+    if (m_effectCaptureBuilt && outputFrameAllowed(m_server->stopping(), m_server->session())) {
+      wlr_output_schedule_frame(m_output);
+    }
+  }
+
+  int Output::externalRenderLocks() const { return m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0); }
+
+  int Output::captureRenderLocks(int externalLocks) const {
     if (wlr_export_dmabuf_manager_v1* manager = m_server->exportDmabufManager()) {
       wlr_export_dmabuf_frame_v1* frame;
       wl_list_for_each(frame, &manager->frames, link) {
         if (frame->output == m_output) {
-          --locks;
+          --externalLocks;
         }
       }
     }
-    return locks;
+    return externalLocks;
   }
 
-  bool Output::effectCapturePending() const {
-    // Close snapshots keep persistent slots after their window's instances leave the ledger.
-    const EffectRegistry& effects = m_server->effects();
-    return (effects.persistentReferenced() || effects.active()) && captureRenderLocks() > 0;
-  }
-
-  void Output::watchEffectCapture() {
-    if (!m_effectCaptureBuilt) {
-      return;
-    }
-    if (!effectCapturePending()) {
-      if (outputFrameAllowed(m_server->stopping(), m_server->session())) {
-        wlr_output_schedule_frame(m_output);
-      }
-      return;
-    }
-    if (m_effectCaptureTimer == nullptr) {
-      m_effectCaptureTimer =
-          wl_event_loop_add_timer(wl_display_get_event_loop(m_server->display()), onEffectCaptureTimer, this);
-    }
-    wl_event_source_timer_update(m_effectCaptureTimer, kEffectCapturePollMs);
-  }
-
-  int Output::onEffectCaptureTimer(void* data) {
-    static_cast<Output*>(data)->watchEffectCapture();
-    return 0;
+  bool Output::effectCapturePending(int captureLocks) const {
+    // Keyed on configuration, not instances: a close snapshot keeps its window slots after its instances leave.
+    return captureLocks > 0 && !config().effects.inCapture && m_server->effects().inPlaceReferenced();
   }
 
   unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
@@ -752,10 +735,6 @@ namespace umbriel {
       wl_event_source_remove(m_effectFrameTimer);
       m_effectFrameTimer = nullptr;
     }
-    if (m_effectCaptureTimer != nullptr) {
-      wl_event_source_remove(m_effectCaptureTimer);
-      m_effectCaptureTimer = nullptr;
-    }
     if (m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, false);
       m_animationRenderLocked = false;
@@ -1163,8 +1142,8 @@ namespace umbriel {
       colorManager->applySurfaceDescriptions();
     }
 
-    const int externalRenderLocks = m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0);
-    const bool captureActive = externalRenderLocks > 0;
+    const int externalLocks = externalRenderLocks();
+    const bool captureActive = externalLocks > 0;
     View* tearingView = tearingCandidate();
     const bool tearingPolicyRequested = tearingEligible(tearingView);
 
@@ -1236,10 +1215,10 @@ namespace umbriel {
       wlr_output_state_init(&state);
 
       bool commitOk = false;
-      const int captureLocks = captureRenderLocks();
+      const int captureLocks = captureRenderLocks(externalLocks);
       wlr_scene_output_state_options sceneOptions{};
       sceneOptions.capture_sdr = hdrActive() && captureLocks > 0;
-      sceneOptions.effect_capture_pending = effectCapturePending();
+      sceneOptions.effect_capture_pending = effectCapturePending(captureLocks);
       m_effectCaptureBuilt = sceneOptions.effect_capture_pending;
       if (wlr_scene_output_build_state(m_sceneOutput, &state, &sceneOptions)) {
         // Hardware gamma only (DRM). Nested Wayland has no gamma LUT; leave that alone.
@@ -1314,7 +1293,10 @@ namespace umbriel {
       commitFailed = !commitOk;
     }
 
-    watchEffectCapture();
+    // Screencopy drops its lock inside the commit; image-copy sessions ask for the release frame when they end.
+    if (m_effectCaptureBuilt && !effectCapturePending(captureRenderLocks(externalRenderLocks()))) {
+      scheduleEffectCaptureRelease();
+    }
 
     // A request_state that arrived mid-commit is applied now that we're out of it.
     if (m_hasDeferredMode) {
