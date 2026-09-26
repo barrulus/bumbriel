@@ -1,5 +1,5 @@
-// A soft pulse travelling around the focused window's ring, tinted by the first
-// palette colour (accent_primary) and fading into the padding.
+// A soft pulse traveling around the focused window's ring, tinted by the first
+// palette color (accent_primary) and fading into the padding.
 vec4 border(vec2 uv) {
     float d = max(umbriel_border_distance(uv), 0.0);
     float ring = umbriel_sample(uv).a;

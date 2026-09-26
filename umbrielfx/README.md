@@ -5,15 +5,15 @@ Umbriel's scene graph and GLES2 renderer, a hard fork of
 
 ## Layout
 
-| Path                    | Contents                                          |
-| ----------------------- | ------------------------------------------------- |
-| `include/umbrielfx/`    | Public API, the only headers the compositor sees   |
-| `internal/`             | Private headers, not on the compositor's include path |
-| `render/`               | EGL setup, color transforms, pixel formats        |
-| `render/fx_renderer/`   | GLES2 renderer, render passes, effect programs, shaders |
-| `types/`                | Scene graph, output helpers, blur and clip state   |
-| `util/`                 | Helpers shared inside the library                  |
-| `tests/`                | Color transform, effect program, scene ABI, and frame pacing regressions |
+| Path                  | Contents                                                                 |
+| --------------------- | ------------------------------------------------------------------------ |
+| `include/umbrielfx/`  | Public API, the only headers the compositor sees                         |
+| `internal/`           | Private headers, not on the compositor's include path                    |
+| `render/`             | EGL setup, color transforms, pixel formats                               |
+| `render/fx_renderer/` | GLES2 renderer, render passes, effect programs, shaders                  |
+| `types/`              | Scene graph, output helpers, blur and clip state                         |
+| `util/`               | Helpers shared inside the library                                        |
+| `tests/`              | Color transform, effect program, scene ABI, and frame pacing regressions |
 
 ## Building
 

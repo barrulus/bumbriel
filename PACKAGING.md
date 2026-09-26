@@ -134,8 +134,8 @@ the compositor package.
 [`examples/config.toml`](examples/config.toml) and serves as the default when
 no user or system configuration exists.
 
-Bundled effect presets. Users include an `effect.toml` and select its name;
-nothing is active until selected.
+Bundled effect presets install under `share/umbriel/effects/`; users include
+an `effect.toml` and select its name, and nothing is active until selected.
 
 The desktop entry must launch `start-umbriel`. The generated launcher and
 `umbriel.service` contain the configured absolute path to the `umbriel` binary.
