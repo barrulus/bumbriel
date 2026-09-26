@@ -247,6 +247,9 @@ Client-requested XDG fullscreen exit is covered by
 Modifier-wheel switching and the resulting keyboard-focus handoff through an
 input-method keyboard grab are covered by
 [`tests/harness/checks/520_input_method_wheel.sh`](../../tests/harness/checks/520_input_method_wheel.sh).
+Modifier release across text-input activation changes, including Fcitx's
+persistent virtual-keyboard mode, is covered by
+[`tests/harness/checks/521_input_method_modifier_release.sh`](../../tests/harness/checks/521_input_method_modifier_release.sh).
 Client-cursor refresh after a short data-device drag is covered by
 [`tests/harness/checks/460_external_drag.sh`](../../tests/harness/checks/460_external_drag.sh).
 Keyboard-focus replay after a logical focus change during a drag is covered by

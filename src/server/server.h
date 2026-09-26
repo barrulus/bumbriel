@@ -310,8 +310,9 @@ namespace umbriel {
     // The bind this press would fire, without running it. Null when nothing
     // matches (locked sessions match nothing, matching handleKeybind).
     [[nodiscard]] const Keybind* matchKeybind(uint32_t keysym, uint32_t rawKeysym, uint32_t modifiers) const;
-    // Combined state across keyboard devices. Media and brightness keys are
-    // commonly exposed by a separate device from the held modifier keys.
+    // Combined state across independent keyboard devices. Media and brightness
+    // keys commonly come from a device separate from held modifiers. An input
+    // method's mirrored keyboard is not independent and is excluded.
     [[nodiscard]] uint32_t keyboardModifiers() const;
     [[nodiscard]] bool keyboardShortcutsInhibited() const;
     bool toggleKeyboardShortcutsInhibit();
