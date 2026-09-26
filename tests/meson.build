@@ -32,6 +32,7 @@ unit_tests = [
   ['shortcut-labels', ['unit/shortcut_labels.cpp'], []],
   ['border-ring', ['unit/border_ring.cpp'], []],
   ['floating', ['unit/floating.cpp'], []],
+  ['drag-physics', ['unit/drag_physics.cpp'], []],
   ['preset-cycle', ['unit/preset_cycle.cpp'], []],
   ['maximize', ['unit/maximize.cpp'], []],
   ['deferred-unfullscreen', ['unit/deferred_unfullscreen.cpp'], []],

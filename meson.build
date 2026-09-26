@@ -561,6 +561,7 @@ pure_sources = files(
   'src/view/border_ring.cpp',
   'src/view/effects_rules.cpp',
   'src/view/floating.cpp',
+  'src/view/drag_physics.cpp',
 )
 
 umbriel_pure_deps = [
