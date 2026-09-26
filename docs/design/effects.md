@@ -348,8 +348,10 @@ With no effect selected and drag physics off:
   at once; `Output::effectCapturePending` is false, so no second composition
   runs. Per pointer motion: one boolean (`cursor.cpp:281`).
 - Drag physics: `Cursor` gates every call on `MoveGrab::physics`, and
-  `View::tickAnimations` and `View::hasActiveAnimations` read two `DragPhysics`
-  booleans per view per tick, with no writes, scene calls, or allocations.
+  `View::tickAnimations`, `View::hasActiveAnimations`,
+  `View::syncAnimationShaders` (`view.cpp:1448`), and `View::animatesOn`
+  (`view.cpp:1626`) read `DragPhysics::active()`/`grabbed()` per view per tick
+  and sync, with no writes, scene calls, or allocations.
 - Scanout, damage, and culling take only the transient branches in the table
   above, as they do for built-in animations. Reload prepares only with the
   `animation` or `effects` flag; renderer recovery prepares the built-in fade.
