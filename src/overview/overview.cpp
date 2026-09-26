@@ -1078,6 +1078,7 @@ namespace umbriel {
     }
 
     int buffersCopied = 0;
+    const bool copySlots = card.view->effects().needsSurface();
     for (const auto& entry : card.surfaces) {
       wlr_scene_buffer* source = entry->buffer;
       if (source == nullptr || source->buffer == nullptr || !source->node.enabled) {
@@ -1105,7 +1106,9 @@ namespace umbriel {
       wlr_scene_buffer_set_color_range(copy, source->color_range);
       wlr_scene_buffer_set_filter_mode(copy, WLR_SCALE_FILTER_BILINEAR);
       // The card's window and overlay slots, with time frozen.
-      wlr_scene_node_copy_animations_for_snapshot(&copy->node, &source->node);
+      if (copySlots) {
+        wlr_scene_node_copy_animations_for_snapshot(&copy->node, &source->node);
+      }
       ++buffersCopied;
     }
 
