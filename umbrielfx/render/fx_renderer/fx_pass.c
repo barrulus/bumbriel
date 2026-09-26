@@ -673,6 +673,7 @@ static void draw_animation_texture(
     struct wlr_texture* previous_texture, const struct wlr_box* previous_source_box, const float projection[9],
     bool blend, bool mark_updated
 ) {
+  TRACY_BOTH_ZONES_START(pass->buffer->renderer);
   struct fx_texture* texture = fx_get_texture(wlr_texture);
   glUseProgram(shader->program);
   fx_effect_shader_bind_parameters(shader, parameters);
@@ -777,6 +778,7 @@ static void draw_animation_texture(
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
   }
+  TRACY_BOTH_ZONES_END;
 }
 
 static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pass) {
