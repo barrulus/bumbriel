@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Mod+drag deforms a held floating window as an elastic sheet that trails past its own box, relaxes back to a
-# rectangular box after release, and hands its frozen deformation to the close snapshot when the window closes
-# mid-drag. With physics off the same drag stays rigid and leaves nothing running, held or released.
+# rectangular box after release, stays rigid on its overview card, and hands its frozen deformation to the close
+# snapshot when the window closes mid-drag. With physics off the same drag stays rigid and leaves nothing running,
+# held or released.
 set -euo pipefail
 source "$UMBRIEL_HARNESS_LIB"
 readonly BTN_LEFT=272
@@ -20,6 +21,11 @@ corner_radius = 0
 drag_opacity = 1.0
 [appearance.shadow]
 enabled = false
+[colors.overview]
+background_tint = "#000000FF"
+workspace_background = "#000000FF"
+[overview]
+zoom = 0.5
 [animation]
 duration_ms = 1
 curve = "linear"
@@ -59,6 +65,18 @@ drag_right() {
     -- release "$BTN_LEFT" mod none
 }
 
+# settle refuses while an animation runs on the frozen clock, so the clock advances between attempts until drag physics
+# relaxes.
+settle_frozen() {
+  for _ in $(seq 40); do
+    "$UMBRIEL" clock-advance 50 > /dev/null
+    if "$UMBRIEL" settle > /dev/null 2>&1; then
+      return 0
+    fi
+  done
+  "$UMBRIEL" settle > /dev/null
+}
+
 spawn
 read -r x y w h id < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
 
@@ -77,15 +95,8 @@ if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") < 100 )); then
 fi
 pointer_release
 
-# Settling after release: settle refuses while an animation runs on the frozen clock, so the clock advances between
-# attempts until drag physics relaxes.
-for _ in $(seq 40); do
-  "$UMBRIEL" clock-advance 50 > /dev/null
-  if "$UMBRIEL" settle > /dev/null 2>&1; then
-    break
-  fi
-done
-"$UMBRIEL" settle > /dev/null
+# After release the sheet relaxes back into the window box.
+settle_frozen
 grim "$IMAGE"
 window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "physics")')
 read -r x y w h < <(jq -r '"\(.x) \(.y) \(.w) \(.h)"' <<< "$window")
@@ -97,6 +108,31 @@ if (( $(green_count "${w}x${h}+${x}+${y}") < w * h * 9 / 10 )); then
   echo "the settled window is not drawn plainly"
   exit 1
 fi
+
+# The overview opened while the sheet settles: the card is drawn rigid. The 1280x720 output previews at half size from
+# 320,180.
+drag_right $((x + 40)) $((y + 40))
+pointer_release
+"$UMBRIEL" clock-advance 16 > /dev/null
+"$UMBRIEL" msg overview-open > /dev/null
+"$UMBRIEL" clock-advance 50 > /dev/null
+grim "$IMAGE"
+card_x=$((320 + (x + DRAG_DX) / 2))
+card_y=$((180 + y / 2))
+edges=$(($(green_count "20x$((h / 2 - 20))+$((card_x - 22))+$((card_y + 10))")
+  + $(green_count "20x$((h / 2 - 20))+$((card_x + w / 2 + 2))+$((card_y + 10))")))
+if ((edges > 0)); then
+  echo "the overview card kept the settling deformation: $edges green pixels past its edges"
+  exit 1
+fi
+if (( $(green_count "$((w / 2))x$((h / 2))+${card_x}+${card_y}") < w * h / 4 * 9 / 10 )); then
+  echo "the overview card does not fill its box with the dragged window"
+  exit 1
+fi
+"$UMBRIEL" msg overview-close > /dev/null
+settle_frozen
+window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "physics")')
+read -r x y w h < <(jq -r '"\(.x) \(.y) \(.w) \(.h)"' <<< "$window")
 
 # Close during a drag: the snapshot inherits the frozen deformation and fades out with it.
 grab_x=$((x + 40))
