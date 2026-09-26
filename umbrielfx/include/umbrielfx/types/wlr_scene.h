@@ -1015,8 +1015,9 @@ struct wlr_scene_output_state_options {
 	struct wlr_swapchain *swapchain;
 
 	/**
-	 * A screencopy or image-copy client will read this frame. With effects
-	 * excluded from captures, the scene composes an unfiltered frame for it.
+	 * A screencopy or image-copy client will read this frame. With a visible
+	 * in-place effect excluded from captures, the scene composes an unfiltered
+	 * frame for it.
 	 */
 	bool effect_capture_pending;
 };

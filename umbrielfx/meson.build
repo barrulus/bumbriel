@@ -272,6 +272,9 @@ if build_tests
     'capture-policy',
     'capture-policy-encoding',
     'capture-feedback',
+    'in-place-feedback',
+    'capture-composition',
+    'in-place-shape',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

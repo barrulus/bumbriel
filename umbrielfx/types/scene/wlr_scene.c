@@ -144,11 +144,13 @@ struct scene_animation {
   // policy; persistent slots only ever affect their own subtree and outputs.
   bool transient;
   bool persistent;
+  bool in_place;
   struct scene_light* light;
 };
 
 struct scene_effects {
   struct wlr_addon addon;
+  struct wlr_scene* scene;
   struct wl_list animations; // scene_animation.link
   unsigned transient;
   unsigned persistent;
@@ -156,8 +158,15 @@ struct scene_effects {
   struct wl_listener light_layer_destroy;
 };
 
+static void output_effects_release_capture(struct wlr_scene_output* scene_output);
+
 static void scene_effects_destroy(struct wlr_addon* addon) {
   struct scene_effects* effects = wl_container_of(addon, effects, addon);
+  // Frames of a scene without effect state neither save nor release captures.
+  struct wlr_scene_output* output;
+  wl_list_for_each(output, &effects->scene->outputs, link) {
+    output_effects_release_capture(output);
+  }
   // Scene teardown finishes the root's addons before destroying descendants
   // that still carry slots; they leave an empty list of their own.
   struct scene_animation *animation, *tmp;
@@ -190,6 +199,7 @@ static struct scene_effects* scene_effects_get(struct wlr_scene* scene, bool cre
   if (effects == NULL) {
     return NULL;
   }
+  effects->scene = scene;
   wl_list_init(&effects->animations);
   wlr_addon_init(&effects->addon, &scene->tree.node.addons, &scene_effects_impl, &scene_effects_impl);
   return effects;
@@ -198,6 +208,7 @@ static struct scene_effects* scene_effects_get(struct wlr_scene* scene, bool cre
 static void scene_animation_classify(struct scene_animation* animation) {
   animation->transient = false;
   animation->persistent = false;
+  animation->in_place = false;
   for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
     if (animation->shaders[slot] == NULL) {
       continue;
@@ -207,6 +218,7 @@ static void scene_animation_classify(struct scene_animation* animation) {
     } else {
       animation->transient = true;
     }
+    animation->in_place |= fx_slot_in_place(slot);
   }
 }
 
@@ -806,8 +818,8 @@ struct render_data {
   // Rendering an unfiltered effect capture: in-place slots do not run and
   // capture composites use the capture role's history.
   bool effect_capture;
-  // A later composition this frame emits output_sample.
-  bool sample_later;
+  // An earlier composition this frame emitted output_sample.
+  bool sampled_earlier;
   // The scene's effect state for this frame, NULL when it has none. Nothing may
   // add or remove slots while entries render: output_sample listeners run then.
   struct scene_effects* effects;
@@ -3254,7 +3266,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
         .release_timeline = data->output->in_timeline,
         .release_point = data->output->in_point,
     };
-    if (!data->shadow_capture && !data->sample_later) {
+    if (!data->shadow_capture && !data->sampled_earlier) {
       wl_signal_emit_mutable(&scene_buffer->events.output_sample, &sample_event);
     }
 
@@ -3522,59 +3534,98 @@ static bool scene_border_geometry(
   return true;
 }
 
-// Corner radii of the in-place mask: a rect's or buffer's own, or a tree's
-// first enabled buffer (the toplevel surface).
-static bool in_place_corners(struct wlr_scene_node* node, float out[4]) {
+static bool region_touches_box(const pixman_region32_t* region, const struct wlr_box* box) {
+  const pixman_box32_t rect = {.x1 = box->x, .y1 = box->y, .x2 = box->x + box->width, .y2 = box->y + box->height};
+  return pixman_region32_contains_rectangle(region, &rect) != PIXMAN_REGION_OUT;
+}
+
+// The in-place mask's corner radii: a rect's or buffer's own, or a tree's
+// first enabled buffer (the toplevel surface). When that buffer has a corner
+// box (its content inside client-side margins), `box` receives it in layout
+// coordinates; otherwise `box` is empty.
+static bool in_place_shape(struct wlr_scene_node* node, int lx, int ly, float corners[4], struct wlr_box* box) {
+  *box = (struct wlr_box){0};
+  if (node->type == WLR_SCENE_NODE_TREE) {
+    struct wlr_scene_node* child;
+    struct wlr_scene_node* surface = NULL;
+    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+      if (child->enabled && child->type == WLR_SCENE_NODE_BUFFER) {
+        surface = child;
+        break;
+      }
+    }
+    if (surface == NULL) {
+      return false;
+    }
+    node = surface;
+    lx += surface->x;
+    ly += surface->y;
+  }
   const struct fx_corner_radii* radii = NULL;
   if (node->type == WLR_SCENE_NODE_RECT) {
     radii = &wlr_scene_rect_from_node(node)->corners;
   } else if (node->type == WLR_SCENE_NODE_BUFFER) {
-    radii = &wlr_scene_buffer_from_node(node)->corners;
-  } else if (node->type == WLR_SCENE_NODE_TREE) {
-    struct wlr_scene_node* child;
-    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
-      if (child->enabled && child->type == WLR_SCENE_NODE_BUFFER) {
-        radii = &wlr_scene_buffer_from_node(child)->corners;
-        break;
-      }
+    const struct wlr_scene_buffer* buffer = wlr_scene_buffer_from_node(node);
+    radii = &buffer->corners;
+    if (!wlr_box_empty(&buffer->corner_box)) {
+      *box = buffer->corner_box;
+      box->x += lx;
+      box->y += ly;
     }
   }
   if (radii == NULL) {
     return false;
   }
-  out[0] = radii->top_left;
-  out[1] = radii->top_right;
-  out[2] = radii->bottom_right;
-  out[3] = radii->bottom_left;
+  corners[0] = radii->top_left;
+  corners[1] = radii->top_right;
+  corners[2] = radii->bottom_right;
+  corners[3] = radii->bottom_left;
   return true;
 }
 
-// Runs the node's in-place slots over what its subtree has drawn into the current target.
+// Runs the node's in-place slots over what its subtree has drawn into the
+// current target, within its corner box when it has one. Nothing runs when
+// `clip` misses that rectangle, so feedback history carries over.
 static void render_in_place_slots(
-    struct scene_animation* animation, const struct render_data* data, const struct wlr_box* box,
+    struct scene_animation* animation, const struct render_data* data, int lx, int ly, const struct wlr_box* box,
     const struct wlr_box* logical_box, const pixman_region32_t* clip
 ) {
-  if (data->effect_capture) {
+  if (data->effect_capture || !animation->in_place) {
     return;
   }
   struct fx_gles_render_pass* pass = fx_get_render_pass(data->render_pass);
   float corners[4];
   const float* corner_radius = NULL;
-  bool corners_known = false;
+  struct wlr_box shape_box = *box;
+  struct wlr_box shape_logical = *logical_box;
+  bool shape_known = false;
   for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
     struct fx_effect_shader* shader = animation->shaders[slot];
     if (!fx_slot_in_place(slot) || shader == NULL || shader->renderer != pass->buffer->renderer) {
       continue;
     }
-    if (!corners_known) {
-      corner_radius = in_place_corners(animation->node, corners) ? corners : NULL;
-      corners_known = true;
+    if (!shape_known) {
+      struct wlr_box corner_box;
+      corner_radius = in_place_shape(animation->node, lx, ly, corners, &corner_box) ? corners : NULL;
+      if (!wlr_box_empty(&corner_box)) {
+        corner_box.x -= data->logical.x;
+        corner_box.y -= data->logical.y;
+        if (!wlr_box_intersection(&shape_logical, &corner_box, logical_box)) {
+          return;
+        }
+        shape_box = shape_logical;
+        transform_output_box(&shape_box, data);
+      }
+      if (!region_touches_box(clip, &shape_box)) {
+        return;
+      }
+      shape_known = true;
     }
     const struct fx_effect_composite composite = {
         .shader = shader,
         .parameters = &animation->parameters[slot],
-        .box = *box,
-        .logical_box = *logical_box,
+        .box = shape_box,
+        .logical_box = shape_logical,
         .transform = data->transform,
         .expand = 0,
         .capture_clip = clip,
@@ -3587,6 +3638,19 @@ static void render_in_place_slots(
     };
     fx_render_pass_effect_in_place(pass, &composite);
   }
+}
+
+static bool
+persistent_effect_box(struct scene_animation* animation, const struct render_data* data, struct wlr_box* box);
+
+// Whether this frame's damage, within `clip` when set, reaches a persistent effect's drawn box.
+static bool persistent_effect_damaged(
+    struct scene_animation* animation, const struct render_data* data, const struct wlr_box* clip
+) {
+  struct wlr_box box;
+  return persistent_effect_box(animation, data, &box)
+      && (clip == NULL || wlr_box_intersection(&box, &box, clip))
+      && region_touches_box(&data->damage, &box);
 }
 
 static void render_animated_range(
@@ -3616,11 +3680,38 @@ static void render_animated_range(
       output_box.y += ly - data->logical.y;
       transform_output_box(&output_box, data);
     }
+    struct wlr_box ancestor_clip;
+    bool has_clip = scene_node_ancestor_clip(animation->node, lx, ly, &ancestor_clip);
+    if (animation->node->type == WLR_SCENE_NODE_TREE) {
+      struct scene_tree_clip* own = scene_tree_clip_try_get(wlr_scene_tree_from_node(animation->node));
+      if (own != NULL) {
+        struct wlr_box own_box = own->box;
+        own_box.x += lx;
+        own_box.y += ly;
+        if (has_clip) {
+          wlr_box_intersection(&ancestor_clip, &ancestor_clip, &own_box);
+        } else {
+          ancestor_clip = own_box;
+        }
+        has_clip = true;
+      }
+    }
+    if (has_clip) {
+      ancestor_clip.x -= data->logical.x;
+      ancestor_clip.y -= data->logical.y;
+      transform_output_box(&ancestor_clip, data);
+    }
+    // A persistent slot this frame's damage misses would composite nothing and blank its history.
+    const bool persistent_damaged =
+        animation->persistent && persistent_effect_damaged(animation, data, has_clip ? &ancestor_clip : NULL);
     bool captured[FX_ANIMATION_SLOTS] = {0};
     bool captured_any = false;
     for (int slot = FX_ANIMATION_SLOTS - 1; slot >= 0; slot--) {
       struct fx_effect_shader* shader = animation->shaders[slot];
-      if (shader != NULL && shader->renderer == pass->buffer->renderer && !fx_slot_in_place(slot)) {
+      if (shader != NULL
+          && shader->renderer == pass->buffer->renderer
+          && !fx_slot_in_place(slot)
+          && (persistent_damaged || !fx_slot_persistent(slot))) {
         captured[slot] = fx_render_pass_begin_animation(pass);
         captured_any |= captured[slot];
       }
@@ -3654,31 +3745,12 @@ static void render_animated_range(
     pixman_region32_t clip;
     pixman_region32_init(&clip);
     pixman_region32_copy(&clip, &subtree->damage);
-    struct wlr_box ancestor_clip;
-    bool has_clip = scene_node_ancestor_clip(animation->node, lx, ly, &ancestor_clip);
-    if (animation->node->type == WLR_SCENE_NODE_TREE) {
-      struct scene_tree_clip* own = scene_tree_clip_try_get(wlr_scene_tree_from_node(animation->node));
-      if (own != NULL) {
-        struct wlr_box own_box = own->box;
-        own_box.x += lx;
-        own_box.y += ly;
-        if (has_clip) {
-          wlr_box_intersection(&ancestor_clip, &ancestor_clip, &own_box);
-        } else {
-          ancestor_clip = own_box;
-        }
-        has_clip = true;
-      }
-    }
     if (has_clip) {
-      ancestor_clip.x -= data->logical.x;
-      ancestor_clip.y -= data->logical.y;
-      transform_output_box(&ancestor_clip, data);
       pixman_region32_intersect_rect(
           &clip, &clip, ancestor_clip.x, ancestor_clip.y, ancestor_clip.width, ancestor_clip.height
       );
     }
-    render_in_place_slots(animation, data, &box, &logical_box, &clip);
+    render_in_place_slots(animation, data, lx, ly, &box, &logical_box, &clip);
     pixman_region32_t output_clip;
     bool has_output_clip = false;
     if (has_animation_clip) {
@@ -4817,6 +4889,27 @@ static bool expand_damage_to_effects(
   return grew_any;
 }
 
+static void render_background(
+    struct wlr_render_pass* render_pass, const struct wlr_scene* scene, const struct wlr_buffer* buffer,
+    const pixman_region32_t* clip, enum wlr_render_blend_mode blend_mode
+) {
+  wlr_render_pass_add_rect(
+      render_pass,
+      &(struct wlr_render_rect_options){
+          .box = {.width = buffer->width, .height = buffer->height},
+          .color =
+              {
+                  .r = scene->background_color[0],
+                  .g = scene->background_color[1],
+                  .b = scene->background_color[2],
+                  .a = scene->background_color[3],
+              },
+          .blend_mode = blend_mode,
+          .clip = clip,
+      }
+  );
+}
+
 bool wlr_scene_output_build_state(
     struct wlr_scene_output* scene_output, struct wlr_output_state* state,
     const struct wlr_scene_output_state_options* options
@@ -4908,11 +5001,21 @@ bool wlr_scene_output_build_state(
   render_data.entries = list_data;
   render_data.entry_count = list_len;
 
+  // Only a visible in-place slot makes a pending capture differ from the display.
+  const bool capture_pending = options->effect_capture_pending;
+  bool in_place_visible = false;
   render_data.persistent_visible = false;
   if (persistent_effects) {
-    for (int i = 0; i < list_len && !render_data.persistent_visible; i++) {
+    for (int i = 0; i < list_len; i++) {
       struct scene_animation* animation = effect_over_node(list_data[i].node);
-      render_data.persistent_visible = animation != NULL && animation->persistent;
+      if (animation == NULL || !animation->persistent) {
+        continue;
+      }
+      render_data.persistent_visible = true;
+      in_place_visible = animation->in_place;
+      if (in_place_visible || !capture_pending) {
+        break;
+      }
     }
   }
   if (!transient_effects && !render_data.persistent_visible) {
@@ -4920,11 +5023,12 @@ bool wlr_scene_output_build_state(
   }
 
   // Absent state is the default policy: effects are excluded from captures. The
-  // addon is created only once an unfiltered composition runs.
-  struct scene_output_effects* output_effects = scene_output_effects_get(scene_output, false);
-  const bool capture_pending = options->effect_capture_pending;
-  bool unfiltered_pass = capture_pending && render_data.persistent_visible
-      && (output_effects == NULL || !output_effects->in_capture);
+  // addon is created only once an unfiltered composition runs. Without effect
+  // state and a pending capture there is nothing to save or release.
+  struct scene_output_effects* output_effects =
+      effects != NULL || capture_pending ? scene_output_effects_get(scene_output, false) : NULL;
+  bool unfiltered_pass =
+      capture_pending && in_place_visible && (output_effects == NULL || !output_effects->in_capture);
   if (unfiltered_pass && output_effects == NULL) {
     output_effects = scene_output_effects_get(scene_output, true);
     unfiltered_pass = output_effects != NULL;
@@ -5230,52 +5334,30 @@ bool wlr_scene_output_build_state(
     }
   }
 
-  wlr_render_pass_add_rect(
-      render_pass,
-      &(struct wlr_render_rect_options){
-          .box = {.width = buffer->width, .height = buffer->height},
-          .color =
-              {
-                  .r = scene_output->scene->background_color[0],
-                  .g = scene_output->scene->background_color[1],
-                  .b = scene_output->scene->background_color[2],
-                  .a = scene_output->scene->background_color[3],
-              },
-          .clip = &background,
-      }
-  );
+  render_background(render_pass, scene_output->scene, buffer, &background, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
   pixman_region32_fini(&background);
 
+  // The unfiltered composition, when it runs, emits output_sample; a display
+  // composition drawn after it does not.
+  bool cursors_drawn = false;
   if (unfiltered_pass) {
     struct render_data clean = render_data;
     clean.effect_capture = true;
-    clean.sample_later = true;
     render_animated_range(list_data, list_len - 1, 0, NULL, &clean);
     wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
     if (fx_render_pass_save_effect_capture(fx_pass)) {
       fx_pass->output_buffer->effect_capture_owner = scene_output;
+      // Start the display composition from the background again.
+      render_background(render_pass, scene_output->scene, buffer, &render_data.damage, WLR_RENDER_BLEND_MODE_NONE);
+      render_data.sampled_earlier = true;
+      render_animated_range(list_data, list_len - 1, 0, NULL, &render_data);
     } else {
-      // Show the unfiltered frame rather than a filtered one without its capture.
-      render_data.effect_capture = true;
+      // Without its capture the frame is shown unfiltered.
+      cursors_drawn = true;
     }
-    // Start the display composition from the background again.
-    wlr_render_pass_add_rect(
-        render_pass,
-        &(struct wlr_render_rect_options){
-            .box = {.width = buffer->width, .height = buffer->height},
-            .color =
-                {
-                    .r = scene_output->scene->background_color[0],
-                    .g = scene_output->scene->background_color[1],
-                    .b = scene_output->scene->background_color[2],
-                    .a = scene_output->scene->background_color[3],
-                },
-            .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
-            .clip = &render_data.damage,
-        }
-    );
+  } else {
+    render_animated_range(list_data, list_len - 1, 0, NULL, &render_data);
   }
-  render_animated_range(list_data, list_len - 1, 0, NULL, &render_data);
   for (int i = list_len - 1; i >= 0; i--) {
     struct render_list_entry* entry = &list_data[i];
 
@@ -5316,7 +5398,9 @@ bool wlr_scene_output_build_state(
     }
   }
 
-  wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
+  if (!cursors_drawn) {
+    wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
+  }
 
   if (blur_saved_pixels != NULL) {
     // Render the saved pixels over the blur artifacts

@@ -190,5 +190,7 @@ void wlr_scene_output_acknowledge_damage_for_test(
 );
 // Exists for tests/effects.c: makes fx_render_pass_read_to_buffer fail as if its source could not be sampled.
 void fx_renderer_fail_target_copies_for_test(struct wlr_renderer* renderer, bool fail);
+// Exists for tests/effects.c: makes saving an unfiltered effect capture fail.
+void fx_renderer_fail_effect_capture_for_test(struct wlr_renderer* renderer, bool fail);
 
 #endif

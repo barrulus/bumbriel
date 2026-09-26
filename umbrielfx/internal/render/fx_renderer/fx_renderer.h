@@ -252,8 +252,12 @@ struct fx_renderer {
 	} shaders;
 
 	bool animation_shadow_attempted;
-	// Set only through fx_renderer_fail_target_copies_for_test.
+	// Each effect copy failure is logged once per renderer.
+	bool in_place_copy_failure_logged;
+	bool effect_capture_failure_logged;
+	// Set only through fx_renderer_fail_target_copies_for_test and fx_renderer_fail_effect_capture_for_test.
 	bool fail_target_copies_for_test;
+	bool fail_effect_capture_for_test;
 	struct fx_effect_shader *animation_shadow_horizontal;
 	struct fx_effect_shader *animation_shadow_vertical;
 

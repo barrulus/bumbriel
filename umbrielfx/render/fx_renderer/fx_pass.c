@@ -1247,8 +1247,9 @@ void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const stru
       wlr_texture_destroy(texture);
     }
     fx_framebuffer_bind(pass->buffer);
-    if (!pass->in_place_failed) {
-      pass->in_place_failed = true;
+    struct fx_renderer* renderer = pass->buffer->renderer;
+    if (!renderer->in_place_copy_failure_logged) {
+      renderer->in_place_copy_failure_logged = true;
       wlr_log(WLR_ERROR, "Cannot copy the target for an in-place effect; drawing it without the effect");
     }
     return;
@@ -2818,7 +2819,7 @@ bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass) {
   }
   struct wlr_allocator* allocator =
       pass->fx_offscreen_buffers != NULL ? pass->fx_offscreen_buffers->allocator : renderer->allocator;
-  bool failed = allocator == NULL, ok = false;
+  bool failed = allocator == NULL || renderer->fail_effect_capture_for_test, ok = false;
   fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, output->drm_format, capture, &failed);
   if (!failed && *capture != NULL) {
     (*capture)->effect_capture_parent = output;
@@ -2836,11 +2837,19 @@ bool fx_render_pass_save_effect_capture(struct fx_gles_render_pass* pass) {
   fx_framebuffer_bind(pass->buffer);
   glViewport(0, 0, pass->buffer->buffer->width, pass->buffer->buffer->height);
   pass->effect_capture_saved = ok;
+  if (!ok && !renderer->effect_capture_failure_logged) {
+    renderer->effect_capture_failure_logged = true;
+    wlr_log(WLR_ERROR, "Cannot save an effect capture; captures and display show frames without in-place effects");
+  }
   return ok;
 }
 
 void fx_renderer_fail_target_copies_for_test(struct wlr_renderer* renderer, bool fail) {
   fx_get_renderer(renderer)->fail_target_copies_for_test = fail;
+}
+
+void fx_renderer_fail_effect_capture_for_test(struct wlr_renderer* renderer, bool fail) {
+  fx_get_renderer(renderer)->fail_effect_capture_for_test = fail;
 }
 
 static const char* reset_status_str(GLenum status) {

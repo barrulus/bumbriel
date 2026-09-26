@@ -88,6 +88,18 @@ static void count_clamp_logs(enum wlr_log_importance importance, const char *fmt
 	}
 }
 
+static int failure_logs;
+static const char *failure_log_needle;
+
+// Counts messages containing `failure_log_needle`.
+static void count_failure_logs(enum wlr_log_importance importance, const char *fmt, va_list args) {
+	char message[512];
+	vsnprintf(message, sizeof(message), fmt, args);
+	if (strstr(message, failure_log_needle) != NULL) {
+		failure_logs++;
+	}
+}
+
 static bool test_uniforms(struct fixture *fixture) {
 	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
 		"uniform float gain; uniform vec3 tint; uniform int steps;\n"
@@ -447,15 +459,20 @@ static struct wlr_swapchain *create_swapchain(struct fixture *fixture) {
 // Builds a frame on `swapchain`, which outlives the frame so buffer age limits
 // render damage, and acknowledges its damage as a commit would. The caller
 // unlocks the returned buffer and finishes `state`.
-static struct wlr_buffer *render_frame(struct wlr_scene_output *scene_output, struct wlr_swapchain *swapchain,
-		struct wlr_output_state *state) {
+static struct wlr_buffer *render_frame_pending(struct wlr_scene_output *scene_output, struct wlr_swapchain *swapchain,
+		bool capture_pending, struct wlr_output_state *state) {
 	wlr_output_state_init(state);
-	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
+	struct wlr_scene_output_state_options options = { .swapchain = swapchain, .effect_capture_pending = capture_pending };
 	if (!wlr_scene_output_build_state(scene_output, state, &options) || state->buffer == NULL) {
 		return NULL;
 	}
 	wlr_scene_output_acknowledge_damage_for_test(scene_output, state);
 	return wlr_buffer_lock(state->buffer);
+}
+
+static struct wlr_buffer *render_frame(struct wlr_scene_output *scene_output, struct wlr_swapchain *swapchain,
+		struct wlr_output_state *state) {
+	return render_frame_pending(scene_output, swapchain, false, state);
 }
 
 // One whole-damage frame per swapchain buffer, so the next frame carries only its own damage.
@@ -1053,20 +1070,27 @@ static bool test_in_place(struct fixture *fixture) {
 		wlr_buffer_unlock(rendered);
 	}
 	wlr_output_state_finish(&state);
-	// When the target cannot be copied the window keeps its plain rendering.
+	// When the target cannot be copied the window keeps its plain rendering, and the failure is logged once.
 	fx_renderer_fail_target_copies_for_test(fixture->renderer, true);
-	wlr_scene_output_damage_whole_for_test(scene_output);
-	rendered = fixture_render_scene(fixture, scene_output, &state);
-	fx_renderer_fail_target_copies_for_test(fixture->renderer, false);
-	ok &= check(rendered != NULL, "renders with a failed target copy");
-	if (rendered != NULL) {
-		uint8_t centre[4];
-		ok &= fixture_read_pixel(fixture, rendered, 8, 8, centre);
-		ok &= check(centre[2] > 45 && centre[2] < 85 && centre[0] > 170 && centre[0] < 210,
-			"a failed copy leaves the window as drawn");
-		wlr_buffer_unlock(rendered);
+	failure_logs = 0;
+	failure_log_needle = "in-place effect";
+	wlr_log_init(WLR_DEBUG, count_failure_logs);
+	for (int frame = 0; frame < 2; frame++) {
+		wlr_scene_output_damage_whole_for_test(scene_output);
+		rendered = fixture_render_scene(fixture, scene_output, &state);
+		ok &= check(rendered != NULL, "renders with a failed target copy");
+		if (rendered != NULL) {
+			uint8_t centre[4];
+			ok &= fixture_read_pixel(fixture, rendered, 8, 8, centre);
+			ok &= check(centre[2] > 45 && centre[2] < 85 && centre[0] > 170 && centre[0] < 210,
+				"a failed copy leaves the window as drawn");
+			wlr_buffer_unlock(rendered);
+		}
+		wlr_output_state_finish(&state);
 	}
-	wlr_output_state_finish(&state);
+	wlr_log_init(WLR_ERROR, NULL);
+	fx_renderer_fail_target_copies_for_test(fixture->renderer, false);
+	ok &= check(failure_logs == 1, "a repeated copy failure is logged once");
 	fx_effect_shader_unref(program);
 	wlr_scene_node_destroy(&scene->tree.node);
 	return ok;
@@ -1171,6 +1195,28 @@ static bool test_capture_policy(struct fixture *fixture) {
 		wlr_texture_destroy(import);
 	}
 	wlr_output_state_finish(&state);
+	// A capture that cannot be saved leaves the frame unfiltered for display and capture alike, logged once.
+	fx_renderer_fail_effect_capture_for_test(fixture->renderer, true);
+	failure_logs = 0;
+	failure_log_needle = "effect capture";
+	wlr_log_init(WLR_DEBUG, count_failure_logs);
+	for (int frame = 0; ok && frame < 2; frame++) {
+		wlr_output_state_init(&state);
+		wlr_scene_output_damage_whole_for_test(scene_output);
+		ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL,
+			"renders with a failed capture save");
+		if (ok) {
+			uint8_t display[4], captured[4];
+			ok &= fixture_read_display_pixel(fixture, state.buffer, 8, 8, display);
+			ok &= check(display[2] > 250 && display[1] < 5, "without a capture the display shows the plain window");
+			ok &= check(fixture_read_pixel(fixture, state.buffer, 8, 8, captured), "import reads");
+			ok &= check(captured[2] > 250 && captured[1] < 5, "without a capture the import sees the plain window");
+		}
+		wlr_output_state_finish(&state);
+	}
+	wlr_log_init(WLR_ERROR, NULL);
+	fx_renderer_fail_effect_capture_for_test(fixture->renderer, false);
+	ok &= check(failure_logs == 1, "a repeated save failure is logged once");
 	// in_capture = true: the import sees the effect too.
 	wlr_scene_output_set_effect_capture_policy(scene_output, true);
 	wlr_output_state_init(&state);
@@ -1318,6 +1364,255 @@ static bool test_capture_policy_encoding(struct fixture *fixture) {
 	return ok;
 }
 
+// Feedback window and border programs keep their history through frames whose
+// damage misses their boxes: each run adds 1/16 red to its previous result.
+static bool test_in_place_feedback(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *feedback = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return vec4(min(umbriel_sample_previous(uv).r + 0.0625, 1.0), 0.0, 0.0, 1.0); }",
+		"feedback");
+	struct fx_effect_shader *border_feedback = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		"vec4 border(vec2 uv) { return vec4(min(umbriel_sample_previous(uv).r + 0.0625, 1.0), 0.0, 0.0, 1.0); }",
+		"border-feedback");
+	if (!check(swapchain != NULL && feedback != NULL && border_feedback != NULL, "swapchain and feedback programs")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(feedback);
+		fx_effect_shader_unref(border_feedback);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 }, grey[4] = { 0.5f, 0.5f, 0.5f, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 6, 6, black);
+	wlr_scene_node_set_position(&window->node, 2, 2);
+	struct wlr_scene_rect *elsewhere = wlr_scene_rect_create(&scene->tree, 2, 2, white);
+	wlr_scene_node_set_position(&elsewhere->node, 12, 12);
+	struct wlr_scene_rect *framed = wlr_scene_rect_create(&scene->tree, 2, 6, black);
+	wlr_scene_node_set_position(&framed->node, 9, 2);
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, feedback, &parameters);
+	wlr_scene_node_set_animation(&framed->node, FX_SLOT_BORDER_EFFECT, border_feedback, &parameters);
+	// Four whole-damage runs: 4/16 red.
+	bool ok = warm_up(scene_output, swapchain);
+	wlr_scene_rect_set_color(elsewhere, grey);
+	ok &= frame_damage_is(scene_output, swapchain, 12, 12, 14, 14, "the change damages only its own rect");
+	wlr_scene_output_damage_whole_for_test(scene_output);
+	struct wlr_output_state state;
+	struct wlr_buffer *buffer = render_frame(scene_output, swapchain, &state);
+	ok &= check(buffer != NULL, "whole-damage frame");
+	if (buffer != NULL) {
+		static const int probes[][2] = { { 5, 5 }, { 10, 5 } };
+		for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+			uint8_t pixel[4];
+			ok &= fixture_read_pixel(fixture, buffer, probes[i][0], probes[i][1], pixel);
+			if (pixel[2] < 72 || pixel[2] > 88) {
+				fprintf(stderr, "  red %d at (%d,%d), expected 80\n", pixel[2], probes[i][0], probes[i][1]);
+			}
+			ok &= check(pixel[2] >= 72 && pixel[2] <= 88, "the fifth run reads the fourth run's result");
+		}
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(feedback);
+	fx_effect_shader_unref(border_feedback);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
+static bool capture_saved(struct fixture *fixture) {
+	struct fx_framebuffer *framebuffer;
+	wl_list_for_each(framebuffer, &fx_get_renderer(fixture->renderer)->buffers, link) {
+		if (framebuffer->effect_capture_buffer != NULL) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// With a capture pending, only a visible window or overlay slot composes the
+// frame a second time: a border effect stays in captures.
+static bool test_capture_composition(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *border = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		kSources[FX_EFFECT_BORDER], "capture-composition-border");
+	struct fx_effect_shader *window_program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		kSources[FX_EFFECT_WINDOW], "capture-composition-window");
+	if (!check(swapchain != NULL && border != NULL && window_program != NULL, "swapchain and programs")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(border);
+		fx_effect_shader_unref(window_program);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 }, grey[4] = { 0.5f, 0.5f, 0.5f, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_rect *framed = wlr_scene_rect_create(&scene->tree, 4, 4, white);
+	wlr_scene_node_set_position(&framed->node, 2, 2);
+	struct wlr_scene_rect *elsewhere = wlr_scene_rect_create(&scene->tree, 2, 2, white);
+	wlr_scene_node_set_position(&elsewhere->node, 12, 12);
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&framed->node, FX_SLOT_BORDER_EFFECT, border, &parameters);
+	wlr_scene_output_set_effect_capture_policy(scene_output, false);
+	bool ok = warm_up(scene_output, swapchain);
+	// Border only: one composition, so the frame keeps its own damage and saves no capture.
+	wlr_scene_rect_set_color(elsewhere, grey);
+	struct wlr_output_state state;
+	struct wlr_buffer *buffer = render_frame_pending(scene_output, swapchain, true, &state);
+	const pixman_box32_t *extents = pixman_region32_extents(&state.damage);
+	ok &= check(buffer != NULL, "border-only frame with a capture pending");
+	if (extents->x1 != 12 || extents->y1 != 12 || extents->x2 != 14 || extents->y2 != 14) {
+		fprintf(stderr, "  damage (%d,%d)-(%d,%d)\n", extents->x1, extents->y1, extents->x2, extents->y2);
+	}
+	ok &= check(extents->x1 == 12 && extents->y1 == 12 && extents->x2 == 14 && extents->y2 == 14,
+		"a border-only frame keeps its own damage");
+	ok &= check(!capture_saved(fixture), "a border-only frame saves no unfiltered capture");
+	if (buffer != NULL) {
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	// A window slot: the unfiltered composition runs and its capture is saved.
+	wlr_scene_node_set_animation(&framed->node, FX_SLOT_WINDOW, window_program, &parameters);
+	buffer = render_frame_pending(scene_output, swapchain, true, &state);
+	ok &= check(buffer != NULL, "window frame with a capture pending");
+	ok &= check(capture_saved(fixture), "a window slot saves the unfiltered capture");
+	if (buffer != NULL) {
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(border);
+	fx_effect_shader_unref(window_program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
+// Renders one whole-damage frame at `scale` and `transform` and returns the locked buffer.
+static struct wlr_buffer *render_transformed(struct fixture *fixture, struct wlr_scene_output *scene_output,
+		float scale, enum wl_output_transform transform) {
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	struct wlr_swapchain *swapchain =
+		format != NULL ? wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format) : NULL;
+	if (swapchain == NULL) {
+		return NULL;
+	}
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	wlr_output_state_set_scale(&state, scale);
+	wlr_output_state_set_transform(&state, transform);
+	wlr_scene_output_damage_whole_for_test(scene_output);
+	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
+	struct wlr_buffer *rendered = NULL;
+	if (wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL) {
+		rendered = wlr_buffer_lock(state.buffer);
+	}
+	wlr_output_state_finish(&state);
+	wlr_swapchain_destroy(swapchain);
+	return rendered;
+}
+
+// Reads the buffer pixel holding logical point (x, y) at scale 2 on a square output.
+static bool read_logical(struct fixture *fixture, struct wlr_buffer *buffer, enum wl_output_transform transform,
+		float x, float y, uint8_t out[4]) {
+	struct wlr_box box = { .x = (int)(x * 2), .y = (int)(y * 2), .width = 1, .height = 1 };
+	wlr_box_transform(&box, &box, wlr_output_transform_invert(transform), TEST_WIDTH, TEST_HEIGHT);
+	return fixture_read_pixel(fixture, buffer, box.x, box.y, out);
+}
+
+static bool is_colour(const uint8_t pixel[4], int red, int green, int blue, const char *message) {
+	const bool ok = abs(pixel[2] - red) < 6 && abs(pixel[1] - green) < 6 && abs(pixel[0] - blue) < 6;
+	if (!ok) {
+		fprintf(stderr, "  rgb (%d,%d,%d), expected (%d,%d,%d)\n", pixel[2], pixel[1], pixel[0], red, green, blue);
+	}
+	return check(ok, message);
+}
+
+// An in-place window at scale 2: the mask edge is one buffer pixel wide, and a
+// buffer's corner box (the window's content inside client-side margins) is the
+// shaped rectangle, also on a rotated output.
+static bool test_in_place_shape(struct fixture *fixture) {
+	// Mirrors the rectangle horizontally and swaps red and blue: red content turns blue, the blue desktop red.
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return umbriel_sample(vec2(1.0 - uv.x, uv.y)).bgra; }", "in-place-shape");
+	struct wlr_buffer *content = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 12);
+	struct wlr_render_pass *pass =
+		content != NULL ? wlr_renderer_begin_buffer_pass(fixture->renderer, content, NULL) : NULL;
+	if (pass != NULL) {
+		wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options) {
+			.box = { .width = 16, .height = 12 }, .color = { .r = 1, .a = 1 } });
+	}
+	bool ok = check(program != NULL && pass != NULL && wlr_render_pass_submit(pass), "program and content buffer");
+	if (!ok) {
+		wlr_buffer_drop(content);
+		fx_effect_shader_unref(program);
+		return false;
+	}
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	const float blue[4] = { 0, 0, 1, 1 }, red[4] = { 1, 0, 0, 1 }, green[4] = { 0, 1, 0, 1 };
+
+	// A plain 4x4 window at (2,2): buffer pixels 4..11. Every edge pixel matches the interior.
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	wlr_scene_rect_create(&scene->tree, 8, 8, blue);
+	struct wlr_scene_rect *plain = wlr_scene_rect_create(&scene->tree, 4, 4, red);
+	wlr_scene_node_set_position(&plain->node, 2, 2);
+	wlr_scene_node_set_animation(&plain->node, FX_SLOT_WINDOW, program, &parameters);
+	struct wlr_buffer *rendered = render_transformed(fixture, scene_output, 2, WL_OUTPUT_TRANSFORM_NORMAL);
+	ok &= check(rendered != NULL, "scale-2 frame");
+	if (rendered != NULL) {
+		static const int probes[][2] = { { 8, 8 }, { 4, 8 }, { 11, 8 }, { 8, 4 }, { 8, 11 } };
+		for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+			uint8_t pixel[4];
+			ok &= fixture_read_pixel(fixture, rendered, probes[i][0], probes[i][1], pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the outermost buffer pixels are fully in the mask");
+		}
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_scene_node_destroy(&scene->tree.node);
+
+	// A surface tree at (0,1) whose 8x6 buffer has a one-pixel margin around its 6x4 content box, rounded by 2,
+	// with a green marker in the content's left column. Logical coordinates; the output is 8x8 at scale 2.
+	for (int rotated = 0; rotated < 2; rotated++) {
+		const enum wl_output_transform transform = rotated ? WL_OUTPUT_TRANSFORM_90 : WL_OUTPUT_TRANSFORM_NORMAL;
+		scene = wlr_scene_create();
+		scene_output = wlr_scene_output_create(scene, fixture->output);
+		wlr_scene_rect_create(&scene->tree, 8, 8, blue);
+		struct wlr_scene_tree *surface = wlr_scene_tree_create(&scene->tree);
+		wlr_scene_node_set_position(&surface->node, 0, 1);
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_create(surface, content);
+		wlr_scene_buffer_set_dest_size(buffer, 8, 6);
+		wlr_scene_buffer_set_corner_radii(buffer, corner_radii_all(2));
+		wlr_scene_buffer_set_corner_box(buffer, &(struct wlr_box) { 1, 1, 6, 4 });
+		struct wlr_scene_rect *marker = wlr_scene_rect_create(surface, 1, 2, green);
+		wlr_scene_node_set_position(&marker->node, 1, 2);
+		wlr_scene_node_set_animation(&surface->node, FX_SLOT_WINDOW, program, &parameters);
+		rendered = render_transformed(fixture, scene_output, 2, transform);
+		ok &= check(rendered != NULL, rotated ? "rotated frame" : "margin frame");
+		if (rendered != NULL) {
+			uint8_t pixel[4];
+			ok &= read_logical(fixture, rendered, transform, 6.25f, 4.25f, pixel);
+			ok &= is_colour(pixel, 0, 255, 0, "the marker is mirrored across the content box");
+			ok &= read_logical(fixture, rendered, transform, 1.75f, 4.25f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the marker's own column shows the mirrored content");
+			ok &= read_logical(fixture, rendered, transform, 0.25f, 4.25f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the side margin keeps the desktop");
+			ok &= read_logical(fixture, rendered, transform, 4.25f, 1.25f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the top margin keeps the desktop");
+			ok &= read_logical(fixture, rendered, transform, 1.25f, 2.25f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the content box's rounded corner keeps the desktop");
+			ok &= read_logical(fixture, rendered, transform, 4.25f, 2.25f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the content's top row is fully in the mask");
+			wlr_buffer_unlock(rendered);
+		}
+		wlr_scene_node_destroy(&scene->tree.node);
+	}
+	wlr_buffer_drop(content);
+	fx_effect_shader_unref(program);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -1372,6 +1667,12 @@ int main(int argc, char *argv[]) {
 		ok = test_capture_policy_encoding(&fixture);
 	} else if (strcmp(argv[1], "capture-feedback") == 0) {
 		ok = test_capture_feedback(&fixture);
+	} else if (strcmp(argv[1], "in-place-feedback") == 0) {
+		ok = test_in_place_feedback(&fixture);
+	} else if (strcmp(argv[1], "capture-composition") == 0) {
+		ok = test_capture_composition(&fixture);
+	} else if (strcmp(argv[1], "in-place-shape") == 0) {
+		ok = test_in_place_shape(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

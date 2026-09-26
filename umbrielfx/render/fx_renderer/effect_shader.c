@@ -82,7 +82,8 @@ static const char kBorderSuffix[] =
     "}\n";
 
 // In-place kinds write back through the rounded mask of the drawn rectangle:
-// outside the corner arcs the original pixel is restored.
+// outside the corner arcs the original pixel is restored. The edge is one
+// buffer pixel soft, so straight edges keep every buffer pixel whole.
 static const char kMaskSection[] =
     "uniform vec4 umbriel_corner_radius;\n"
     "float umbriel_mask(vec2 uv) {\n"
@@ -93,7 +94,7 @@ static const char kMaskSection[] =
     "  r = min(r, min(half_size.x, half_size.y));\n"
     "  vec2 q = abs(p) - half_size + r;\n"
     "  float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;\n"
-    "  return 1.0 - smoothstep(-0.5, 0.5, d);\n"
+    "  return 1.0 - smoothstep(-0.5, 0.5, d * umbriel_scale);\n"
     "}\n";
 static const char kWindowSuffix[] =
     "\nvoid main() { gl_FragColor = mix(umbriel_sample(v_texcoord), window(v_texcoord), umbriel_mask(v_texcoord)); }\n";
