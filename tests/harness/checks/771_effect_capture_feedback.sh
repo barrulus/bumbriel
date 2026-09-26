@@ -5,8 +5,11 @@
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-capture-feedback.png"
 cat > "$UMBRIEL_RUNTIME_DIR/accumulate.glsl" <<'GLSL'
-// Each frame adds a little red to the previous result: the value depends on how many frames the history has seen.
-vec4 animation(vec2 uv) { vec4 p = umbriel_sample_previous(uv); return vec4(min(p.r + 0.1, 1.0), 0.0, umbriel_sample(uv).b, 1.0); }
+// Each rendered frame adds a little red to the previous result: the value depends on how many frames the history has
+// seen. The 0.01 step stays well short of the 8-bit ceiling across the several dozen frames a run actually renders
+// (more than its own clock-advance and grim calls: every damaged frame is a feedback step), so two runs with the same
+// step count read back the same value instead of both saturating to white.
+vec4 animation(vec2 uv) { vec4 p = umbriel_sample_previous(uv); return vec4(min(p.r + 0.01, 1.0), 0.0, umbriel_sample(uv).b, 1.0); }
 GLSL
 cat > "$UMBRIEL_RUNTIME_DIR/green.glsl" <<'GLSL'
 vec4 window(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }
@@ -55,29 +58,40 @@ spawn() {
     [[ -n $window ]] && break
     sleep 0.025
   done
-  [[ -n $window ]]
+  [[ -n $window ]] || { echo "the feedback client never mapped"; exit 1; }
   read -r x y w h id < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
 }
-# unmap-client unmaps on a compositor close request without destroying its toplevel, so a later capture by title would
-# still find this instance. Killing the process instead drops its Wayland connection and destroys the toplevel, so a
-# respawn under the same title has no ambiguous match.
+# unmap-client keeps its toplevel alive across a compositor close request, so a respawn under the same title must kill
+# the process instead.
 retire() {
   kill "$client_pid" 2>/dev/null || true
   wait "$client_pid" 2>/dev/null || true
   for _ in $(seq 80); do
-    [[ -z $("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "feedback")') ]] && break
+    window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "feedback")')
+    [[ -z $window ]] && break
     sleep 0.025
   done
+  [[ -z $window ]] || { echo "the retired client's toplevel did not disappear"; exit 1; }
 }
 # The client is blue. The window effect paints it green; the enclosing accumulate program keeps only red (history) and
 # blue (its input). So: an unfiltered frame shows blue > 0 (client seen), a filtered one shows blue = 0 (green window
 # seen), and red counts how many display frames the history has accumulated.
 centre_red() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + h / 2))" | cut -d' ' -f1; }
 centre_blue() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + h / 2))" | cut -d' ' -f3; }
+# Reads the display's accumulated red through a reload that (re-)asserts in_capture = true, which does not touch
+# display history, plus one clock-advance and one grim. Run identically at the end of both the reference and the
+# capture-run sequence below, so both readings cost exactly the same number of rendered frames and are comparable.
+read_display_red() {
+  sed -i 's/^in_capture = false$/in_capture = true/' "$UMBRIEL_CONFIG"
+  "$UMBRIEL" msg config-reload > /dev/null
+  "$UMBRIEL" clock-advance 1 > /dev/null
+  grim "$IMAGE"
+  centre_red
+}
 
 # Reference run with effects included in captures: the same clock steps and the same three grim calls as the capture
-# run below, so both runs draw the same number of display frames (grim itself requests a frame). Only the last reading
-# is kept.
+# run below, so both runs draw the same number of display frames (grim itself requests a frame; read_display_red adds
+# one more, identically, to both readings).
 write_config true
 "$UMBRIEL" clock-freeze
 spawn
@@ -87,7 +101,7 @@ grim "$IMAGE"
 grim "$IMAGE"
 for _ in $(seq 2); do "$UMBRIEL" clock-advance 100 > /dev/null; done
 grim "$IMAGE"
-reference=$(centre_red)
+reference=$(read_display_red)
 retire
 "$UMBRIEL" clock-advance 8000 > /dev/null
 "$UMBRIEL" settle > /dev/null
@@ -109,13 +123,8 @@ if (( first_capture_blue < 200 || second_capture_blue < 200 || third_capture_blu
   echo "captured frames included the window effect (client blue hidden): $first_capture_blue $second_capture_blue $third_capture_blue"
   exit 1
 fi
-# The display kept accumulating through its own history; the capture role kept its own. Read the display through an
-# in_capture = true reload, which does not touch display history.
-sed -i 's/^in_capture = false$/in_capture = true/' "$UMBRIEL_CONFIG"
-"$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" clock-advance 1 > /dev/null
-grim "$IMAGE"
-display_red=$(centre_red)
+# The display kept accumulating through its own history; the capture role kept its own.
+display_red=$(read_display_red)
 if (( display_red < reference - 12 || display_red > reference + 12 )); then
   echo "display feedback diverged from the capture-free run: $display_red vs $reference"
   exit 1
