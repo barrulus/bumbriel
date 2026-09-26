@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears; unknown and
 # mismatched names are reported and leave the setting off; a [colors] change reaches a palette shader without a
-# recompile; the light layer goes away with the last lit preset and comes back with a new one.
+# recompile; the light layer goes away with the last lit preset and comes back with a new one; a [colors] change
+# reaches a screen palette shader that does not read umbriel_time.
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-reload.png"
 readonly LOG_MARK=$(($(wc -l < "$UMBRIEL_LOG") + 1))
@@ -123,4 +124,27 @@ if (( b > 4 )); then
   exit 1
 fi
 add_light "light added back"
-echo "inert preset recovery, reference diagnostics, palette updates without recompilation, and light layer reloads verified"
+# A screen program that does not read umbriel_time gets no effect frames, so only the reload can repaint it.
+sed 's/vec4 border/vec4 screen/' "$UMBRIEL_RUNTIME_DIR/palette.glsl" > "$UMBRIEL_RUNTIME_DIR/tint.glsl"
+sed -i 's/^screen = "nope"$/screen = "tint"\nin_capture = true/' "$UMBRIEL_CONFIG"
+printf '\n[effects.preset.tint]\nkind = "screen"\nshader = "tint.glsl"\npalette = true\n' >> "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle > /dev/null
+screen() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 20 20; }
+grim "$IMAGE"
+read -r r g b < <(screen)
+if (( b < 240 || r > 15 || g > 15 )); then
+  echo "the screen palette preset did not paint accent_primary: $r $g $b"
+  exit 1
+fi
+sed -i 's/^accent_primary = "#0000FFFF"$/accent_primary = "#FF0000FF"/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+read -r r g b < <(screen)
+if (( r < 240 || g > 15 || b > 15 )); then
+  echo "a color change did not reach the screen palette uniform: $r $g $b"
+  exit 1
+fi
+echo "inert preset recovery, reference diagnostics, palette updates without recompilation, light layer reloads, and" \
+  "screen palette updates verified"

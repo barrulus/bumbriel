@@ -81,10 +81,8 @@ Output state and workspace inventory are independent effects.
   and each output with an eligible instance schedules an effect frame. The flag
   refreshes nothing else.
 - A `[colors]` change reaches palette uniforms without recompiling any program:
-  border and window slots rebind through `viewChrome`, animation slots at their
-  next update, and screen and cursor slots at the output's next
-  `Output::applyOutputEffects`, which runs on every effect frame of a program
-  that reads `umbriel_time`.
+  `viewChrome` rebinds border and window slots and reapplies every output's
+  screen and cursor effects, and animation slots take it at their next update.
 - `general.autostart` commands run only during startup, never during reload.
 - `general.xwayland` changes require a compositor restart.
 - `[drm]` changes require a restart because GPU selection happens before backend creation.

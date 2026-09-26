@@ -605,6 +605,8 @@ namespace umbriel {
       }
       // The view refresh cleared every focus ring; put the active one back.
       refocus();
+      // Screen and cursor presets take their palette from [colors] too.
+      m_effects.applyOutputEffects();
       markDirty(Dirty::Backdrop);
       if (m_sessionLocked) {
         updateLockBlank();
