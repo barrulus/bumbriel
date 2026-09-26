@@ -426,6 +426,6 @@ Harness ([`tests/harness/checks`](../../tests/harness/checks)):
 | `770_effect_screen_cursor` | Screen override per output, the cursor square following the pointer, frames stopping when it hides or leaves, lock detachment, and both capture policies. |
 | `771_effect_capture_feedback` | With `in_capture = false`, captured frames exclude the window effect from the first, display history never composites a capture frame, and display feedback counts the same animation instants as a run without capture, for output and toplevel captures. |
 | `780_effect_reload` | Recovery from a missing shader, unknown and mismatched names, `[colors]` reaching a border palette without a recompile and a screen palette that does not read `umbriel_time`, and light layer removal and return. |
-| `790_bundled_effects` | Every bundled preset compiles when selected, and selecting none keeps the compositor plain. |
+| `790_bundled_effects` | Including every bundled preset without selecting one compiles none and requests no effect frames with a window open; selecting them all compiles each without diagnostics. |
 | `480_drag_physics` | Deformation while held, settling, rigid overview cards, handover to the close snapshot, and nothing left running with physics off. |
 | `600_renderer_recovery` | The built-in fade recompiles once per renderer and an animation preset rebinds after recovery. |
