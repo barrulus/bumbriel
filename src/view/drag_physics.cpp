@@ -138,7 +138,7 @@ namespace umbriel {
             vertical = std::max(vertical, std::abs(m_displacement[i + 4][axis] - m_displacement[i][axis]));
         }
       }
-      ratio[axis] = std::max(ratio[axis], 3 * (horizontal + vertical) / (extent * 0.7F));
+      ratio[axis] = std::max(ratio[axis], 3 * (horizontal + vertical) / (extent * kContraction));
       const float maxDisplacement = std::min(kMaxDisplacementPx, extent / 5);
       for (int i = 0; i < kPoints; ++i) {
         ratio[axis] = std::max(ratio[axis], std::abs(m_displacement[i][axis]) / maxDisplacement);

@@ -14,6 +14,9 @@ namespace umbriel {
     static constexpr int kPoints = 16;
     // The bound on any mass's speed on either axis, in logical pixels per second.
     static constexpr float kMaxVelocity = 4000.0F;
+    // Each axis's displacement, divided by that axis's extent, changes by at most this times the larger (u, v)
+    // step. The shader's inverse lookup is a contraction with this factor.
+    static constexpr float kContraction = 0.7F;
     using Sheet = std::array<std::array<float, 2>, kPoints>;
     // `grabX`/`grabY` are the grab point as fractions of the window (0-1). From rest the sheet starts a new episode
     // with `transitionId`, which comes from the shared transition-id source (never 0). A sheet still settling keeps

@@ -2,6 +2,7 @@
 
 #include "check.h"
 
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -32,6 +33,31 @@ namespace {
         }
         previousX = x;
         previousY = y;
+      }
+    }
+    return true;
+  }
+  // The inverse lookup's contraction: over a grid of (u, v) steps, each axis's displacement divided by that axis's
+  // extent changes by at most kContraction times the larger step.
+  bool contracts(const DragPhysics& physics, float width, float height) {
+    constexpr int kSamples = 32;
+    constexpr float kStep = 1.0F / kSamples;
+    const float extent[2] = {width, height};
+    for (int j = 0; j <= kSamples; ++j) {
+      for (int i = 0; i <= kSamples; ++i) {
+        const float u = static_cast<float>(i) * kStep, v = static_cast<float>(j) * kStep;
+        const auto here = physics.displacementAt(u, v);
+        for (const auto& [du, dv] : {std::array{kStep, 0.0F}, std::array{0.0F, kStep}, std::array{kStep, kStep}}) {
+          if (u + du > 1.0F + 1e-6F || v + dv > 1.0F + 1e-6F) {
+            continue;
+          }
+          const auto there = physics.displacementAt(u + du, v + dv);
+          for (int axis = 0; axis < 2; ++axis) {
+            if (std::abs(there[axis] - here[axis]) / extent[axis] > DragPhysics::kContraction * kStep + 1e-5F) {
+              return false;
+            }
+          }
+        }
       }
     }
     return true;
@@ -79,7 +105,26 @@ UMBRIEL_TEST(displacementStaysBoundedAndTheSheetNeverFoldsUnderExtremeShaking) {
     }
     CHECK(physics.maxDisplacement() <= physics.displacementBound() + 1e-3F);
     CHECK(unfolded(physics, 120, 70));
+    CHECK(contracts(physics, 120, 70));
   }
+}
+
+UMBRIEL_TEST(aShrinkingRetargetOfADisplacedSheetStaysAContraction) {
+  DragPhysics physics;
+  physics.begin(800, 600, 0.0F, 0.0F, 1);
+  for (int i = 0; i < 4; ++i) {
+    physics.move((i % 2 == 0 ? 1 : -1) * 400.0F, (i % 3 == 0 ? 1 : -1) * 300.0F);
+    physics.tick(1.0 / 240);
+  }
+  CHECK(physics.maxDisplacement() > 20.0F);
+  CHECK(contracts(physics, 800, 600));
+  // The window halves under the pointer and the grab lands on the far corner, re-pinning the displaced sheet there.
+  physics.resize(400, 300, 1.0F, 0.9F);
+  CHECK(contracts(physics, 400, 300));
+  CHECK(unfolded(physics, 400, 300));
+  physics.move(-60, 40);
+  physics.tick(1.0 / 240);
+  CHECK(contracts(physics, 400, 300));
 }
 
 UMBRIEL_TEST(velocityStaysBoundedWhenAResizeScalesAFastSheet) {
@@ -96,6 +141,7 @@ UMBRIEL_TEST(velocityStaysBoundedWhenAResizeScalesAFastSheet) {
   CHECK(physics.maxVelocity() * scale > DragPhysics::kMaxVelocity);
   physics.resize(1000 * scale, 1000 * scale, 0.5F, 0.5F);
   CHECK(physics.maxVelocity() <= DragPhysics::kMaxVelocity * (1 + 1e-5F));
+  CHECK(contracts(physics, 1000 * scale, 1000 * scale));
 }
 
 UMBRIEL_TEST(reGrabbingWhileSettlingKeepsTheSheetAndItsTransition) {
@@ -114,6 +160,7 @@ UMBRIEL_TEST(reGrabbingWhileSettlingKeepsTheSheetAndItsTransition) {
   CHECK(physics.maxDisplacement() > 1.0F);
   const auto pin = physics.displacementAt(0.7F, 0.6F);
   CHECK(std::abs(pin[0]) < 0.05F && std::abs(pin[1]) < 0.05F);
+  CHECK(contracts(physics, 400, 300));
 }
 
 UMBRIEL_TEST(settlesAfterReleaseAndWhileHeldStill) {
@@ -222,6 +269,7 @@ UMBRIEL_TEST(aBorderedWindowKeepsTheGrabbedCornerUnderThePointer) {
   CHECK(std::abs(boxX + moved[0] * 648 + at[0]) < 0.05F);
   CHECK(std::abs(boxY + moved[1] * 448 + at[1]) < 0.05F);
   CHECK(physics.maxDisplacement() <= physics.displacementBound() + 1e-3F);
+  CHECK(contracts(physics, 648, 448));
 }
 
 int main() { return RUN_TESTS(); }
