@@ -64,6 +64,8 @@ namespace umbriel {
     // Record that something on this output became stale; flushed at the top of the next frame. Schedules that frame, so
     // recording is always enough on its own: marking work that nothing then asks for would simply never happen.
     void markDirty(Dirty what);
+    // Asks for a frame on behalf of persistent effects.
+    void scheduleEffectFrame();
     void onGammaChanged(wlr_gamma_control_v1* control);
     void applyOutputState();
     // Adopt a successfully committed wlr-output-management state in two

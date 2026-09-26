@@ -315,6 +315,9 @@ namespace umbriel {
     void applyPinnedOpacity(float alpha) const;
     void layoutOutput(OutputState& state);
     void layoutCard(Card& card, const PreviewMetrics& metrics, double workspaceScroll, const View* liveTarget);
+    // Refreshes a card's animation and persistent effect slots from its view.
+    void syncCardEffects(Card& card);
+    void syncCardEffects();
     // The window a focus or close action would act on right now: the focused view of the active workspace on the
     // output holding the cursor. Null when that workspace is empty, which is also when those actions do nothing.
     [[nodiscard]] View* liveTargetView() const;

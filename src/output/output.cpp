@@ -98,6 +98,8 @@ namespace umbriel {
     return rule == nullptr || rule->enabled;
   }
 
+  void Output::scheduleEffectFrame() { wlr_output_schedule_frame(m_output); }
+
   wlr_box Output::layoutBox() const {
     wlr_box box{.x = m_arrangedLayoutX, .y = m_arrangedLayoutY, .width = 0, .height = 0};
     wlr_output_effective_resolution(m_output, &box.width, &box.height);

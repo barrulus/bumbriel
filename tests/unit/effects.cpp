@@ -1,8 +1,10 @@
 #include "config/effects.h"
 
 #include "check.h"
+#include "config/config.h"
 #include "scene/effect_ledger.h"
 #include "scene/effect_registry.h"
+#include "view/effects.h"
 
 #include <cstdint>
 
@@ -145,6 +147,32 @@ UMBRIEL_TEST(ledgerUpdatesReplaceAnOwnersPreviousState) {
   }
   CHECK_EQ(ledger.eligible(&output), 1U);
   CHECK_EQ(ledger.active(), 1U);
+}
+
+UMBRIEL_TEST(viewEffectNamesFollowTheMostSpecificSelector) {
+  umbriel::Effects effects;
+  effects.border = "pulse";
+  effects.window = "lines";
+  umbriel::ResolvedWindowRule rule;
+  auto names = umbriel::resolveViewEffectNames(effects, rule);
+  CHECK_EQ(names.border, std::string("pulse"));
+  CHECK_EQ(names.window, std::string("lines"));
+  rule.borderEffect = "off";
+  rule.windowEffect = "scan";
+  names = umbriel::resolveViewEffectNames(effects, rule);
+  CHECK(names.border.empty());
+  CHECK_EQ(names.window, std::string("scan"));
+  rule.borderEffect = "";
+  names = umbriel::resolveViewEffectNames(effects, rule);
+  CHECK(names.border.empty());
+}
+
+UMBRIEL_TEST(borderEffectsApplyOnlyToFocusedDecoratedCalmWindows) {
+  CHECK(umbriel::borderEffectApplies({.focused = true, .decorated = true, .urgent = false, .fullscreen = false}));
+  CHECK(!umbriel::borderEffectApplies({.focused = false, .decorated = true, .urgent = false, .fullscreen = false}));
+  CHECK(!umbriel::borderEffectApplies({.focused = true, .decorated = false, .urgent = false, .fullscreen = false}));
+  CHECK(!umbriel::borderEffectApplies({.focused = true, .decorated = true, .urgent = true, .fullscreen = false}));
+  CHECK(!umbriel::borderEffectApplies({.focused = true, .decorated = true, .urgent = false, .fullscreen = true}));
 }
 
 int main() { return RUN_TESTS(); }

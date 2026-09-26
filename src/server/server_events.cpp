@@ -602,6 +602,13 @@ namespace umbriel {
         updateLockBlank();
       }
     }
+    if (effects.effects && !effects.viewChrome) {
+      for (const auto& view : m_registry.all()) {
+        if (view->mapped()) {
+          view->applyDynamicRules();
+        }
+      }
+    }
     if (effects.animation && m_scratchpadManager != nullptr) {
       m_scratchpadManager->applyConfig();
     }
@@ -1874,6 +1881,7 @@ namespace umbriel {
     if (!m_cursor->isPassthrough()) {
       m_cursor->resetMode();
     }
+    m_effects.removeOutput(output);
     if (m_insertHint != nullptr && m_insertHint->output() == output) {
       m_insertHint->hideImmediate();
     }

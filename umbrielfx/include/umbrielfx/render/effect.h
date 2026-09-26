@@ -166,6 +166,11 @@ void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destinat
 // emit nothing. NULL removes the layer and every light in it.
 void wlr_scene_set_effect_light_layer(struct wlr_scene* scene, struct wlr_scene_tree* layer);
 
+// True when an enabled leaf under `node` has part of its visible region inside
+// `box` (layout coordinates). Leaves under a disabled ancestor, clipped away, or
+// fully occluded have none. NULL is not visible.
+bool wlr_scene_node_visible_in_box(struct wlr_scene_node* node, const struct wlr_box* box);
+
 // Keep the shadow in its stacking layer, but derive its animated silhouette
 // from source. Color is the unattenuated shadow color; source alpha supplies
 // opacity. The association is automatically cleared when either node dies.

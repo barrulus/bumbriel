@@ -266,6 +266,7 @@ if build_tests
     'border-geometry-tree',
     'border-light',
     'border-light-lifecycle',
+    'visible-in-box',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

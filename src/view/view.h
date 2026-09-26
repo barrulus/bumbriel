@@ -4,6 +4,7 @@
 #include "scene/node.h"
 #include "view/decoration.h"
 #include "view/deferred_unfullscreen.h"
+#include "view/effects.h"
 #include "view/floating.h"
 #include "view/presentation.h"
 #include "view/resize_crossfade.h"
@@ -59,7 +60,13 @@ namespace umbriel {
     // content tree (surfaces, borders, backdrop, blur, and animation shaders) sits at (0, 0) inside it, above the
     // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
-    void syncAnimationShaders(wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr);
+    // Refreshes the animation and persistent effect slots on the view's own trees, or on an overview card's `target`,
+    // `border`, and `surface`, gated by `gate` and driven by `cardOutput`.
+    void syncAnimationShaders(
+        wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr, wlr_scene_node* surface = nullptr,
+        const BorderEffectGate* gate = nullptr, Output* cardOutput = nullptr
+    );
+    [[nodiscard]] ViewEffects& effects() { return m_effects; }
     [[nodiscard]] wlr_scene_tree* captureTree() const;
     [[nodiscard]] bool mapped() const { return m_mapped; }
     [[nodiscard]] bool xwayland() const { return m_xwayland; }
@@ -116,8 +123,8 @@ namespace umbriel {
     [[nodiscard]] int decorationBorderWidth() const { return m_decoration.borderWidth(); }
     [[nodiscard]] int decorationOuterBorderWidth() const { return m_decoration.outerBorderWidth(); }
     [[nodiscard]] int decorationCornerRadius() const { return m_decoration.cornerRadius(); }
-    // Resolved border preset's padding when it applies to this view, else 0.
-    [[nodiscard]] int borderEffectPadding() const { return m_decoration.borderPadding(); }
+    // Padding of this window's border preset, 0 without one.
+    [[nodiscard]] int borderEffectPadding() const { return m_effects.borderPadding(); }
     // Opacity multiplier the overview applies to windows it leaves on screen (pinned ones) while it opens and closes.
     void setOverviewOpacity(float opacity);
     [[nodiscard]] wlr_scene_tree* homeTree() const;
@@ -614,6 +621,7 @@ namespace umbriel {
     // must never sample the composited desktop behind translucent content.
     wlr_scene* m_captureScene = nullptr;
     ViewDecoration m_decoration;
+    ViewEffects m_effects;
     ViewPresentation m_presentation;
     ResizeCrossfade m_resizeCrossfade;
     wlr_box m_presentedBox{};

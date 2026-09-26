@@ -452,6 +452,7 @@ namespace umbriel {
     wlr_scene_node_set_enabled(&m_lockBlank->node, false);
     wlr_scene_node_set_enabled(&m_lockTree->node, false);
     wlr_scene_node_lower_to_bottom(&m_backdrop->node);
+    m_effects.ensureLightLayer();
 
     m_gammaManager = wlr_gamma_control_manager_v1_create(m_display);
     m_setGamma.notify = onSetGamma;
@@ -913,6 +914,16 @@ namespace umbriel {
     if (m_insertHint != nullptr) {
       m_insertHint->hideImmediate();
     }
+  }
+
+  wlr_scene_tree* Server::ensureEffectLightLayer() {
+    if (m_effectLightTree == nullptr && m_dragIconTree != nullptr) {
+      // Ring illumination stays below panels and pinned content, above dragged windows.
+      m_effectLightTree = wlr_scene_tree_create(&m_scene->tree);
+      wlr_scene_node_place_above(&m_effectLightTree->node, &m_dragIconTree->node);
+      wlr_scene_set_effect_light_layer(m_scene, m_effectLightTree);
+    }
+    return m_effectLightTree;
   }
 
   wlr_scene_tree* Server::shellLayerTree(uint32_t layer) const {

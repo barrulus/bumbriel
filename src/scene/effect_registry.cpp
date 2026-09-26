@@ -2,6 +2,7 @@
 
 #include "config/config.h"
 #include "core/log.h"
+#include "output/output.h"
 #include "server/server.h"
 
 #include <algorithm>
@@ -150,6 +151,30 @@ namespace umbriel {
       fx_effect_shader_set_shape_preserving(m_builtinFade.get(), true);
     } else if (!fadeNeeded) {
       m_builtinFade.reset();
+    }
+    ensureLightLayer();
+  }
+
+  void EffectRegistry::updateInstance(const void* owner, const EffectInstanceState& state) {
+    const unsigned before = m_ledger.eligible(state.output);
+    m_ledger.update(owner, state);
+    if (before == 0 && m_ledger.eligible(state.output) > 0) {
+      for (const auto& output : m_server->outputs()) {
+        if (output.get() == state.output) {
+          output->scheduleEffectFrame();
+        }
+      }
+    }
+  }
+
+  void EffectRegistry::removeInstance(const void* owner) { m_ledger.remove(owner); }
+
+  void EffectRegistry::ensureLightLayer() {
+    for (const EffectPreset& preset : config().effects.presets) {
+      if (preset.kind == EffectKind::Border && preset.light && m_programs.contains(preset.name)) {
+        m_server->ensureEffectLightLayer();
+        return;
+      }
     }
   }
 

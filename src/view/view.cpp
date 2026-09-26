@@ -11,6 +11,7 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/animation_shader.h"
+#include "scene/effect_registry.h"
 #include "scene/surface_blur.h"
 #include "server/server.h"
 extern "C" {
@@ -275,6 +276,7 @@ namespace umbriel {
       m_acceptClientMaximizeIdle = nullptr;
     }
     m_server->unregisterAnimatable(this);
+    m_effects.detach();
     clearViewSurfaceWatches();
     setWorkspace(nullptr);
     if (m_map.link.next != nullptr) {
@@ -1316,8 +1318,12 @@ namespace umbriel {
     scheduleFrame();
   }
 
-  void View::syncAnimationShaders(wlr_scene_tree* target, wlr_scene_node* border) {
-    if (target == nullptr) {
+  void View::syncAnimationShaders(
+      wlr_scene_tree* target, wlr_scene_node* border, wlr_scene_node* surface, const BorderEffectGate* gate,
+      Output* cardOutput
+  ) {
+    const bool ownTrees = target == nullptr;
+    if (ownTrees) {
       target = m_contentTree;
       if (m_decoration.borderTree() != nullptr) {
         border = &m_decoration.borderTree()->node;
@@ -1331,6 +1337,7 @@ namespace umbriel {
       if (border != nullptr) {
         wlr_scene_node_clear_animations(border);
       }
+      m_effects.detach();
       return;
     }
     auto* renderer = m_server->renderer();
@@ -1357,6 +1364,30 @@ namespace umbriel {
     updateAnimationShader(
         border, renderer, AnimationEvent::Border, m_borderColorAnim, m_borderFocusedState ? 1.0F : -1.0F
     );
+    // Persistent effects. With none configured this costs one string check per slot and never reads the clock.
+    if (m_effects.configured() || effectRegistry().active()) {
+      if (ownTrees) {
+        surface = toplevelSurfaceTreeNode(m_contentTree, m_toplevel->base->surface);
+      }
+      const BorderEffectGate ownGate{
+          .focused = m_borderFocusedState,
+          .decorated = decorated(),
+          .urgent = m_urgent,
+          .fullscreen = m_toplevel->scheduled.fullscreen,
+      };
+      Output* output = cardOutput != nullptr ? cardOutput : currentOutput();
+      m_effects.apply({
+          .surface = surface,
+          .border = border,
+          .gate = gate != nullptr ? *gate : ownGate,
+          .seconds = m_effects.configured() ? effectRegistry().clockSeconds() : 0.0F,
+#ifdef UMBRIEL_TEST_IPC
+          .clockAdvancing = !m_server->animationClockFrozen(),
+#endif
+          .output = output,
+          .outputBox = output != nullptr ? output->layoutBox() : wlr_box{},
+      });
+    }
   }
 
   bool View::tickAnimations(uint64_t nowMsec) {
@@ -3095,6 +3126,7 @@ namespace umbriel {
       setSceneParent(m_workspace ? m_workspace->viewLayer(m_tiled) : m_server->xdgTree());
     }
     m_mapped = false;
+    m_effects.detach();
     m_openingParentRequested = false;
     m_acceptClientMaximizeRequests = false;
     m_consumeRestoredMaximizeRequest = false;
@@ -4596,6 +4628,12 @@ namespace umbriel {
     m_appliedRuleState = ruleState();
     // Tile spacing stays on the global border width, so a decoration change redraws this window without an arrange.
     if (m_decoration.applyRule(rule)) {
+      updateBorderGeometry();
+      applyCornerRadius();
+      updateShadow();
+    }
+    m_effects.resolve(config().effects, rule);
+    if (m_decoration.setBorderPadding(m_effects.borderPadding())) {
       updateBorderGeometry();
       applyCornerRadius();
       updateShadow();

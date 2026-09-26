@@ -1134,6 +1134,19 @@ static void scene_node_visibility(struct wlr_scene_node* node, pixman_region32_t
   pixman_region32_union(visible, visible, &node->visible);
 }
 
+bool wlr_scene_node_visible_in_box(struct wlr_scene_node* node, const struct wlr_box* box) {
+  if (node == NULL) {
+    return false;
+  }
+  pixman_region32_t visible;
+  pixman_region32_init(&visible);
+  scene_node_visibility(node, &visible);
+  pixman_region32_intersect_rect(&visible, &visible, box->x, box->y, box->width, box->height);
+  const bool result = pixman_region32_not_empty(&visible);
+  pixman_region32_fini(&visible);
+  return result;
+}
+
 static void scene_node_bounds(struct wlr_scene_node* node, int x, int y, pixman_region32_t* visible) {
   if (!node->enabled) {
     return;

@@ -956,6 +956,31 @@ static bool test_border_light_lifecycle(struct fixture *fixture) {
 	return ok;
 }
 
+// The visibility query tests a subtree's leaf visible regions against a layout box.
+static bool test_visible_in_box(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	wlr_scene_output_create(scene, fixture->output);
+	const float white[4] = { 1, 1, 1, 1 }, red[4] = { 1, 0, 0, 1 };
+	struct wlr_scene_tree *frame = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_node_set_position(&frame->node, 4, 4);
+	struct wlr_scene_rect *leaf = wlr_scene_rect_create(frame, 8, 8, white);
+	const struct wlr_box output = { 0, 0, TEST_WIDTH, TEST_HEIGHT };
+	const struct wlr_box right = { 10, 0, 6, TEST_HEIGHT };
+	const struct wlr_box beyond = { TEST_WIDTH, 0, TEST_WIDTH, TEST_HEIGHT };
+	bool ok = check(wlr_scene_node_visible_in_box(&frame->node, &output), "a tree with a visible leaf is visible");
+	ok &= check(wlr_scene_node_visible_in_box(&leaf->node, &right), "a leaf partly inside the box is visible");
+	ok &= check(!wlr_scene_node_visible_in_box(&frame->node, &beyond), "nothing is visible outside the box");
+	struct wlr_scene_rect *cover = wlr_scene_rect_create(&scene->tree, 6, TEST_HEIGHT, red);
+	wlr_scene_node_set_position(&cover->node, 10, 0);
+	ok &= check(!wlr_scene_node_visible_in_box(&frame->node, &right), "an occluded part is not visible");
+	ok &= check(wlr_scene_node_visible_in_box(&frame->node, &output), "the uncovered part still is");
+	wlr_scene_node_set_enabled(&frame->node, false);
+	ok &= check(!wlr_scene_node_visible_in_box(&leaf->node, &output), "a leaf under a disabled tree is not visible");
+	ok &= check(!wlr_scene_node_visible_in_box(NULL, &output), "a null node is not visible");
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -998,6 +1023,8 @@ int main(int argc, char *argv[]) {
 		ok = test_border_light(&fixture);
 	} else if (strcmp(argv[1], "border-light-lifecycle") == 0) {
 		ok = test_border_light_lifecycle(&fixture);
+	} else if (strcmp(argv[1], "visible-in-box") == 0) {
+		ok = test_visible_in_box(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

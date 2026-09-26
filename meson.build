@@ -520,6 +520,7 @@ pure_sources = files(
   'src/scene/cheatsheet_rows.cpp',
   'src/overview/shortcut_labels.cpp',
   'src/view/border_ring.cpp',
+  'src/view/effects_rules.cpp',
   'src/view/floating.cpp',
 )
 
@@ -576,6 +577,7 @@ core_sources = files(
   'src/input/cursor_constraint.cpp',
   'src/view/view.cpp',
   'src/view/decoration.cpp',
+  'src/view/effects.cpp',
   'src/view/presentation.cpp',
   'src/view/resize_crossfade.cpp',
   'src/view/registry.cpp',

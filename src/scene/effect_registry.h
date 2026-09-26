@@ -56,6 +56,12 @@ namespace umbriel {
     [[nodiscard]] bool active() const { return m_ledger.active() > 0; }
     [[nodiscard]] EffectLedger& ledger() { return m_ledger; }
     void setSuspended(bool suspended) { m_ledger.setSuspended(suspended); }
+    // Records an instance; schedules its output's effect frame when that output gains its first eligible instance.
+    void updateInstance(const void* owner, const EffectInstanceState& state);
+    void removeInstance(const void* owner);
+    void removeOutput(const void* output) { m_ledger.removeOutput(output); }
+    // Creates the scene's light layer once a compiled border preset has `light`.
+    void ensureLightLayer();
 
   private:
     struct Entry {

@@ -19,6 +19,7 @@ extern "C" {
 #include "overview/shortcut_labels.h"
 #include "scene/border_rect.h"
 #include "scene/color.h"
+#include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/text_buffer.h"
 #include "server/server.h"
@@ -219,7 +220,6 @@ namespace umbriel {
 
   void Overview::layoutCard(Card& card, const PreviewMetrics& metrics, double workspaceScroll, const View* liveTarget) {
     View* view = card.view;
-    view->syncAnimationShaders(card.tree, card.border != nullptr ? &card.border->node : nullptr);
     if (card.shadowTree != nullptr) {
       wlr_scene_node_set_enabled(&card.shadowTree->node, false);
     }
@@ -227,6 +227,7 @@ namespace umbriel {
     if (geometry.width <= 0 || geometry.height <= 0) {
       card.blur.hide();
       wlr_scene_node_set_enabled(&card.tree->node, false);
+      syncCardEffects(card);
       return;
     }
     wlr_scene_node_set_enabled(&card.tree->node, true);
@@ -234,6 +235,7 @@ namespace umbriel {
     if (view->tiledOpeningDeferred()) {
       card.blur.hide();
       wlr_scene_node_set_enabled(&card.tree->node, false);
+      syncCardEffects(card);
       return;
     }
 
@@ -242,6 +244,7 @@ namespace umbriel {
     if (world.width <= 0 || world.height <= 0) {
       card.blur.hide();
       wlr_scene_node_set_enabled(&card.tree->node, false);
+      syncCardEffects(card);
       return;
     }
     const int contentW = std::max(1, static_cast<int>(std::lround(world.width * z)));
@@ -291,6 +294,7 @@ namespace umbriel {
       const std::array<float, 4> outerColor = tint(view->borderColors().outer, presentedOpacity);
       wlr_scene_border_set_colors(card.border, innerColor.data(), outerColor.data());
     }
+    syncCardEffects(card);
 
     if (card.badge != nullptr) {
       // Overshooting curves can push m_progress past [0, 1] and wlr_scene_buffer_set_opacity asserts.
@@ -559,6 +563,29 @@ namespace umbriel {
   View* Overview::liveTargetView() const {
     const Workspace* workspace = preferredWorkspace();
     return workspace != nullptr ? workspace->focusedView() : nullptr;
+  }
+
+  void Overview::syncCardEffects(Card& card) {
+    View* view = card.view;
+    Workspace* workspace = view->workspace();
+    const BorderEffectGate cardGate{
+        .focused = workspace != nullptr && workspace->focusedView() == view && &card != m_dragCard,
+        .decorated = card.border != nullptr && card.border->node.enabled && card.tree->node.enabled,
+        .urgent = view->urgent(),
+        .fullscreen = view->toplevel()->current.fullscreen,
+    };
+    view->syncAnimationShaders(
+        card.tree, card.border != nullptr ? &card.border->node : nullptr,
+        card.surfaces.empty() ? nullptr : &card.surfaces.front()->buffer->node, &cardGate, card.owner->output
+    );
+  }
+
+  void Overview::syncCardEffects() {
+    for (const auto& state : m_outputs) {
+      for (const auto& card : state->cards) {
+        syncCardEffects(*card);
+      }
+    }
   }
 
   std::array<float, 4> Overview::cardBorderColor(const Card& card, const View* liveTarget) const {
@@ -1122,6 +1149,10 @@ namespace umbriel {
   }
 
   void Overview::destroyCard(Card* card) {
+    card->view->effects().detachNodes(
+        card->surfaces.empty() ? nullptr : &card->surfaces.front()->buffer->node,
+        card->border != nullptr ? &card->border->node : nullptr
+    );
     for (const auto& entry : card->surfaces) {
       wl_list_remove(&entry->commit.link);
       wl_list_remove(&entry->destroy.link);
@@ -1745,6 +1776,10 @@ namespace umbriel {
       applyProgress();
     }
     m_cardPresentationDirty = false;
+    // Card layout runs only while the overview moves; effect time advances every tick.
+    if (m_active && effectRegistry().active()) {
+      syncCardEffects();
+    }
     for (const auto& state : m_outputs) {
       updateAnimationShader(
           &state->tree->node, m_server->renderer(), AnimationEvent::Overview,
