@@ -66,7 +66,8 @@ namespace umbriel {
     void markDirty(Dirty what);
     // Asks for a frame on behalf of persistent effects.
     void scheduleEffectFrame();
-    // Pushes the effect capture policy to this output's scene.
+    // Pushes the effect capture policy and the screen and cursor presets to this output's scene. Detached while
+    // effects are suspended.
     void applyOutputEffects();
     // Captures are released only by a built frame: asks for one when the last frame kept effects out of a capture.
     void scheduleEffectCaptureRelease();
@@ -200,6 +201,8 @@ namespace umbriel {
     bool m_effectFrameArmed = false;
     uint64_t m_effectFrames = 0;
     float m_effectSeconds = 0.0F;
+    bool m_outputEffectsTimed = false; // a bound screen or cursor program reads umbriel_time
+    char m_cursorEffectOwner{};        // ledger identity of the cursor slot; the screen slot uses `this`
     bool m_effectCaptureBuilt = false; // the last built frame had an effect capture pending
     View* m_autoHdrOwner = nullptr;
     std::string m_hdrFallbackReason;

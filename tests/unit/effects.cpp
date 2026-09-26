@@ -184,4 +184,16 @@ UMBRIEL_TEST(borderPaddingNeedsACompiledBorderPreset) {
   CHECK_EQ(umbriel::borderPresetPadding(&window, true), 0);
 }
 
+UMBRIEL_TEST(screenEffectNameFollowsTheOutputOverride) {
+  umbriel::Effects effects;
+  effects.screen = "vig";
+  CHECK_EQ(umbriel::resolveScreenEffectName(effects, nullptr), std::string("vig"));
+  umbriel::OutputRule rule;
+  CHECK_EQ(umbriel::resolveScreenEffectName(effects, &rule), std::string("vig"));
+  rule.screenEffect = "off";
+  CHECK(umbriel::resolveScreenEffectName(effects, &rule).empty());
+  rule.screenEffect = "crt";
+  CHECK_EQ(umbriel::resolveScreenEffectName(effects, &rule), std::string("crt"));
+}
+
 int main() { return RUN_TESTS(); }

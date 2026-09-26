@@ -4,6 +4,7 @@
 #include "core/log.h"
 #include "output/output.h"
 #include "server/server.h"
+#include "wlr.h"
 
 #include <algorithm>
 
@@ -67,7 +68,22 @@ namespace umbriel {
     m_builtinFade.reset();
     m_persistentReferenced = false;
     m_inPlaceReferenced = false;
+    m_cursorActive = false;
     m_renderer = nullptr;
+  }
+
+  void EffectRegistry::updateCursorActive() {
+    m_cursorActive = preset(config().effects.cursor, EffectKind::Cursor) != nullptr && !m_ledger.suspended();
+  }
+
+  void EffectRegistry::setSuspended(bool suspended) {
+    m_ledger.setSuspended(suspended);
+    updateCursorActive();
+  }
+
+  void EffectRegistry::removeOutput(const void* output) {
+    m_ledger.removeOutput(output);
+    m_pointerOutput = nullptr;
   }
 
   void EffectRegistry::referencedNames(std::vector<std::string>& names) const {
@@ -147,8 +163,11 @@ namespace umbriel {
       return item.second.kind != EffectKind::Animation && item.second.shader != nullptr;
     });
     m_inPlaceReferenced = std::ranges::any_of(m_programs, [](const auto& item) {
-      return item.second.kind == EffectKind::Window && item.second.shader != nullptr;
+      const EffectKind kind = item.second.kind;
+      return (kind == EffectKind::Window || kind == EffectKind::Screen || kind == EffectKind::Cursor)
+          && item.second.shader != nullptr;
     });
+    updateCursorActive();
     const bool fadeNeeded = builtinFadeApplies(settings.animation, AnimationEvent::WindowsIn)
         || builtinFadeApplies(settings.animation, AnimationEvent::WindowsOut);
     if (fadeNeeded && m_builtinFade == nullptr) {
@@ -167,6 +186,19 @@ namespace umbriel {
   void EffectRegistry::applyOutputEffects() {
     for (const auto& output : m_server->outputs()) {
       output->applyOutputEffects();
+    }
+  }
+
+  void EffectRegistry::pointerMoved(double lx, double ly, bool visible) {
+    for (const auto& output : m_server->outputs()) {
+      wlr_scene_output_set_effect_pointer(output->sceneOutput(), lx, ly, visible);
+    }
+    // The cursor instance's visibility follows the output under the pointer.
+    const void* under = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly);
+    if (under != m_pointerOutput || visible != m_pointerVisible) {
+      m_pointerOutput = under;
+      m_pointerVisible = visible;
+      applyOutputEffects();
     }
   }
 

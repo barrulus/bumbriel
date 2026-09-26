@@ -123,6 +123,7 @@ namespace umbriel {
     Cursor& operator=(const Cursor&) = delete;
 
     [[nodiscard]] wlr_cursor* wlr() const { return m_cursor; }
+    [[nodiscard]] bool visible() const { return !m_cursorHidden; }
     [[nodiscard]] wlr_xcursor_manager* xcursorManager() const { return m_xcursorManager; }
     [[nodiscard]] bool isPassthrough() const;
     [[nodiscard]] View* grabbedView() const;
@@ -280,6 +281,8 @@ namespace umbriel {
     void noteActivity();
     void updateHideTimer();
     void hideCursor();
+    // Sends the pointer and its visibility to the cursor effect, only while one is active.
+    void forwardEffectPointer() const;
     static int onHideTimer(void* data);
     void updateHotCorner();
     void cancelHotCorner();

@@ -20,6 +20,7 @@
 #include "server/ipc.h"
 #include "server/server.h"
 #include "server/wine_color_manager.h"
+#include "view/effects.h"
 #include "view/view.h"
 #include "wlr.h"
 #include "workspace/scratchpad.h"
@@ -112,12 +113,58 @@ namespace umbriel {
   }
 
   void Output::applyOutputEffects() {
-    // Nothing configured: touch nothing (no addon, no scene calls). The registry's counts are zero too.
-    const Effects& effects = config().effects;
-    if (effects.presets.empty() && !m_server->effects().active()) {
+    EffectRegistry& registry = m_server->effects();
+    const Effects& settings = config().effects;
+    // Nothing configured: touch nothing (no addon, no scene calls). The registry's counts are zero too; a bound
+    // screen or cursor slot keeps a ledger instance, so it is still detached below.
+    if (settings.presets.empty() && !registry.active()) {
       return;
     }
-    wlr_scene_output_set_effect_capture_policy(m_sceneOutput, effects.inCapture);
+    wlr_scene_output_set_effect_capture_policy(m_sceneOutput, settings.inCapture);
+    const std::string screenName = resolveScreenEffectName(settings, findOutputRule(config(), identity()));
+    fx_effect_shader* screen =
+        registry.ledger().suspended() ? nullptr : registry.preset(screenName, EffectKind::Screen);
+    const EffectPreset* screenPreset = screen != nullptr ? registry.presetConfig(screenName) : nullptr;
+    fx_effect_shader* cursor =
+        registry.cursorEffectActive() ? registry.preset(settings.cursor, EffectKind::Cursor) : nullptr;
+    const EffectPreset* cursorPreset = cursor != nullptr ? registry.presetConfig(settings.cursor) : nullptr;
+    bool advancing = true;
+#ifdef UMBRIEL_TEST_IPC
+    advancing = !m_server->animationClockFrozen();
+#endif
+    m_outputEffectsTimed = false;
+    // Registers the slot's instance and returns its parameters at this output's effect time.
+    const auto bind = [&](const void* owner, const EffectPreset& preset, fx_effect_shader* shader, bool visible) {
+      fx_animation_parameters parameters{};
+      registry.fillTimeUniforms(parameters, m_effectSeconds, preset, shader);
+      const bool readsTime = fx_effect_shader_reads(shader, "umbriel_time");
+      m_outputEffectsTimed = m_outputEffectsTimed || readsTime;
+      registry.updateInstance(
+          owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing}
+      );
+      return parameters;
+    };
+    if (screenPreset != nullptr) {
+      const fx_animation_parameters parameters = bind(this, *screenPreset, screen, m_output->enabled);
+      wlr_scene_output_set_screen_effect(m_sceneOutput, screen, &parameters);
+    } else {
+      wlr_scene_output_set_screen_effect(m_sceneOutput, nullptr, nullptr);
+      registry.removeInstance(this);
+    }
+    const Cursor* pointer = m_server->cursor();
+    if (cursorPreset != nullptr && pointer != nullptr) {
+      const double lx = pointer->wlr()->x;
+      const double ly = pointer->wlr()->y;
+      const bool here = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly) == m_output;
+      const fx_animation_parameters parameters =
+          bind(&m_cursorEffectOwner, *cursorPreset, cursor, m_output->enabled && here && pointer->visible());
+      wlr_scene_output_set_cursor_effect(m_sceneOutput, cursor, &parameters, cursorPreset->radius);
+      // A newly set cursor program draws nothing until the pointer is pushed after it.
+      wlr_scene_output_set_effect_pointer(m_sceneOutput, lx, ly, pointer->visible());
+    } else {
+      wlr_scene_output_set_cursor_effect(m_sceneOutput, nullptr, nullptr, 0);
+      registry.removeInstance(&m_cursorEffectOwner);
+    }
   }
 
   void Output::scheduleEffectCaptureRelease() {
@@ -1117,6 +1164,9 @@ namespace umbriel {
       m_effectSeconds = effects.clockSeconds();
     }
     m_server->tickAnimations(m_server->animationClockMsec());
+    if (stampEffectTime && m_outputEffectsTimed) {
+      applyOutputEffects();
+    }
 
     // Surface commits reset scene-buffer opacity to the protocol alpha. Repair
     // pending rule opacity after every commit listener and before composition.

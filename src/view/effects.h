@@ -20,6 +20,8 @@ namespace umbriel {
     std::string window;
   };
   [[nodiscard]] ViewEffectNames resolveViewEffectNames(const Effects& effects, const ResolvedWindowRule& rule);
+  // The screen preset for an output: its `screen_effect` replaces the default; empty when off.
+  [[nodiscard]] std::string resolveScreenEffectName(const Effects& effects, const OutputRule* rule);
 
   struct BorderEffectGate {
     bool focused = false;

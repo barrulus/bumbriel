@@ -220,6 +220,7 @@ namespace umbriel {
   void Cursor::noteActivity() {
     if (m_cursorHidden) {
       m_cursorHidden = false;
+      forwardEffectPointer();
       if (m_compositorOwnsCursor) {
         setXcursor(m_compositorCursorName.c_str());
       } else {
@@ -243,6 +244,7 @@ namespace umbriel {
       }
       if (m_cursorHidden) {
         m_cursorHidden = false;
+        forwardEffectPointer();
         if (m_compositorOwnsCursor) {
           setXcursor(m_compositorCursorName.c_str());
         } else {
@@ -271,7 +273,14 @@ namespace umbriel {
       return;
     }
     m_cursorHidden = true;
+    forwardEffectPointer();
     wlr_cursor_set_surface(m_cursor, nullptr, 0, 0);
+  }
+
+  void Cursor::forwardEffectPointer() const {
+    if (m_server->effects().cursorEffectActive()) {
+      m_server->effects().pointerMoved(m_cursor->x, m_cursor->y, !m_cursorHidden);
+    }
   }
 
   int Cursor::onHideTimer(void* data) {
@@ -1380,6 +1389,7 @@ namespace umbriel {
 
   void Cursor::processMotion(uint32_t timeMsec, double oldX, double oldY, bool allowFocusChange) {
     updateHotCorner();
+    forwardEffectPointer();
     if (auto* grab = std::get_if<ScrollDragGrab>(&m_grab)) {
       if (m_server->sessionLocked()) {
         m_server->gestures()->endPointerScroll(true, timeMsec);

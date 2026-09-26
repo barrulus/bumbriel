@@ -2,15 +2,22 @@
 
 namespace umbriel {
 
-  ViewEffectNames resolveViewEffectNames(const Effects& effects, const ResolvedWindowRule& rule) {
+  namespace {
     // The most specific selector replaces the default by name; "off" and "" both disable it.
-    const auto pick = [](const std::string& fallback, const std::optional<std::string>& override) {
+    std::string pick(const std::string& fallback, const std::optional<std::string>& override) {
       if (!override) {
         return fallback;
       }
       return *override == kEffectOff ? std::string() : *override;
-    };
+    }
+  } // namespace
+
+  ViewEffectNames resolveViewEffectNames(const Effects& effects, const ResolvedWindowRule& rule) {
     return {.border = pick(effects.border, rule.borderEffect), .window = pick(effects.window, rule.windowEffect)};
+  }
+
+  std::string resolveScreenEffectName(const Effects& effects, const OutputRule* rule) {
+    return rule != nullptr ? pick(effects.screen, rule->screenEffect) : effects.screen;
   }
 
   bool borderEffectApplies(const BorderEffectGate& gate) {

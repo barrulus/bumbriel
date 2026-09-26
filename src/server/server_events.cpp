@@ -1335,6 +1335,7 @@ namespace umbriel {
 
       m_sessionLocked = true;
       m_effects.setSuspended(true);
+      m_effects.applyOutputEffects();
       cancelModifierTap();
       m_overview->forceClose();
       if (m_cheatsheet != nullptr) {
@@ -1357,6 +1358,7 @@ namespace umbriel {
   void Server::unlockSession() {
     m_sessionLocked = false;
     m_effects.setSuspended(false);
+    m_effects.applyOutputEffects();
     for (const auto& output : m_outputs) {
       if (output->effectEligible() > 0) {
         output->scheduleEffectFrame();

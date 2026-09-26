@@ -56,18 +56,22 @@ namespace umbriel {
     [[nodiscard]] bool active() const { return m_ledger.active() > 0; }
     // True when a referenced preset of a persistent kind compiled, so views may attach instances.
     [[nodiscard]] bool persistentReferenced() const { return m_persistentReferenced; }
-    // True when a referenced window preset (a window effect or an overlay) compiled.
+    // True when a referenced in-place preset (window, overlay, screen or cursor) compiled.
     [[nodiscard]] bool inPlaceReferenced() const { return m_inPlaceReferenced; }
+    // True while the default cursor preset compiled and effects are not suspended: only then does motion reach outputs.
+    [[nodiscard]] bool cursorEffectActive() const { return m_cursorActive; }
     [[nodiscard]] EffectLedger& ledger() { return m_ledger; }
-    void setSuspended(bool suspended) { m_ledger.setSuspended(suspended); }
+    void setSuspended(bool suspended);
     // Records an instance; schedules its output's effect frame when that output gains its first eligible instance.
     void updateInstance(const void* owner, const EffectInstanceState& state);
     void removeInstance(const void* owner);
-    void removeOutput(const void* output) { m_ledger.removeOutput(output); }
+    void removeOutput(const void* output);
     // Keeps the scene's light layer while a compiled border preset has `light`, and removes it otherwise.
     void syncLightLayer();
     // Pushes the output-level effect settings to every output.
     void applyOutputEffects();
+    // Forwards the pointer to every output's cursor slot; call only while cursorEffectActive().
+    void pointerMoved(double lx, double ly, bool visible);
 
   private:
     struct Entry {
@@ -77,6 +81,7 @@ namespace umbriel {
     };
     void compile(const EffectPreset& preset);
     void referencedNames(std::vector<std::string>& names) const;
+    void updateCursorActive();
 
     Server* m_server = nullptr;
     wlr_renderer* m_renderer = nullptr;
@@ -84,6 +89,9 @@ namespace umbriel {
     std::shared_ptr<fx_effect_shader> m_builtinFade;
     bool m_persistentReferenced = false;
     bool m_inPlaceReferenced = false;
+    bool m_cursorActive = false;
+    const void* m_pointerOutput = nullptr; // the wlr_output under the pointer at the last forward
+    bool m_pointerVisible = false;
     EffectLedger m_ledger;
     mutable uint64_t m_clockEpochMsec = 0;
     mutable bool m_clockEpochSet = false;
