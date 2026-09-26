@@ -75,9 +75,10 @@ retire() {
 # seen), and red counts how many display frames the history has accumulated.
 centre_red() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + h / 2))" | cut -d' ' -f1; }
 centre_blue() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + h / 2))" | cut -d' ' -f3; }
-# Reads the display's accumulated red through a reload that (re-)asserts in_capture = true, which does not touch
-# display history, plus one clock-advance and one grim. Run identically at the end of both the reference and the
-# capture-run sequence below, so both readings cost exactly the same number of rendered frames and are comparable.
+# Reads the display's accumulated red through a reload asserting in_capture = true, plus one clock-advance and one
+# grim. That reload is a no-op in the reference run (already true) and flips the policy back in the capture run
+# (redamaging and scheduling an extra frame there); either way it never touches display history, so the two
+# readings below remain comparable.
 read_display_red() {
   sed -i 's/^in_capture = false$/in_capture = true/' "$UMBRIEL_CONFIG"
   "$UMBRIEL" msg config-reload > /dev/null
@@ -87,8 +88,8 @@ read_display_red() {
 }
 
 # Reference run with effects included in captures: the same clock steps and the same three grim calls as the capture
-# run below, so both runs draw the same number of display frames (grim itself requests a frame; read_display_red adds
-# one more, identically, to both readings).
+# run below (grim itself requests a frame; read_display_red adds one more) so the two runs' display histories stay
+# comparable, even though the capture run's own read_display_red does extra work of its own (see above).
 write_config true
 "$UMBRIEL" clock-freeze
 spawn

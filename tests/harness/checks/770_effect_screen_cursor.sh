@@ -122,8 +122,9 @@ sleep 0.3 # real time: effect-only frames arrive on the output's own timer
 before=$(frames HEADLESS-1)
 sleep 0.3 # real time: an off-output cursor instance must request no frames
 (( $(frames HEADLESS-1) == before )) || { echo "an off-output cursor effect kept requesting frames on HEADLESS-1"; exit 1; }
-# A hidden pointer stops frames too: back on HEADLESS-1, let the hide timeout elapse, then a fresh motion restores
-# both the frames and the visible square.
+# A hidden pointer stops frames too: back on HEADLESS-1, let the hide timeout elapse, then reloading with
+# hide_timeout_ms = 0 un-hides the pointer immediately (updateHideTimer runs on the reload itself), restoring
+# the square before the motion below is even sent.
 "$UMBRIEL_POINTER_CLIENT" "$OUTPUT_W" "$OUTPUT_H" move 300 300 > /dev/null
 sed -i 's/^hide_timeout_ms = 0$/hide_timeout_ms = 100/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
@@ -141,7 +142,7 @@ sed -i 's/^hide_timeout_ms = 100$/hide_timeout_ms = 0/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" settle > /dev/null
 grim -s 1 -o HEADLESS-1 "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 300 300)
-(( g > 240 )) || { echo "the next motion did not restore the cursor square after it hid: $r $g $b"; exit 1; }
+(( g > 240 )) || { echo "hide_timeout_ms returning to 0 did not restore the cursor square: $r $g $b"; exit 1; }
 
 # The lock detaches both effects (eligible drops to 0, frames stop growing); unlock restores them.
 readonly LOCK_LOG="$UMBRIEL_RUNTIME_DIR/lock-client.log"
@@ -154,8 +155,10 @@ grep -q '^locked$' "$LOCK_LOG" || { echo "the session never locked"; exit 1; }
 "$UMBRIEL" settle > /dev/null
 grim -s 1 -o HEADLESS-1 "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 900 600)
-# The lock client draws its own surface; whatever it draws, it must not be the inverted white nor green.
-(( g < 240 || r > 20 )) || { echo "effects stayed attached under the session lock: $r $g $b"; exit 1; }
+# The lock client fills its surface with r=16 g=32 b=48; the inverted screen effect would read white.
+(( r < 40 && g < 60 && b < 80 )) || { echo "the screen effect stayed attached under the session lock: $r $g $b"; exit 1; }
+read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 300 300)
+(( g < 240 )) || { echo "the cursor effect stayed attached under the session lock: $r $g $b"; exit 1; }
 locked_eligible=$(eligible HEADLESS-1)
 (( locked_eligible == 0 )) || { echo "a session lock did not suspend the effect ledger: eligible=$locked_eligible"; exit 1; }
 before=$(frames HEADLESS-1)
