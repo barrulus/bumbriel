@@ -212,10 +212,17 @@ vec4 animation(vec2 uv) {
     } else if (!fadeNeeded) {
       m_builtinFade.reset();
     }
-    if (settings.animation.enabled && settings.animation.windowsDrag.physics) {
-      (void)deformationShader();
-    } else {
+    if (!settings.animation.enabled || !settings.animation.windowsDrag.physics) {
       dropDeformation();
+    } else if (!m_deformationCompiled) {
+      m_deformationCompiled = true;
+      m_deformation = {
+          fx_effect_shader_create(m_renderer, FX_EFFECT_ANIMATION, kDeformation, "animation.windows_drag"),
+          fx_effect_shader_unref
+      };
+      if (m_deformation == nullptr) {
+        kLog.error("the drag physics program failed to compile; dragged windows stay rigid");
+      }
     }
     syncLightLayer();
     applyOutputEffects();
@@ -291,22 +298,9 @@ vec4 animation(vec2 uv) {
     m_deformationCompiled = false;
   }
 
-  fx_effect_shader* EffectRegistry::deformationShader() {
+  fx_effect_shader* EffectRegistry::deformationShader() const {
     const Config::Animation& settings = config().animation;
-    if (!settings.enabled || !settings.windowsDrag.physics || m_renderer == nullptr) {
-      return nullptr;
-    }
-    if (!m_deformationCompiled) {
-      m_deformationCompiled = true;
-      m_deformation = {
-          fx_effect_shader_create(m_renderer, FX_EFFECT_ANIMATION, kDeformation, "animation.windows_drag"),
-          fx_effect_shader_unref
-      };
-      if (m_deformation == nullptr) {
-        kLog.error("the drag physics program failed to compile; dragged windows stay rigid");
-      }
-    }
-    return m_deformation.get();
+    return settings.enabled && settings.windowsDrag.physics ? m_deformation.get() : nullptr;
   }
 
   const EffectPreset* EffectRegistry::animationPreset(AnimationEvent event) const {

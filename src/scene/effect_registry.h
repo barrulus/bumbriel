@@ -44,9 +44,9 @@ namespace umbriel {
     // The program a lifecycle fade composes through: the event's preset, or for windows_in and windows_out without
     // one, the built-in fade. Null when buffers fade individually.
     [[nodiscard]] fx_effect_shader* lifecycleShader(AnimationEvent event) const;
-    // The drag slot's built-in deformation program, compiled on first use for the current renderer. Null while
-    // animations or windows_drag.physics are off.
-    [[nodiscard]] fx_effect_shader* deformationShader();
+    // The drag slot's built-in deformation program, compiled by prepare() for the current renderer. Null while
+    // animations or windows_drag.physics are off, or when it failed to compile.
+    [[nodiscard]] fx_effect_shader* deformationShader() const;
     // The preset bound to an animation event through `effect =`, or null (also null for the built-in fade).
     [[nodiscard]] const EffectPreset* animationPreset(AnimationEvent event) const;
     // The animation clock in seconds, read only when a program needs it. Measured from an epoch
@@ -89,7 +89,7 @@ namespace umbriel {
     void compile(const EffectPreset& preset);
     void referencedNames(std::vector<std::string>& names) const;
     void updateCursorActive();
-    // Forgets the deformation program so the next deformationShader() compiles afresh.
+    // Forgets the deformation program so the next prepare() that needs it compiles afresh.
     void dropDeformation();
 
     Server* m_server = nullptr;
