@@ -103,6 +103,7 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
 // Renders `composite->shader` over the current target's pixels under `box`,
 // writing back with blending off through the rounded mask. The subtree must
 // already be drawn. Reads and promotes history like a capture composite.
+// `expand` is ignored: the mask rounds the node box.
 void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
 
 #endif

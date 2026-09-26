@@ -47,6 +47,8 @@ struct fx_gles_render_pass {
 	struct wlr_texture *animation_textures[FX_ANIMATION_DEPTH];
 	bool animation_suppress[FX_ANIMATION_DEPTH];
 	struct wl_list animation_history_updates;
+	// An in-place effect could not copy its target this pass; logged once.
+	bool in_place_failed;
 };
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass *pass);
@@ -219,9 +221,9 @@ bool fx_render_pass_add_optimized_blur(struct fx_gles_render_pass *pass,
 		struct fx_render_blur_pass_options *fx_options);
 
 /**
- * Render from one buffer to another
+ * Render from one buffer to another. False when the source cannot be sampled.
  */
-void fx_render_pass_read_to_buffer(struct fx_gles_render_pass *pass,
+bool fx_render_pass_read_to_buffer(struct fx_gles_render_pass *pass,
 		pixman_region32_t *region, struct fx_framebuffer *dst_buffer,
 		struct fx_framebuffer *src_buffer);
 

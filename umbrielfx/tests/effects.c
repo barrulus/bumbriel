@@ -1026,12 +1026,12 @@ static bool test_visible_in_box(struct fixture *fixture) {
 static bool test_in_place(struct fixture *fixture) {
 	struct wlr_scene *scene = wlr_scene_create();
 	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
-	const float blue[4] = { 0, 0, 1, 1 }, half_red[4] = { 0.5f, 0, 0, 0.5f };
+	const float blue[4] = { 0, 0, 1, 1 }, quarter_red[4] = { 0.25f, 0, 0, 0.25f };
 	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
-	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 8, 8, half_red);
+	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 8, 8, quarter_red);
 	wlr_scene_node_set_position(&window->node, 4, 4);
 	wlr_scene_rect_set_corner_radius(window, 3);
-	// Swap red and blue of whatever is under the window: 0.5 red over blue becomes 0.5 blue over red.
+	// Swap red and blue of whatever is under the window: 0.25 red over blue becomes 0.75 red, 0.25 blue.
 	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
 		"vec4 window(vec2 uv) { return umbriel_sample(uv).bgra; }", "in-place");
 	bool ok = check(program != NULL, "window program compiles");
@@ -1045,11 +1045,25 @@ static bool test_in_place(struct fixture *fixture) {
 		ok &= fixture_read_pixel(fixture, rendered, 8, 8, centre);
 		ok &= fixture_read_pixel(fixture, rendered, 4, 4, corner);
 		ok &= fixture_read_pixel(fixture, rendered, 2, 2, outside);
-		// Under the window: 0.5 red + 0.5 blue -> swapped: red 0.5, blue 0.5 (the backdrop was seen and rewritten).
-		ok &= check(centre[2] > 100 && centre[2] < 160 && centre[0] > 100 && centre[0] < 160,
+		// Under the window: 0.25 red + 0.75 blue, swapped. Unswapped would be the reverse, a capture pure blue.
+		ok &= check(centre[2] > 170 && centre[2] < 210 && centre[0] > 45 && centre[0] < 85,
 			"the program read the backdrop through the translucent window");
 		ok &= check(corner[0] > 250 && corner[2] < 5, "the rounded corner keeps the untouched background");
 		ok &= check(outside[0] > 250 && outside[2] < 5, "nothing outside the window changes");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	// When the target cannot be copied the window keeps its plain rendering.
+	fx_renderer_fail_target_copies_for_test(fixture->renderer, true);
+	wlr_scene_output_damage_whole_for_test(scene_output);
+	rendered = fixture_render_scene(fixture, scene_output, &state);
+	fx_renderer_fail_target_copies_for_test(fixture->renderer, false);
+	ok &= check(rendered != NULL, "renders with a failed target copy");
+	if (rendered != NULL) {
+		uint8_t centre[4];
+		ok &= fixture_read_pixel(fixture, rendered, 8, 8, centre);
+		ok &= check(centre[2] > 45 && centre[2] < 85 && centre[0] > 170 && centre[0] < 210,
+			"a failed copy leaves the window as drawn");
 		wlr_buffer_unlock(rendered);
 	}
 	wlr_output_state_finish(&state);

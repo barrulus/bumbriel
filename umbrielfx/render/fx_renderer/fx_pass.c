@@ -1216,12 +1216,13 @@ void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const stru
   if (pass->fx_offscreen_buffers == NULL) {
     return;
   }
-  struct fx_effect_composite drawn = *composite;
-  expand_animation_boxes(&drawn.box, &drawn.logical_box, composite->expand);
-  drawn.replace = true;
+  // umbriel_mask rounds umbriel_size, so the drawn box is the node box.
+  struct fx_effect_composite in_place = *composite;
+  in_place.expand = 0;
+  in_place.replace = true;
   const struct wlr_box target_box = {.width = pass->buffer->buffer->width, .height = pass->buffer->buffer->height};
   struct wlr_box visible;
-  if (!wlr_box_intersection(&visible, &drawn.box, &target_box)) {
+  if (!wlr_box_intersection(&visible, &in_place.box, &target_box)) {
     return;
   }
   // Sampled from a copy: a program may read any texel of its rectangle while
@@ -1232,17 +1233,23 @@ void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const stru
   }
   pixman_region32_t region;
   pixman_region32_init_rect(&region, visible.x, visible.y, visible.width, visible.height);
-  fx_render_pass_read_to_buffer(pass, &region, source, pass->buffer);
+  const bool copied = fx_render_pass_read_to_buffer(pass, &region, source, pass->buffer);
   pixman_region32_fini(&region);
-  struct wlr_texture* texture = fx_texture_from_buffer(&pass->buffer->renderer->wlr_renderer, source->buffer);
+  struct wlr_texture* texture =
+      copied ? fx_texture_from_buffer(&pass->buffer->renderer->wlr_renderer, source->buffer) : NULL;
+  // Without a copy of this frame's pixels the subtree stays as drawn.
   if (texture == NULL || fx_get_texture(texture)->target != GL_TEXTURE_2D) {
     if (texture != NULL) {
       wlr_texture_destroy(texture);
     }
     fx_framebuffer_bind(pass->buffer);
+    if (!pass->in_place_failed) {
+      pass->in_place_failed = true;
+      wlr_log(WLR_ERROR, "Cannot copy the target for an in-place effect; drawing it without the effect");
+    }
     return;
   }
-  effect_composite(pass, &drawn, texture, &drawn.box);
+  effect_composite(pass, &in_place, texture, &in_place.box);
   wlr_texture_destroy(texture);
 }
 
@@ -2725,20 +2732,24 @@ bool fx_render_pass_add_optimized_blur(
   return fx_buffer != NULL;
 }
 
-void fx_render_pass_read_to_buffer(
+bool fx_render_pass_read_to_buffer(
     struct fx_gles_render_pass* pass, pixman_region32_t* _region, struct fx_framebuffer* dst_buffer,
     struct fx_framebuffer* src_buffer
 ) {
   if (!_region || !pixman_region32_not_empty(_region)) {
-    return;
+    return true;
   }
+  bool copied = false;
   TRACY_BOTH_ZONES_START(pass->buffer->renderer);
 
   pixman_region32_t region;
   pixman_region32_init(&region);
   pixman_region32_copy(&region, _region);
 
-  struct wlr_texture* src_tex = fx_texture_from_buffer(&pass->buffer->renderer->wlr_renderer, src_buffer->buffer);
+  struct fx_renderer* renderer = pass->buffer->renderer;
+  struct wlr_texture* src_tex = renderer->fail_target_copies_for_test
+      ? NULL
+      : fx_texture_from_buffer(&renderer->wlr_renderer, src_buffer->buffer);
   if (src_tex == NULL) {
     goto done;
   }
@@ -2783,11 +2794,17 @@ void fx_render_pass_read_to_buffer(
 
   // Bind back to the main WLR buffer
   fx_framebuffer_bind(pass->buffer);
+  copied = true;
 
 done:
   TRACY_BOTH_ZONES_END;
 
   pixman_region32_fini(&region);
+  return copied;
+}
+
+void fx_renderer_fail_target_copies_for_test(struct wlr_renderer* renderer, bool fail) {
+  fx_get_renderer(renderer)->fail_target_copies_for_test = fail;
 }
 
 static const char* reset_status_str(GLenum status) {

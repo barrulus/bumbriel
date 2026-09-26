@@ -184,5 +184,7 @@ void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_outpu
 void wlr_scene_output_acknowledge_damage_for_test(
     struct wlr_scene_output* scene_output, const struct wlr_output_state* state
 );
+// Exists for tests/effects.c: makes fx_render_pass_read_to_buffer fail as if its source could not be sampled.
+void fx_renderer_fail_target_copies_for_test(struct wlr_renderer* renderer, bool fail);
 
 #endif

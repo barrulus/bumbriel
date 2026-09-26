@@ -237,6 +237,8 @@ struct fx_renderer {
 	} shaders;
 
 	bool animation_shadow_attempted;
+	// Set only through fx_renderer_fail_target_copies_for_test.
+	bool fail_target_copies_for_test;
 	struct fx_effect_shader *animation_shadow_horizontal;
 	struct fx_effect_shader *animation_shadow_vertical;
 

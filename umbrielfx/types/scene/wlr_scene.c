@@ -3556,11 +3556,16 @@ static void render_in_place_slots(
   }
   struct fx_gles_render_pass* pass = fx_get_render_pass(data->render_pass);
   float corners[4];
-  const float* corner_radius = in_place_corners(animation->node, corners) ? corners : NULL;
+  const float* corner_radius = NULL;
+  bool corners_known = false;
   for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
     struct fx_effect_shader* shader = animation->shaders[slot];
     if (!fx_slot_in_place(slot) || shader == NULL || shader->renderer != pass->buffer->renderer) {
       continue;
+    }
+    if (!corners_known) {
+      corner_radius = in_place_corners(animation->node, corners) ? corners : NULL;
+      corners_known = true;
     }
     const struct fx_effect_composite composite = {
         .shader = shader,
