@@ -26,9 +26,9 @@ effect = "squash"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
-if tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -q "rejected"; then
+if tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -q "failed to compile"; then
   echo "a bundled preset failed to compile:"
-  tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -B2 "rejected"
+  tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -B2 "failed to compile"
   exit 1
 fi
 if tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -Eq "unknown key|ignoring effects"; then
