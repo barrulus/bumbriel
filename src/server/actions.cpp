@@ -1595,12 +1595,20 @@ namespace umbriel {
         sourceWs->setFocusedView(sourceWs->allViews().front());
       }
 
-      // Gesture keeps the seat focus where it is without revealing its column: the restored scroll offset above is
-      // what both strips must settle on.
-      View* seatTarget = seatFocus != nullptr && seatFocus->mapped() ? seatFocus : sourceWs->focusedView();
+      // Without follow-warp, keep the seat on the pointer-selected source output and use the focus that arrived there.
+      // With it enabled, retain the previously focused view so the seat and pointer travel together. Gesture avoids
+      // revealing either target's column: the restored scroll offset above is what both strips must settle on.
+      const bool followFocus = config().input.cursor.followsFocus;
+      View* seatTarget =
+          followFocus && seatFocus != nullptr && seatFocus->mapped() ? seatFocus : sourceWs->focusedView();
+      if (seatTarget == nullptr && seatFocus != nullptr && seatFocus->mapped()) {
+        seatTarget = seatFocus;
+      }
       if (seatTarget != nullptr) {
         server.focusView(seatTarget, FocusReason::Gesture);
-        finishWorkspaceTransfer(server, *seatTarget);
+        if (followFocus) {
+          finishWorkspaceTransfer(server, *seatTarget);
+        }
       }
 
       sourceWs->markArrange(true);
