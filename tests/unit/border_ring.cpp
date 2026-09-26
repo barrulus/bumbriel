@@ -72,4 +72,23 @@ UMBRIEL_TEST(paddingGrowsTheRingBoxAroundTheSameHole) {
   CHECK_EQ(padded.outer.top_left, plain.outer.top_left);
 }
 
+UMBRIEL_TEST(paddingAloneSetsTheExtentOfARinglessBorder) {
+  const auto ring = makeBorderRing(200, 120, 0, 0, 0, 12);
+  CHECK_EQ(ring.box.x, -12);
+  CHECK_EQ(ring.box.y, -12);
+  CHECK_EQ(ring.box.width, 224);
+  CHECK_EQ(ring.box.height, 144);
+  CHECK_EQ(ring.hole.x, 12);
+  CHECK_EQ(ring.hole.y, 12);
+}
+
+UMBRIEL_TEST(negativePaddingIsClampedToZero) {
+  const auto plain = makeBorderRing(200, 120, 10, 4, 0);
+  const auto negative = makeBorderRing(200, 120, 10, 4, 0, -8);
+  CHECK_EQ(negative.box.x, plain.box.x);
+  CHECK_EQ(negative.box.width, plain.box.width);
+  CHECK_EQ(negative.hole.x, plain.hole.x);
+  CHECK_EQ(negative.hole.width, plain.hole.width);
+}
+
 int main() { return RUN_TESTS(); }

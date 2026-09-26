@@ -48,8 +48,9 @@ if ! tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -q "ignoring effects.screen (unk
   echo "an unknown preset name was not reported"
   exit 1
 fi
-# A missing shader file is not logged by the running compositor, only offline validation reports it. `validate`
-# exits non-zero whenever any diagnostic fires, so its output is captured before checking for this one.
+# The running compositor shows a missing shader file on its config banner without logging it, and no IPC reads the
+# banner back, so offline validation reports it here. `validate` exits non-zero whenever any diagnostic fires, so its
+# output is captured before checking for this one.
 validation=$("$UMBRIEL" validate -c "$UMBRIEL_CONFIG" 2>&1 || true)
 if ! grep -q "cannot read shader file" <<< "$validation"; then
   echo "the missing shader file was not reported"

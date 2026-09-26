@@ -7,21 +7,28 @@ set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-border-frames.png"
 cat > "$UMBRIEL_RUNTIME_DIR/clock.glsl" <<'GLSL'
 // The red channel encodes the current effect time, so a frozen clock renders an unchanging ring and an advancing
-// clock renders a different one.
-vec4 border(vec2 uv) { return vec4(fract(umbriel_time), 0.0, 0.0, 1.0); }
+// clock renders a different one. The 0.3 factor keeps whole-second steps (max_fps = 1) from wrapping to the same value.
+vec4 border(vec2 uv) { return vec4(fract(umbriel_time * 0.3), 0.0, 0.0, 1.0); }
 GLSL
 
 readonly BASE="$UMBRIEL_RUNTIME_DIR/frames-base.toml"
 cp "$UMBRIEL_CONFIG" "$BASE"
 
-frames() { "$UMBRIEL" effect-frames --json | jq -r '.outputs[0].effect_frames'; }
-eligible() { "$UMBRIEL" effect-frames --json | jq -r '.outputs[0].eligible'; }
+effect_field() {
+  "$UMBRIEL" effect-frames --json | jq -er ".outputs[0].$1" || {
+    echo "effect-frames reported no .outputs[0].$1" >&2
+    return 1
+  }
+}
+frames() { effect_field effect_frames; }
+eligible() { effect_field eligible; }
 ring_pixel() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$1" "$2"; }
 
 open_window() {
-  FILL_COLOR=0xFF00FF00 "$UMBRIEL_UNMAP_CLIENT" frame-one 300 200 > "$UMBRIEL_RUNTIME_DIR/frame-one.log" 2>&1 &
+  local title=${1:-frame-one} fill=${2:-0xFF00FF00}
+  FILL_COLOR=$fill "$UMBRIEL_UNMAP_CLIENT" "$title" 300 200 > "$UMBRIEL_RUNTIME_DIR/$title.log" 2>&1 &
   for _ in $(seq 80); do
-    window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "frame-one")')
+    window=$("$UMBRIEL" windows --json | jq -c --arg title "$title" '.[] | select(.title == $title)')
     [[ -n $window ]] && break
     sleep 0.025
   done
@@ -152,7 +159,8 @@ if [[ "$ring_r5 $ring_g5 $ring_b5" != "$ring_r6 $ring_g6 $ring_b6" ]]; then
   echo "the close snapshot did not keep the frozen ring image: $ring_r5 $ring_g5 $ring_b5 -> $ring_r6 $ring_g6 $ring_b6"
   exit 1
 fi
-if (( $(frames) != before_close )); then
+after_close=$(frames)
+if (( after_close != before_close )); then
   echo "a frozen clock's close snapshot still produced effect-only frames"
   exit 1
 fi
@@ -180,14 +188,16 @@ if ! grep -q '^locked$' "$UMBRIEL_RUNTIME_DIR/lock-client.log"; then
   echo "the session never locked: $(cat "$UMBRIEL_RUNTIME_DIR/lock-client.log")"
   exit 1
 fi
-if [[ $(eligible) != 0 ]]; then
-  echo "a session lock did not suspend the effect ledger: eligible=$(eligible)"
+locked_eligible=$(eligible)
+if (( locked_eligible != 0 )); then
+  echo "a session lock did not suspend the effect ledger: eligible=$locked_eligible"
   exit 1
 fi
 before_locked=$(frames)
 sleep 0.3 # real time: a locked session must produce no effect-only frames despite the lock client's own redraws
-if (( $(frames) != before_locked )); then
-  echo "a session lock still produced effect-only frames: $before_locked -> $(frames)"
+after_locked=$(frames)
+if (( after_locked != before_locked )); then
+  echo "a session lock still produced effect-only frames: $before_locked -> $after_locked"
   exit 1
 fi
 echo unlock >&"$lock_fd"
@@ -200,36 +210,48 @@ if ! grep -q '^unlocked$' "$UMBRIEL_RUNTIME_DIR/lock-client.log"; then
   exit 1
 fi
 "$UMBRIEL" settle > /dev/null
-if [[ $(eligible) -le 0 ]]; then
-  echo "unlocking did not restore effect eligibility: eligible=$(eligible)"
+unlocked_eligible=$(eligible)
+if (( unlocked_eligible <= 0 )); then
+  echo "unlocking did not restore effect eligibility: eligible=$unlocked_eligible"
   exit 1
 fi
 before_unlocked=$(frames)
 sleep 0.3 # real time: effect-only frames arrive on the output's own timer
-if (( $(frames) <= before_unlocked )); then
+after_unlocked=$(frames)
+if (( after_unlocked <= before_unlocked )); then
   echo "unlocking did not restart effect-only frames"
   exit 1
 fi
 
-# 4. effects.max_fps caps the render rate to its own due-frame interval: at 2 fps (500ms) two captures 100ms apart
-# never differ, but captures 850ms apart do.
-sed -i '/^\[effects\]$/a max_fps = 2' "$UMBRIEL_CONFIG"
+# 4. effects.max_fps caps the render rate to its own due-frame interval: at 1 fps, two captures taken right after a
+# due frame and 150ms apart never differ, but captures 1.3s apart do.
+sed -i '/^\[effects\]$/a max_fps = 1' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
+capped=$(frames)
+for _ in $(seq 150); do
+  now=$(frames)
+  (( now > capped )) && break
+  sleep 0.01
+done
+if (( now <= capped )); then
+  echo "max_fps = 1 produced no due effect frame within 1.5s"
+  exit 1
+fi
 grim "$IMAGE"
 read -r ring_r7 ring_g7 ring_b7 < <(ring_pixel "$ring_x" "$ring_y")
 sleep 0.15
 grim "$IMAGE"
 read -r ring_r8 ring_g8 ring_b8 < <(ring_pixel "$ring_x" "$ring_y")
 if [[ "$ring_r7 $ring_g7 $ring_b7" != "$ring_r8 $ring_g8 $ring_b8" ]]; then
-  echo "max_fps = 2 did not cap the render rate: the ring changed within 150ms ($ring_r7 $ring_g7 $ring_b7 -> $ring_r8 $ring_g8 $ring_b8)"
+  echo "max_fps = 1 did not cap the render rate: the ring changed within 150ms ($ring_r7 $ring_g7 $ring_b7 -> $ring_r8 $ring_g8 $ring_b8)"
   exit 1
 fi
-sleep 0.7 # real time: effects.max_fps = 2 allows a due frame after its 500ms interval elapses
+sleep 1.15 # real time: effects.max_fps = 1 allows a due frame after its 1000ms interval elapses
 grim "$IMAGE"
 read -r ring_r9 ring_g9 ring_b9 < <(ring_pixel "$ring_x" "$ring_y")
 if [[ "$ring_r7 $ring_g7 $ring_b7" == "$ring_r9 $ring_g9 $ring_b9" ]]; then
-  echo "max_fps = 2 never let the ring advance: stayed at $ring_r7 $ring_g7 $ring_b7"
+  echo "max_fps = 1 never let the ring advance: stayed at $ring_r7 $ring_g7 $ring_b7"
   exit 1
 fi
 echo "frozen-clock determinism, close-snapshot freezing, lock suspension, and max_fps capping verified"

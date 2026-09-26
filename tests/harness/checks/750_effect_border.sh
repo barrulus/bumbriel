@@ -102,10 +102,16 @@ fi
 "$UMBRIEL" settle > /dev/null
 
 # Frames: a time-reading program requests effect-only frames while the clock advances, none once frozen.
-frames() { "$UMBRIEL" effect-frames --json | jq -r '.outputs[0].effect_frames'; }
+frames() {
+  "$UMBRIEL" effect-frames --json | jq -er '.outputs[0].effect_frames' || {
+    echo "effect-frames reported no .outputs[0].effect_frames" >&2
+    return 1
+  }
+}
 before=$(frames)
 sleep 0.3 # real time: effect-only frames arrive on the output's own timer
-if (( $(frames) <= before )); then
+after=$(frames)
+if (( after <= before )); then
   echo "an advancing time-reading border effect requested no effect-only frames"
   exit 1
 fi
@@ -113,14 +119,16 @@ fi
 "$UMBRIEL" settle > /dev/null
 before=$(frames)
 sleep 0.3 # real time: a frozen clock must produce no effect-only frames
-if (( $(frames) != before )); then
-  echo "a frozen clock still produced effect-only frames: $before -> $(frames)"
+after=$(frames)
+if (( after != before )); then
+  echo "a frozen clock still produced effect-only frames: $before -> $after"
   exit 1
 fi
 "$UMBRIEL" clock-resume
 before=$(frames)
 sleep 0.3 # real time: resuming the clock restarts effect-only frames
-if (( $(frames) <= before )); then
+after=$(frames)
+if (( after <= before )); then
   echo "resuming the clock did not restart effect-only frames"
   exit 1
 fi
@@ -149,15 +157,17 @@ EOF
   "$UMBRIEL" settle > /dev/null
   before=$(frames)
   sleep 0.3 # real time: a stopped clock must produce no effect-only frames
-  if (( $(frames) != before )); then
+  after=$(frames)
+  if (( after != before )); then
     echo "$variant still produced effect-only frames"
     exit 1
   fi
 done
 
-# Light: a preset with light spills red past its padding over a neighbouring window.
+# Light: a preset with light spills red past its padding over a neighbouring window placed just below the ring.
+near_y=$((y + h + 20))
 cat "$BASE" > "$UMBRIEL_CONFIG"
-cat >> "$UMBRIEL_CONFIG" <<'EOF'
+cat >> "$UMBRIEL_CONFIG" <<EOF
 
 [animation]
 enabled = false
@@ -174,7 +184,7 @@ border = "lit"
 [effects.preset.lit]
 kind = "border"
 shader = "still.glsl"
-padding = 0
+padding = 10
 [effects.preset.lit.light]
 spread = 40
 intensity = 4
@@ -182,14 +192,34 @@ threshold = 0.2
 [[window_rule]]
 match.title = "^effect-(one|two|plain)$"
 default_floating = true
+[[window_rule]]
+match.title = "^effect-near$"
+default_floating = true
+default_position = { x = $x, y = $near_y, anchor = "top_left" }
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
+spawn effect-near
+"$UMBRIEL" settle > /dev/null
+read -r near_id near_top < <(jq -r '"\(.id) \(.y)"' <<< "$window")
 "$UMBRIEL" msg "window-focus:$id" > /dev/null
 "$UMBRIEL" settle > /dev/null
 grim "$IMAGE"
-read -r r _ _ < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y - 20))")
-if (( r < 15 )); then
-  echo "border light did not spill above the focused window: red=$r"
+# The lit ring box (4 px ring, 1 px raster margin, 10 px padding) ends 15 px below the client; the sample sits inside
+# the neighbour's blue client, beyond it.
+sample_y=$((near_top + 4))
+if (( sample_y <= y + h + 15 )); then
+  echo "the neighbour window overlaps the lit ring: its client starts at $near_top"
   exit 1
 fi
+read -r r _ b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$sample_y")
+if (( b < 200 )); then
+  echo "the light sample is not over the neighbouring window: blue=$b"
+  exit 1
+fi
+if (( r < 15 )); then
+  echo "border light did not spill over the neighbouring window: red=$r"
+  exit 1
+fi
+"$UMBRIEL" msg "window-close:$near_id" > /dev/null
+"$UMBRIEL" settle > /dev/null
 echo "border effect padding, hole, focus, off override, frame gating, and light verified"
