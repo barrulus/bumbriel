@@ -488,7 +488,7 @@ namespace umbriel {
       // While locked the dialog would be hidden behind the lock surface, so quit
       // directly; the lock client's own UI is the confirmation there.
       if (!skip && !server.sessionLocked() && confirm != nullptr && !confirm->visible()) {
-        confirm->show();
+        confirm->show(QuitConfirm::Kind::SessionQuit);
         return true;
       }
       server.stop();
@@ -603,6 +603,11 @@ namespace umbriel {
       return true;
     }
 
+    bool actionScreenCastClear(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
+      server.clearScreenCastTarget();
+      return true;
+    }
+
     // Window IDs are ext-foreign-toplevel identifiers, the same strings
     // clients receive from the protocol and the IPC surface reuses.
     View* viewByForeignIdentifier(Server& server, std::string_view id) {
@@ -616,6 +621,50 @@ namespace umbriel {
         }
       }
       return nullptr;
+    }
+
+    bool actionScreenCastSetWindow(Server& server, const Keybind& bind, std::string* error) {
+      View* view = nullptr;
+      if (const auto* arg = payloadIf<WindowIdArg>(bind); arg != nullptr && !arg->id.empty()) {
+        view = viewByForeignIdentifier(server, arg->id);
+        if (view == nullptr) {
+          return reject(error, "unknown window: " + arg->id);
+        }
+      } else {
+        view = focusedWindow(server);
+        if (view == nullptr) {
+          return reject(error, "no focused window");
+        }
+      }
+      if (view->extForeignIdentifier() == nullptr) {
+        return reject(error, "window has no capture identifier");
+      }
+      return server.setScreenCastWindow(*view, error);
+    }
+
+    bool actionScreenCastSetOutput(Server& server, const Keybind& bind, std::string* error) {
+      const auto* arg = payloadIf<OutputArg>(bind);
+      Output* output = arg != nullptr && !arg->output.empty() ? server.outputFromName(arg->output)
+                                                              : server.outputFromWlr(server.preferredOutput());
+      if (output == nullptr) {
+        return reject(
+            error, arg != nullptr && !arg->output.empty() ? "unknown output: " + arg->output : "no focused output"
+        );
+      }
+      return server.setScreenCastOutput(*output, error);
+    }
+
+    bool actionScreenCastFollowWindow(Server& server, const Keybind& /*bind*/, std::string* error) {
+      return server.followScreenCastWindow(error);
+    }
+
+    bool actionScreenCastFollowOutput(Server& server, const Keybind& /*bind*/, std::string* error) {
+      return server.followScreenCastOutput(error);
+    }
+
+    bool actionScreenCastFollowStop(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
+      server.stopFollowingScreenCast();
+      return true;
     }
 
     bool warpCursorToWindow(Server& server, View& view) { return server.cursor()->warpToView(view); }
@@ -1832,6 +1881,12 @@ namespace umbriel {
         &actionWindowMoveToWorkspaceAdjacent<1, true>,
         &actionWindowMoveToWorkspaceAdjacent<-1, true>,
         &actionConfigReload,
+        &actionScreenCastClear,
+        &actionScreenCastSetOutput,
+        &actionScreenCastSetWindow,
+        &actionScreenCastFollowWindow,
+        &actionScreenCastFollowOutput,
+        &actionScreenCastFollowStop,
         &actionKeyboardLayoutNext,
         &actionShortcutsInhibitToggle,
         &actionLayoutScrollDrag,

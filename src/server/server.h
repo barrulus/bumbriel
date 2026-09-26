@@ -86,6 +86,21 @@ namespace umbriel {
   enum class ContentType;
   struct ConfigEffects;
 
+  enum class ScreenCastCommandKind : uint8_t {
+    Clear,
+    SetOutput,
+    SetWindow,
+    FollowWindow,
+    FollowOutput,
+    FollowStop,
+  };
+
+  struct ScreenCastCommand {
+    ScreenCastCommandKind kind = ScreenCastCommandKind::Clear;
+    std::string value;
+    uint64_t serial = 0;
+  };
+
   // Slow tick that ferries wl_surface.frame callbacks to toplevels that are mapped but not on the active workspace.
   // wlroots' scene helper only walks enabled scene nodes, so a hidden view otherwise never receives another frame_done
   // and any client that gates its game/network loop on the frame callback stalls until it becomes visible again
@@ -206,6 +221,16 @@ namespace umbriel {
     void emitRendererLostForTest();
 #endif
     [[nodiscard]] Ipc* ipc() const { return m_ipc.get(); }
+    [[nodiscard]] const ScreenCastCommand& screenCastCommand() const { return m_screenCastCommand; }
+    void setScreenCastActive(bool active);
+    void clearScreenCastTarget();
+    bool setScreenCastOutput(const Output& output, std::string* error = nullptr);
+    bool setScreenCastWindow(const View& view, std::string* error = nullptr);
+    bool followScreenCastWindow(std::string* error = nullptr);
+    bool followScreenCastOutput(std::string* error = nullptr);
+    void stopFollowingScreenCast();
+    void confirmScreenCastDynamic();
+    void dismissConfirmation();
     // Owners register themselves for the frame tick. The registry is kept in phase order, so the three traversals above
     // never re-state which owners exist or in what order they run.
     void registerAnimatable(Animatable* animatable);
@@ -398,6 +423,8 @@ namespace umbriel {
 
   private:
     enum class SpawnClass { Application, SessionHelper };
+
+    bool requestScreenCastCommand(ScreenCastCommandKind kind, std::string value, std::string* error);
 
     static void
     onProtocolMessage(void* data, wl_protocol_logger_type direction, const wl_protocol_logger_message* message);
@@ -692,6 +719,10 @@ namespace umbriel {
     std::unique_ptr<HintRect> m_insertHint;
     std::unique_ptr<ConfigWatcher> m_configWatcher;
     std::unique_ptr<Ipc> m_ipc;
+    ScreenCastCommand m_screenCastCommand;
+    std::optional<ScreenCastCommand> m_pendingScreenCastCommand;
+    bool m_screenCastActive = false;
+    bool m_screenCastDynamicConfirmed = false;
 #ifdef UMBRIEL_TEST_IPC
     std::optional<uint64_t> m_frozenAnimationClockMsec;
     int64_t m_animationClockOffsetMsec = 0;

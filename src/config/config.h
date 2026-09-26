@@ -740,6 +740,13 @@ namespace umbriel {
       bool operator==(const Workspaces&) const = default;
     } workspaces;
 
+    struct ScreenCast {
+      // Allow target-changing actions immediately. By default, the first such
+      // action during a share requires explicit confirmation.
+      bool disableDynamicConfirmation = false;
+      bool operator==(const ScreenCast&) const = default;
+    } screenCast;
+
     struct General {
       std::vector<std::string> autostart;
       // Symbolic `Mod` in keybinds. Unset preserves the runtime default:

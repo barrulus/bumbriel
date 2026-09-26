@@ -905,7 +905,7 @@ namespace umbriel {
       // Any pointer press cancels the confirmation without being consumed; the
       // click still reaches whatever it hit.
       if (QuitConfirm* confirm = m_server->quitConfirm(); confirm != nullptr && confirm->visible()) {
-        confirm->hide();
+        m_server->dismissConfirmation();
       }
     }
 

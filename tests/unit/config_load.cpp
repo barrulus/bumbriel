@@ -2330,6 +2330,20 @@ UMBRIEL_TEST(restoredMaximizePolicyLoadsAndDefaultsOff) {
   CHECK(!store.config().general.honorRestoredMaximize);
 }
 
+UMBRIEL_TEST(screencastDynamicConfirmationDefaultsOnAndCanBeDisabled) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+
+  file.write("[screencast]\ndisable_dynamic_confirmation = true\n");
+  CHECK(store.reload().success);
+  CHECK(store.config().screenCast.disableDynamicConfirmation);
+
+  file.write("[screencast]\n");
+  CHECK(store.reload().success);
+  CHECK(!store.config().screenCast.disableDynamicConfirmation);
+}
+
 UMBRIEL_TEST(deviceInputOverridesLoadAndMatchExactNames) {
   const TempConfig file;
   file.write(R"(

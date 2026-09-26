@@ -228,6 +228,148 @@ namespace umbriel {
 
   } // namespace
 
+  void Server::setScreenCastActive(bool active) {
+    if (m_screenCastActive == active) {
+      return;
+    }
+    m_screenCastActive = active;
+    m_screenCastDynamicConfirmed = false;
+    m_pendingScreenCastCommand.reset();
+    if (m_quitConfirm != nullptr
+        && m_quitConfirm->visible()
+        && m_quitConfirm->kind() == QuitConfirm::Kind::ScreenCastDynamic) {
+      m_quitConfirm->hide();
+    }
+  }
+
+  void Server::clearScreenCastTarget() {
+    if (m_quitConfirm != nullptr
+        && m_quitConfirm->visible()
+        && m_quitConfirm->kind() == QuitConfirm::Kind::ScreenCastDynamic) {
+      dismissConfirmation();
+    }
+    m_screenCastCommand.kind = ScreenCastCommandKind::Clear;
+    m_screenCastCommand.value.clear();
+    ++m_screenCastCommand.serial;
+    if (m_ipc != nullptr) {
+      m_ipc->notifyScreenCastChanged();
+    }
+  }
+
+  bool Server::requestScreenCastCommand(ScreenCastCommandKind kind, std::string value, std::string* error) {
+    if (!m_screenCastActive) {
+      if (error != nullptr) {
+        *error = "no active screencast";
+      }
+      return false;
+    }
+
+    ScreenCastCommand requested{.kind = kind, .value = std::move(value)};
+    if (config().screenCast.disableDynamicConfirmation || m_screenCastDynamicConfirmed) {
+      if (m_quitConfirm != nullptr
+          && m_quitConfirm->visible()
+          && m_quitConfirm->kind() == QuitConfirm::Kind::ScreenCastDynamic) {
+        dismissConfirmation();
+      }
+      m_screenCastCommand.kind = requested.kind;
+      m_screenCastCommand.value = std::move(requested.value);
+      ++m_screenCastCommand.serial;
+      if (m_ipc != nullptr) {
+        m_ipc->notifyScreenCastChanged();
+      }
+      return true;
+    }
+
+    if (m_quitConfirm == nullptr || sessionLocked()) {
+      if (error != nullptr) {
+        *error = "screencast target change confirmation is unavailable";
+      }
+      return false;
+    }
+    if (m_quitConfirm->visible()) {
+      if (m_quitConfirm->kind() != QuitConfirm::Kind::ScreenCastDynamic) {
+        if (error != nullptr) {
+          *error = "another confirmation is active";
+        }
+        return false;
+      }
+      m_pendingScreenCastCommand = std::move(requested);
+      confirmScreenCastDynamic();
+      return true;
+    }
+
+    m_pendingScreenCastCommand = std::move(requested);
+    m_quitConfirm->show(QuitConfirm::Kind::ScreenCastDynamic);
+    return true;
+  }
+
+  bool Server::setScreenCastOutput(const Output& output, std::string* error) {
+    return requestScreenCastCommand(ScreenCastCommandKind::SetOutput, output.wlr()->name, error);
+  }
+
+  bool Server::setScreenCastWindow(const View& view, std::string* error) {
+    const char* identifier = view.extForeignIdentifier();
+    if (identifier == nullptr) {
+      if (error != nullptr) {
+        *error = "window has no capture identifier";
+      }
+      return false;
+    }
+    return requestScreenCastCommand(ScreenCastCommandKind::SetWindow, identifier, error);
+  }
+
+  bool Server::followScreenCastWindow(std::string* error) {
+    return requestScreenCastCommand(ScreenCastCommandKind::FollowWindow, {}, error);
+  }
+
+  bool Server::followScreenCastOutput(std::string* error) {
+    return requestScreenCastCommand(ScreenCastCommandKind::FollowOutput, {}, error);
+  }
+
+  void Server::confirmScreenCastDynamic() {
+    if (!m_screenCastActive || !m_pendingScreenCastCommand) {
+      dismissConfirmation();
+      return;
+    }
+    ScreenCastCommand requested = std::move(*m_pendingScreenCastCommand);
+    m_pendingScreenCastCommand.reset();
+    m_screenCastDynamicConfirmed = true;
+    if (m_quitConfirm != nullptr) {
+      m_quitConfirm->hide();
+    }
+    m_screenCastCommand.kind = requested.kind;
+    m_screenCastCommand.value = std::move(requested.value);
+    ++m_screenCastCommand.serial;
+    if (m_ipc != nullptr) {
+      m_ipc->notifyScreenCastChanged();
+    }
+  }
+
+  void Server::dismissConfirmation() {
+    if (m_quitConfirm != nullptr
+        && m_quitConfirm->visible()
+        && m_quitConfirm->kind() == QuitConfirm::Kind::ScreenCastDynamic) {
+      m_pendingScreenCastCommand.reset();
+    }
+    if (m_quitConfirm != nullptr) {
+      m_quitConfirm->hide();
+    }
+  }
+
+  void Server::stopFollowingScreenCast() {
+    if (m_quitConfirm != nullptr
+        && m_quitConfirm->visible()
+        && m_quitConfirm->kind() == QuitConfirm::Kind::ScreenCastDynamic) {
+      dismissConfirmation();
+    }
+    m_screenCastCommand.kind = ScreenCastCommandKind::FollowStop;
+    m_screenCastCommand.value.clear();
+    ++m_screenCastCommand.serial;
+    if (m_ipc != nullptr) {
+      m_ipc->notifyScreenCastChanged();
+    }
+  }
+
   const wlr_security_context_v1_state* Server::clientSecurityContext(const wl_client* client) const {
     if (m_securityContextManager == nullptr) {
       return nullptr;
