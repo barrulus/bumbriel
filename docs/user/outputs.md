@@ -45,6 +45,7 @@ and positions when the output becomes available again.
 | `min_workspaces` | int | `1` | Minimum count for a dynamic output. |
 | `workspace_axis` | string | `"vertical"` | Workspace arrangement axis. |
 | `layout.scrolling.default_extent_fraction` | float | inherited | Initial scrolling-column extent on this output. |
+| `screen_effect` | string | inherited | Replace `effects.screen` by name, or `"off"` to disable it on this output. |
 
 Umbriel tries an unadvertised resolution as a custom mode. If it cannot apply
 the configured mode, it uses the preferred advertised mode and logs a warning.
@@ -80,6 +81,17 @@ default_extent_fraction = 0.4
 A matching workspace rule can override this value. Reloading affects new
 columns only; existing columns keep their current width. See
 [Scrolling behavior](layout.md#scrolling-behavior).
+
+### Screen effect
+
+```toml
+[output."HDMI-A-1"]
+screen_effect = "off"
+```
+
+`screen_effect` names an `[effects.preset.<name>]` of kind `screen`, or `"off"`
+to disable `effects.screen` on this output. See
+[Effects](effects.md#turn-a-default-off-for-one-window-or-output).
 
 ### Position and scale
 

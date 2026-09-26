@@ -72,6 +72,10 @@ Included files are applied in list order. The including file is applied last:
 - Plain arrays and scalar values are replaced by the last file that sets them.
 - Setting a rule list to `[]` discards entries collected earlier.
 
+Effect presets are tables, so a preset's keys merge like any other table, but
+Umbriel rejects that merge: the same preset name defined in two files is an
+error.
+
 Every file must contain valid TOML. Duplicate device or workspace selectors, and
 effect presets defined in two files, are errors even when they come from
 different files: at startup Umbriel uses the default configuration and shows an

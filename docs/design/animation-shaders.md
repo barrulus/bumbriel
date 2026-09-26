@@ -1,7 +1,7 @@
 # Custom animation shaders
 
 Custom fragment shaders are supported on every animation event. Configuration
-and authoring details are in [Animation](../user/animation.md#custom-glsl-shaders).
+and authoring details are in [Animation](../user/animation.md#custom-effects).
 
 ## Configuration and compilation
 
