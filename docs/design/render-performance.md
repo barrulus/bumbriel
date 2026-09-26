@@ -8,25 +8,25 @@ thing to establish when a frame rate is lower than expected.
 ## Scanout eligibility
 
 `scene_entry_try_direct_scanout`
-([`wlr_scene.c:4670`](../../umbrielfx/types/scene/wlr_scene.c)) is attempted only
+([`wlr_scene.c:4674`](../../umbrielfx/types/scene/wlr_scene.c)) is attempted only
 when the render list holds exactly one entry, no color transform applies, no
 gamma LUT upload is pending, SDR capture is off, and damage highlighting is off
-(`:5353-5357`).
+(`:5360-5364`).
 
 The fork adds three conditions upstream does not have:
 
-- A transient animation slot anywhere in the scene vetoes scanout (`:4678`).
-  The same predicate also disables visibility and opaque culling (`:5236`,
-  `:687`) and forces whole-output damage (`:5303-5305`). It is scene-global,
+- A transient animation slot anywhere in the scene vetoes scanout (`:4682`).
+  The same predicate also disables visibility and opaque culling (`:5240`,
+  `:687`) and forces whole-output damage (`:5310-5312`). It is scene-global,
   not per output and not per subtree, so one animating node changes the cost
   of every frame on every output until it settles.
-- A persistent effect visible on the output vetoes scanout there (`:4679`).
-  `render_data.persistent_visible` (`:5259-5279`) is set when a render-list
+- A persistent effect visible on the output vetoes scanout there (`:4683`).
+  `render_data.persistent_visible` (`:5266-5286`) is set when a render-list
   entry sits under a node carrying a window, overlay, or border-effect slot, or
   when the output has a screen or cursor effect. Other outputs keep scanout;
   [Effects](effects.md#state-scanout-damage-and-culling) has the damage and
   culling rules.
-- A node's `visible` region must equal its full rect (`:4686-4698`), because
+- A node's `visible` region must equal its full rect (`:4690-4702`), because
   scanout bypasses `node->visible`. An ancestor tree clip therefore forces
   composition even when nothing overlaps the node.
 
@@ -53,7 +53,7 @@ buffer's format or from the client's declared opaque region
   so a client presenting an alpha-channel format without declaring one gets a
   blur node even though it never blends.
 - A backdrop rect whose color does not match the scene background. The skip
-  (`wlr_scene.c:4533-4542`) compares against `wlr_scene_set_background_color`,
+  (`wlr_scene.c:4537-4546`) compares against `wlr_scene_set_background_color`,
   which the output clear also paints, so a matching rect renders nothing the
   clear would not. Measured on a headless output with one fullscreen client:
   7 entries with `#000000FF` and 7 with `#26233aFF`, where before the clear
@@ -73,7 +73,7 @@ buffer's format or from the client's declared opaque region
 
 Occlusion makes every backdrop condition above moot. A fullscreen client whose
 buffer the scene sees as opaque empties the rect's `visible` region, and it is
-dropped at `:4572-4575` regardless of color, scale, or the fractional guard. So
+dropped at `:4576-4579` regardless of color, scale, or the fractional guard. So
 backdrop rects only ever cost a client that presents an alpha-channel format
 without declaring an opaque region. `vkmark` is such a client, which is worth
 knowing before using it to investigate this.
@@ -84,7 +84,7 @@ size and sets a logical destination, so no plane scaling is involved. A client
 that ignores the protocol presents at the logical size, and then
 `scene_entry_try_direct_scanout` stages a `buffer_dst_box` larger than the
 buffer and asks the backend to accept primary-plane scaling
-(`wlr_scene.c:4765-4787`). Hyprland rejects that case outright
+(`wlr_scene.c:4769-4791`). Hyprland rejects that case outright
 (`bufferSize != m_pixelSize`, its `Monitor.cpp:1995`) but has no
 fractional-scale condition of its own, because it has no background node to
 skip and decides eligibility from window state instead of render-list
@@ -139,6 +139,22 @@ scanned-out frames from composited ones: a scanned-out frame has a frame mark
 and no render-pass zones. Build and capture instructions are in
 [CONTRIBUTING.md](../../CONTRIBUTING.md#profiling).
 
+umbrielfx adds these zones for effect costs:
+
+| Zone | Where | Fires | Text |
+| --- | --- | --- | --- |
+| `render list` | `wlr_scene_output_build_state`, [`wlr_scene.c:5247-5257`](../../umbrielfx/types/scene/wlr_scene.c) | Every render-list build, including the scanout ones | Output name and render-list length, such as `HEADLESS-2 4` |
+| `fx_render_pass_init_offscreen_buffers` | `:5550-5559` | Only when the output initializes offscreen buffers: blur, a transient slot, or `persistent_visible` | Output name |
+| `scene_node_bounds` | `scene_node_update`, `:1510-1512` | Every enabled-path node update | |
+| `scene_node_drawn_expand` | `:1443-1449` | Node updates while the scene has effect state | |
+| `draw_animation_texture` (CPU and GPU) | [`fx_pass.c:676`](../../umbrielfx/render/fx_renderer/fx_pass.c) | Every effect program draw: animation slots, border, window, screen, and cursor effects, border light, and the shadow of a slot program | |
+
+`tracy-csvexport -u` prints each CPU zone event with its text in the `value`
+column, and `-g` prints each GPU zone event. Every zone text ends with a
+`Success On Line` line that `TRACY_ZONE_END` appends, so read the first line.
+A zone's time includes that formatting, which matters only for the sub-microsecond
+update zones.
+
 ## Workloads
 
 An uncapped client's frame rate on Wayland is bounded by how fast the
@@ -169,20 +185,155 @@ nothing useful.
 Run each with the panel hidden and again with it visible. That pair is the
 cheapest test of whether the render list still holds one entry.
 
+### Headless measurements
+
+Measured 2026-09-26 on a laptop with an Intel Arc (ARL) iGPU and an NVIDIA RTX
+5060 Laptop GPU, both builds in `tracy` mode: upstream `7fb0ba44` and this
+branch. Each instance runs headless with two 1280x720 outputs at 60 Hz, the
+renderer pinned to the Intel render node, and `vkmark` 2025.01 on the same
+device:
+
+```sh
+WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD129 \
+  build-tracy/umbriel -c config.toml
+vkmark -D <intel-uuid> --fullscreen --present-mode immediate -b shading:duration=5
+```
+
+Render node numbers follow probe order; `/sys/class/drm/renderD*/device/driver`
+names the driver behind each. `tracy-capture` and `tracy-csvexport` 0.13.1 come
+from `nix shell nixpkgs#tracy`, and the client library is the same version,
+built as [CONTRIBUTING.md](../../CONTRIBUTING.md#profiling) describes. Frame
+rates are taken with the profiler disconnected, three runs each. Zone numbers
+are medians over 2 to 4 second captures.
+
+Commit path, fullscreen `vkmark`, no effects:
+
+| Workload | Upstream | Branch |
+| --- | --- | --- |
+| `immediate`, panel hidden | 5954, 5994, 6098 FPS (0.164-0.168 ms) | 6044, 6086, 6075 FPS (0.164-0.165 ms) |
+| `immediate`, panel visible | 6024, 6055, 6009 FPS (0.165-0.166 ms) | 6053, 6062, 6021 FPS (0.165-0.166 ms) |
+| `fifo`, panel hidden or visible | 61 FPS, 16.393 ms, every run | 61 FPS, 16.393 ms, every run |
+
+The render list holds one entry with the panel hidden and with it visible,
+because the harness panel is a top-layer surface and a fullscreen window covers
+it. `umbriel tearing --json` reports the same state on both builds, and neither
+logs a `Direct scan-out` line: the headless backend never scans out.
+Refresh-locked `fifo` numbers on hardware are not measured here (needs a TTY
+session with two physical outputs).
+
+Composition per effect kind, a tiled 800x600 `vkmark` in `immediate` mode with
+the pointer over it and the bundled presets from `790_bundled_effects`:
+
+| Effects | `vkmark` FPS | `Output::render` CPU | Program draws per frame | GPU per draw |
+| --- | --- | --- | --- | --- |
+| None, upstream | 7158, 7066, 7138 | 132-144 µs | | |
+| None, branch | 7164, 7151, 7094 | 120-130 µs | | |
+| `border = "pulse"` | 6203, 6292, 6264 | 275 µs | 5 | 70 µs |
+| `window = "scanlines"` | 6498, 6585, 6577 | 243 µs | 4 | 44 µs |
+| `screen = "vignette"` | 6919, 6967, 6852 | 156 µs | 1 | 62 µs |
+| `cursor = "glow"` | 7157, 7122, 7152 | 122 µs | 1 | 12 µs |
+| All four, plus `reveal` and `squash` | 5944, 5996, 5914 | 305 µs | 9 | 61 µs |
+| `reveal` on four opening 600x400 windows, no `vkmark` | | 99 µs | | 65 µs |
+
+The no-effect `Output::render` ranges span three captures per build; single
+captures of the same build vary by about 40 µs. GPU times are
+`draw_animation_texture` GPU zones.
+
+A physics drag of a large window, on one 3840x2160 output with a 3000x1700
+floating window dragged with Super and the left button through 60 pointer
+moves over about 3 seconds, blur off, shadows on, running clock:
+
+| `[animation.windows_drag] physics` | Frames in 2 s | `Output::render` CPU | Program draws per frame | GPU per draw |
+| --- | --- | --- | --- | --- |
+| `true` | 126 | 203 µs | 4 | 2.5 ms (2 to 4 ms) |
+| `false` | 127 | 85 µs | 0 | |
+
+The deformation program and the shadow it re-captures run through
+`draw_animation_texture`, so their GPU cost is that zone's: about 10 ms per
+frame on this iGPU at 4K, inside the 16.7 ms budget, so the output keeps its
+60 Hz.
+
+## Persistent-effect isolation
+
+A persistent border or window effect costs only the outputs where its result
+is visible. Four runs check that, each path separately, with two outputs: A
+carries the effect and B a workload that stays the same. Transient animations
+are off (`[animation] enabled = false`), blur is off, and the effect is toggled
+by editing the configuration and running `umbriel msg config-reload`.
+
+- **Scanout.** A shows an ordinary desktop with several visible windows, so it
+  never scans out. B runs an eligible fullscreen client, such as
+  `vkmark --fullscreen --present-mode fifo`, whose `render list` zone reads
+  `1`, and `~/.cache/umbriel/umbriel.log` shows `Direct scan-out enabled`.
+  Toggling A's effect at least three times must add no
+  `Direct scan-out disabled` after that line:
+  `sed -n '/Direct scan-out enabled/,$p' umbriel.log | grep -c 'Direct scan-out disabled'`
+  prints `0`. The log names no output (`wlr_scene.c:5382`), so A's fixed
+  ineligibility is what attributes the lines to B. Highlight mode cannot serve
+  this run: scanout requires damage highlighting off (`:5360-5364`), so every
+  output composites while it is on.
+- **Damage.** With `WLR_SCENE_DEBUG_DAMAGE=highlight`, B shows a small
+  continuous update. Screenshots of B with A's effect off, on, and within
+  50 ms of each toggle must show highlight only inside that update.
+- **Culling.** B holds a tiled `vkmark` and a floating window over it, so it
+  composites every frame with occluded content. The `render list` zone's length
+  for B must not change across toggles, and A's may change only by the entries
+  of the window carrying the effect.
+- **Offscreen buffers.** The `fx_render_pass_init_offscreen_buffers` zone must
+  never fire for B while A toggles, and must fire for A only while the effect
+  is on.
+
+The same runs repeat with a window effect, then with the window moved across
+the boundary, the effect removed, and a border light with `spread = 128` next
+to the boundary.
+
+Results, measured 2026-09-26 on this branch with the headless setup above. B is
+`HEADLESS-2` (layout x 0 to 1280) and A is `HEADLESS-1` (1280 to 2560). A holds
+two tiled 400x300 windows, the focused one carrying the effect. For the damage
+run, B holds a `foot` window printing a counter every 50 ms.
+
+| Run | Effect on A | Metric | Result |
+| --- | --- | --- | --- |
+| Scanout | `border = "pulse"` | `Direct scan-out disabled` on B after `enabled` | Not measured here (needs a TTY session with two physical outputs). The headless backend never scans out. |
+| Damage | `border = "pulse"` | B's highlight bounds over nine screenshots | 35x13 at 290,10 in all nine: the counter's cells. A shows highlight over the effect's 662x441 drawn bounds while it is on. |
+| Damage | `window_effect = "scanlines"` | B's highlight bounds over nine screenshots | 35x13 at 290,10 in all nine. The program reads no time, so A shows no highlight once it is drawn. |
+| Culling | `border = "pulse"` | `render list` length over three toggles | B: 6 in all 376 frames. A: 6 with the effect off, 7 with it on. |
+| Culling | `window_effect = "scanlines"` | `render list` length over three toggles | B: 6 in all 376 frames. A: 6 with the effect off and on. |
+| Offscreen buffers | `border = "pulse"` | Zone events per output over three toggles | B: 0 of 376 frames. A: 201 of 376, the frames with the effect on. |
+| Offscreen buffers | `window_effect = "scanlines"` | Zone events per output over three toggles | B: 0 of 376 frames. A: 143 of 319. |
+| Boundary move | `window_effect = "scanlines"` on a floating 400x300 window | Zone events per output, 2 s at each position | On A: A 128 of 128, B 0 of 127. Dropped across the boundary at x 1120 to 1520: B 128 of 128, A draws nothing (0 entries), because a dragged window joins the output under the pointer and draws only there. Moved onto B: B 126 of 126, and A has no lit pixel left. |
+| Effect removal | `window_effect` reloaded to `"off"` with the window on B | Zone events on B; the window's pixels | B 0 of 128. The window's mean color is its fill, `85 119 170`. |
+| Light | `border = "pulse128"`: `pulse` with `light.spread = 128`, window 40 px from the boundary | Zone events per output; B's render list; B's pixels in x 1100 to 1280 | A 128 of 128, B 0 of 129. B's render list gains one entry (7 against 6), and B draws the light's tail: 11796 pixels in that strip at 1 to 2 of 255. |
+| Light moved away | Window dragged 700 px right | The same | B 0 of 127, render list 6, and no lit pixels left in the strip. |
+
+So an output the light reaches without the ring pays one render-list entry and
+the light draw, and no offscreen buffers.
+
+The descendant-expand walk `scene_node_update` runs while the scene has effect
+state costs the same order as its existing `scene_node_bounds` walk:
+
+| Workload | `scene_node_bounds` | `scene_node_drawn_expand` |
+| --- | --- | --- |
+| Border toggles, 55 updates | 164 ns | 84 ns |
+| Window-effect toggles, 15 and 8 updates | 505 ns | 294 ns |
+| Physics drag at 4K, 178 updates | 1545 ns | 706 ns |
+
+Medians, each including the zone's end-text formatting.
+
 ## Measurement caveats
 
 - Confirm the surface is presented before trusting any uncapped number. A `fifo`
   run that does not pin to the output's refresh rate means the surface is not
   reaching the screen: Umbriel culls invisible nodes outright
-  (`wlr_scene.c:4525`), and a culled surface has its buffers released
+  (`wlr_scene.c:4529`), and a culled surface has its buffers released
   immediately, which looks like an excellent frame rate.
 - A connected profiler reschedules every output frame as soon as the previous
-  one lands (`wlr_scene.c:4283-4286`), so the compositor renders continuously
+  one lands (`wlr_scene.c:4287-4290`), so the compositor renders continuously
   instead of on damage. Zone costs stay comparable; frame rate and idle
   behavior do not. Take frame rates from an external overlay with the profiler
   disconnected.
 - Scanout state is logged only on transitions, as `Direct scan-out enabled` or
-  `disabled` with no output name (`wlr_scene.c:5375`). `prev_scanout` starts
+  `disabled` with no output name (`wlr_scene.c:5382`). `prev_scanout` starts
   false, so an output that never scanned out once logs nothing at all rather
   than logging a refusal, and on a multi-output machine the lines cannot be
   attributed. Every build records them, since the log file is unfiltered and

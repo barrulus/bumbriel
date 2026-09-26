@@ -85,7 +85,7 @@ nothing until a pointer update follows it. It binds no program while the
 ledger is suspended, and returns before any scene call when no preset is
 defined and the ledger is empty. The cursor square draws only on the output
 holding the pointer: a pointer outside the output, or hidden, leaves that
-output's cursor slot inactive (`wlr_scene.c:4176-4180`, `:4194-4196`). The
+output's cursor slot inactive (`wlr_scene.c:4180-4184`, `:4198-4200`). The
 output also owns the effect frame timer ([Frames](#frames)).
 
 ### `Cursor`
@@ -126,7 +126,7 @@ An overview card carries the view's slots, except drag, on its tree, border,
 and first surface buffer.
 
 `wlr_scene_node_copy_animations_for_snapshot`
-([`wlr_scene.c:1758-1777`](../../umbrielfx/types/scene/wlr_scene.c)) copies
+([`wlr_scene.c:1762-1781`](../../umbrielfx/types/scene/wlr_scene.c)) copies
 each populated slot with its current parameters, moves its feedback history,
 and turns light off. Slots from `windows_out` up land in `windows_in`; the rest
 keep their index. Nothing updates the copied slots' parameters, so their time
@@ -148,7 +148,7 @@ the content tree's drawn bounds from `wlr_scene_node_effect_bounds` and is
 refit on every tick (`view.cpp:1084-1110`); a re-grab while it settles keeps
 the sheet and its transition. `View::animatesOn` includes every output the
 drawn box reaches (`view.cpp:1624-1628`). The program is not shape-preserving,
-so `render_animation_shadow` (`wlr_scene.c:3450-3520`) captures the content
+so `render_animation_shadow` (`wlr_scene.c:3454-3524`) captures the content
 tree and the drop shadow follows the deformation within the shadow node's own
 region. A close mid-drag moves the drag slot to the snapshot root, and
 `CloseSnapshot::applyShrink` grows its tree clip by that slot's `expand`
@@ -156,19 +156,19 @@ region. A close mid-drag moves the drag slot to the snapshot root, and
 
 ## Slot modes
 
-**Capture.** `render_animated_range` (`wlr_scene.c:3693-3847`) renders the
+**Capture.** `render_animated_range` (`wlr_scene.c:3697-3851`) renders the
 node's contiguous descendants into an offscreen buffer per capture slot, runs
 their own effects first, then composites through each program over the node
 bounds grown by the largest `expand` among the node's border-effect and drag
 slots (`fx_slot_expands`). A border-effect composite receives the border's hole
-and radii (`scene_border_geometry`, `:3525-3556`), and the preamble cuts the
+and radii (`scene_border_geometry`, `:3529-3560`), and the preamble cuts the
 hole out of its result. A persistent capture slot runs only when this frame's
-damage reaches its drawn box (`:3740-3752`); otherwise nothing composites and
+damage reaches its drawn box (`:3744-3756`); otherwise nothing composites and
 its history carries over.
 
 **In place.** After the subtree is drawn, `render_in_place_slots`
-(`:3610-3678`) calls `fx_render_pass_effect_in_place`
-([`fx_pass.c:1226-1266`](../../umbrielfx/render/fx_renderer/fx_pass.c)),
+(`:3614-3682`) calls `fx_render_pass_effect_in_place`
+([`fx_pass.c:1228-1268`](../../umbrielfx/render/fx_renderer/fx_pass.c)),
 which copies the current target under the node's rectangle into the output's
 `in_place_source` offscreen buffer and runs the program with that copy as
 `umbriel_sample`. The result is written back unblended through `umbriel_mask`,
@@ -198,13 +198,13 @@ slot follows the same contract.
   input-transparent rect per lit border slot in that layer, covering the
   border's bounds grown by `ceil(2 × spread + 8)` logical px plus the slot's
   `expand`. The rect carries visibility, output membership, and damage; the
-  renderer draws the light in its place (`:3005-3021`).
+  renderer draws the light in its place (`:3009-3025`).
 - **Emission.** Each display composite of the slot runs `emit_light`
-  (`fx_pass.c:967-1036`): the program again, unblended and without a history
+  (`fx_pass.c:969-1038`): the program again, unblended and without a history
   write, into a full-resolution emission texture (half float when the renderer
   can filter it); a threshold pass into level 0 of a half-resolution pyramid
   with the proxy's margin; then Kawase down and up passes over 1 to 6 levels
-  chosen from the spread. `fx_render_pass_add_effect_light` (`:1038-1062`)
+  chosen from the spread. `fx_render_pass_add_effect_light` (`:1040-1064`)
   screen-blends level 0 over the proxy's box at `intensity`. The pyramid
   belongs to the slot and holds its latest composite; every output showing the
   proxy draws it. The helper program compiles once per renderer, on first use.
@@ -262,16 +262,16 @@ animation lock and minus export-dmabuf frames on that output (`:176-188`), so
 an export-dmabuf client reads the displayed frame.
 
 With a capture pending and an in-place slot or output effect visible on the
-output, `wlr_scene_output_build_state` composes twice (`wlr_scene.c:5259-5301`,
-`:5599-5614`). The unfiltered composition skips in-place slots, output
+output, `wlr_scene_output_build_state` composes twice (`wlr_scene.c:5266-5308`,
+`:5611-5626`). The unfiltered composition skips in-place slots, output
 effects, and light emission, runs capture composites (the border effect and
 every transient slot) with capture-role histories, and draws the software
-cursor; `fx_render_pass_save_effect_capture` (`fx_pass.c:2818-2852`) then
+cursor; `fx_render_pass_save_effect_capture` (`fx_pass.c:2820-2854`) then
 copies the target into the output buffer's effect capture. The display
 composition then starts again from the background. This pass damages the whole
 output. When the save fails, it logs once, and the unfiltered composition
 serves display and captures alike for that frame, with no output effects
-(`:5638-5641`). `fx_texture_from_dmabuf`
+(`:5650-5653`). `fx_texture_from_dmabuf`
 ([`fx_texture.c:533-555`](../../umbrielfx/render/fx_renderer/fx_texture.c))
 substitutes a valid effect capture for any import of that output buffer, which
 is how screencopy and image-copy receive the unfiltered frame.
@@ -279,7 +279,7 @@ is how screencopy and image-copy receive the unfiltered frame.
 Feedback history
 ([`animation_history.h`](../../umbrielfx/internal/render/fx_renderer/animation_history.h))
 is kept per animated node's slot, per output, per renderer, and per composition
-role: 0 for display, 1 for the unfiltered capture (`wlr_scene.c:3832`). Each
+role: 0 for display, 1 for the unfiltered capture (`wlr_scene.c:3836`). Each
 entry holds two buffers, allocated only for programs that call
 `umbriel_sample_previous`. A pass reads and promotes only its own role's entry;
 a first frame, or a missing entry, reads that pass's current input. Promotion
@@ -288,7 +288,7 @@ frame; shadow captures read history but never promote it. A new transition or
 program resets every role; a renderer, output transform, or format change
 drops the affected entry's buffers. When a capture ends or the capture policy
 changes, the output's capture-role entries and effect captures are released
-(`wlr_scene.c:4053-4076`, `:5290-5296`), and
+(`wlr_scene.c:4057-4080`, `:5297-5303`), and
 `Output::scheduleEffectCaptureRelease` draws one more frame so that happens
 promptly.
 
@@ -303,36 +303,36 @@ listing its `scene_animation` addons with separate counts of nodes carrying
 transient and persistent slots (`scene_animation_classify`, `:208-223`). The
 addon exists while any node carries a slot or a light layer is registered, and
 is destroyed with the last of them (`:359-364`, `:1313-1350`). An
-output's `scene_output_effects` addon (`:3968-3984`) is created on first use:
+output's `scene_output_effects` addon (`:3972-3988`) is created on first use:
 a screen or cursor slot, `in_capture = true`, or an unfiltered composition.
 `wlr_scene_output_build_state` looks the scene addon up once per frame. A
 transient slot anywhere keeps the scene-wide conservative policy on every
 output; persistent slots never contribute to it.
 
-`render_data.persistent_visible` (`:5259-5279`) is true when a render-list
+`render_data.persistent_visible` (`:5266-5286`) is true when a render-list
 entry sits under a node with a persistent slot, or the output has a screen
 effect or a shown cursor effect.
 
 | Site | Transient slot in the scene | Persistent effect |
 | --- | --- | --- |
 | `scene_node_opaque_region` (`:684-769`) | No node is opaque. | A node at or under a node with slots contributes no opaque region; every other node keeps its own. |
-| `scene_entry_try_direct_scanout` (`:4670-4680`) | Veto on every output. | Veto only where `persistent_visible`. |
-| Animation-buffer release (`:5280-5282`) | Buffers kept. | Kept only where `persistent_visible`; released elsewhere. |
-| `calculate_visibility` | Render-list culling off (`:5236`). | Culling stays on. The update pass keeps an occluded node under a persistent effect visible, so it keeps output membership and frame callbacks (`:1097-1105`); an entry whose visible region, grown by the effect's `expand`, reaches the output is kept (`:4558-4575`); the background-color skip exempts nodes under an effect (`:4536`, `:4548`). |
-| Whole-output damage (`:5303-5305`) | Every frame. | Never from presence alone. `expand_damage_to_effects` (`:5098-5138`) grows commit (`:5343`) and render (`:5460`) damage to every effect box it touches, until nothing grows, because a program may read any texel of its box. Only the unfiltered capture pass damages the whole output (`:5298-5301`). |
-| `fx_render_pass_init_offscreen_buffers` (`:5543-5547`) | Always. | Only where `persistent_visible`. |
+| `scene_entry_try_direct_scanout` (`:4674-4684`) | Veto on every output. | Veto only where `persistent_visible`. |
+| Animation-buffer release (`:5287-5289`) | Buffers kept. | Kept only where `persistent_visible`; released elsewhere. |
+| `calculate_visibility` | Render-list culling off (`:5240`). | Culling stays on. The update pass keeps an occluded node under a persistent effect visible, so it keeps output membership and frame callbacks (`:1097-1105`); an entry whose visible region, grown by the effect's `expand`, reaches the output is kept (`:4562-4579`); the background-color skip exempts nodes under an effect (`:4540`, `:4552`). |
+| Whole-output damage (`:5310-5312`) | Every frame. | Never from presence alone. `expand_damage_to_effects` (`:5102-5142`) grows commit (`:5350`) and render (`:5467`) damage to every effect box it touches, until nothing grows, because a program may read any texel of its box. Only the unfiltered capture pass damages the whole output (`:5305-5308`). |
+| `fx_render_pass_init_offscreen_buffers` (`:5550-5559`) | Always. | Only where `persistent_visible`. |
 
 A drawn box is the node's bounds grown by its `expand`, plus the light proxy
-(`persistent_effect_box`, `:5046-5075`); a screen or cursor box is the output
+(`persistent_effect_box`, `:5050-5079`); a screen or cursor box is the output
 or the cursor square. Changing a slot (`wlr_scene_node_set_animation`,
-`:1619-1716`) updates the whole scene for a transient slot. For a persistent
+`:1623-1720`) updates the whole scene for a transient slot. For a persistent
 slot it damages the drawn box before and after the change
-(`scene_effect_damage`, `:1528-1549`) and re-runs `scene_node_update` on the
+(`scene_effect_damage`, `:1532-1553`) and re-runs `scene_node_update` on the
 node when a slot appears or disappears. Destroying a node damages its effects'
-margins first (`:1569-1577`). Whenever the scene has effect state,
-`scene_node_update` (`:1468-1523`) grows its update and damage regions by the
+margins first (`:1573-1581`). Whenever the scene has effect state,
+`scene_node_update` (`:1470-1527`) grows its update and damage regions by the
 largest `expand` on the node, its ancestors, and its enabled descendants
-(`scene_node_drawn_expand`, `:1443-1447`), so moving a frame repaints a child
+(`scene_node_drawn_expand`, `:1443-1449`), so moving a frame repaints a child
 slot's old margin.
 
 ## Cost
