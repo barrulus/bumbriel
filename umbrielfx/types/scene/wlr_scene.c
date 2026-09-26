@@ -1439,6 +1439,20 @@ static int scene_node_effect_expand(struct wlr_scene_node* node) {
   return expand;
 }
 
+// The largest expand margin any slot in the scene draws past its node's bounds.
+static int scene_effects_max_expand(struct scene_effects* effects) {
+  int expand = 0;
+  if (effects == NULL) {
+    return expand;
+  }
+  struct scene_animation* animation;
+  wl_list_for_each(animation, &effects->animations, link) {
+    const int own = animation_expand(animation);
+    expand = own > expand ? own : expand;
+  }
+  return expand;
+}
+
 // The node's own, its ancestors', and its descendants' expand margins: everything drawn past its bounds.
 static int scene_node_drawn_expand(struct wlr_scene_node* node) {
   TRACY_ZONE_START_N("scene_node_drawn_expand");
@@ -4501,6 +4515,8 @@ struct render_list_constructor_data {
   bool fractional_scale;
   const float* background_color;
   bool persistent_effects;
+  // The scene's largest expand margin; 0 when no slot draws past its node.
+  int effect_expand;
 };
 
 static bool scene_buffer_matches_background(struct wlr_scene_buffer* scene_buffer, const float background[static 4]) {
@@ -4563,7 +4579,7 @@ static bool construct_render_list_iterator(
 
   pixman_region32_t intersection;
   pixman_region32_init(&intersection);
-  const int expand = data->persistent_effects ? scene_node_effect_expand(node) : 0;
+  const int expand = data->effect_expand > 0 ? scene_node_effect_expand(node) : 0;
   if (expand > 0) {
     pixman_region32_t visible;
     pixman_region32_init(&visible);
@@ -5246,12 +5262,20 @@ bool wlr_scene_output_build_state(
       .fractional_scale = floor(render_data.scale) != render_data.scale,
       .background_color = scene_output->scene->background_color,
       .persistent_effects = persistent_effects,
+      .effect_expand = scene_effects_max_expand(effects),
   };
+  // A leaf whose own box misses the output can still reach it with an expand margin; the iterator tests each leaf's
+  // expanded visible region against the output box itself.
+  struct wlr_box list_walk_box = list_con.box;
+  list_walk_box.x -= list_con.effect_expand;
+  list_walk_box.y -= list_con.effect_expand;
+  list_walk_box.width += 2 * list_con.effect_expand;
+  list_walk_box.height += 2 * list_con.effect_expand;
 
   {
     TRACY_ZONE_START_N("render list");
     list_con.render_list->size = 0;
-    scene_nodes_in_box(&scene_output->scene->tree.node, &list_con.box, construct_render_list_iterator, &list_con);
+    scene_nodes_in_box(&scene_output->scene->tree.node, &list_walk_box, construct_render_list_iterator, &list_con);
     array_realloc(list_con.render_list, list_con.render_list->size);
     TRACY_WHEN_CONNECTED(TRACY_ZONE_TEXT_f(
         "%s %zu", output->name, list_con.render_list->size / sizeof(struct render_list_entry)

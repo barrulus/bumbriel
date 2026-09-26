@@ -716,6 +716,53 @@ static bool test_move_margin_damage(struct fixture *fixture) {
 	return ok;
 }
 
+// A node wholly outside the output still draws the part of its expand margin that reaches the output, for a
+// persistent border effect and a transient drag slot alike. Layout (16x16 output): opaque blue background; a 6x6
+// rect at (-6,5) whose margin of 3 reaches columns 0-2.
+static bool test_offscreen_margin(struct fixture *fixture) {
+	struct fx_effect_shader *border = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		"vec4 border(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0); }", "offscreen-border");
+	struct fx_effect_shader *drag = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0); }", "offscreen-drag");
+	bool ok = check(border != NULL && drag != NULL, "border and drag programs compile");
+	const struct {
+		unsigned slot;
+		struct fx_effect_shader *shader;
+		const char *name;
+	} cases[] = {
+		{ FX_SLOT_BORDER_EFFECT, border, "a border effect margin reaches the output from a node outside it" },
+		{ FX_SLOT_DRAG, drag, "a drag margin reaches the output from a node outside it" },
+	};
+	const bool compiled = ok;
+	for (size_t i = 0; compiled && i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct wlr_scene *scene = wlr_scene_create();
+		struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+		const float blue[4] = { 0, 0, 1, 1 }, white[4] = { 1, 1, 1, 1 };
+		wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+		struct wlr_scene_rect *rect = wlr_scene_rect_create(&scene->tree, 6, 6, white);
+		wlr_scene_node_set_position(&rect->node, -6, 5);
+		struct fx_animation_parameters parameters = {
+			.progress = 1, .linear_progress = 1, .direction = 1, .transition_id = 1, .expand = 3 };
+		wlr_scene_node_set_animation(&rect->node, cases[i].slot, cases[i].shader, &parameters);
+		struct wlr_output_state state;
+		struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+		ok &= check(rendered != NULL, "scene renders with a node outside the output");
+		if (rendered != NULL) {
+			uint8_t margin[4], beyond[4];
+			ok &= fixture_read_pixel(fixture, rendered, 1, 8, margin);
+			ok &= fixture_read_pixel(fixture, rendered, 4, 8, beyond);
+			ok &= check(margin[2] > 250 && margin[0] < 5, cases[i].name);
+			ok &= check(beyond[0] > 250 && beyond[2] < 5, "the margin ends at its expand");
+			wlr_buffer_unlock(rendered);
+		}
+		wlr_output_state_finish(&state);
+		wlr_scene_node_destroy(&scene->tree.node);
+	}
+	fx_effect_shader_unref(border);
+	fx_effect_shader_unref(drag);
+	return ok;
+}
+
 // A node's effect bounds are its enabled leaves' extents in node-local coordinates, and its animation expand is
 // the largest expand among its own slots.
 static bool test_effect_bounds(struct fixture *fixture) {
@@ -1959,6 +2006,8 @@ int main(int argc, char *argv[]) {
 		ok = test_effect_bounds(&fixture);
 	} else if (strcmp(argv[1], "move-margin-damage") == 0) {
 		ok = test_move_margin_damage(&fixture);
+	} else if (strcmp(argv[1], "offscreen-margin") == 0) {
+		ok = test_offscreen_margin(&fixture);
 	} else if (strcmp(argv[1], "border-geometry") == 0) {
 		ok = test_border_geometry(&fixture);
 	} else if (strcmp(argv[1], "border-geometry-tree") == 0) {
