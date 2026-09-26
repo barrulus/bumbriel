@@ -3610,6 +3610,22 @@ static void render_in_place_slots(
       if (!wlr_box_empty(&corner_box)) {
         corner_box.x -= data->logical.x;
         corner_box.y -= data->logical.y;
+        // The node bounds can cut edges off the corner box (a client buffer lagging a resize);
+        // the scene draws those edges square, so zero the radius of every corner they touch.
+        if (corner_radius != NULL) {
+          if (corner_box.x < logical_box->x) {
+            corners[0] = corners[3] = 0;
+          }
+          if (corner_box.y < logical_box->y) {
+            corners[0] = corners[1] = 0;
+          }
+          if (corner_box.x + corner_box.width > logical_box->x + logical_box->width) {
+            corners[1] = corners[2] = 0;
+          }
+          if (corner_box.y + corner_box.height > logical_box->y + logical_box->height) {
+            corners[2] = corners[3] = 0;
+          }
+        }
         if (!wlr_box_intersection(&shape_logical, &corner_box, logical_box)) {
           return;
         }
@@ -5212,11 +5228,8 @@ bool wlr_scene_output_build_state(
   render_data.entries = list_data;
   render_data.entry_count = list_len;
 
-  // The output addon holds the output slots and the capture policy. Without it
-  // the policy is the default (effects excluded from captures). The output slot
-  // setters, an in_capture policy, and an unfiltered composition create it.
-  // With no scene effects, output slots, or pending capture there is nothing to
-  // draw, save, or release.
+  // Looked up only with scene effects, output slots, or a pending capture; otherwise
+  // there is nothing to draw, save, or release.
   const bool capture_pending = options->effect_capture_pending;
   struct scene_output_effects* output_effects =
       effects != NULL || capture_pending || scene_output->output_effects_configured

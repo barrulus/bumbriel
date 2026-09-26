@@ -1624,6 +1624,39 @@ static bool test_in_place_shape(struct fixture *fixture) {
 		}
 		wlr_scene_node_destroy(&scene->tree.node);
 	}
+
+	// A corner box larger than the node bounds (a client buffer lagging a resize): the
+	// intersection cuts the box's right and bottom edges, so only its bottom-right corner
+	// must lose its mask radius.
+	struct fx_effect_shader *paint = fx_effect_shader_create(
+		fixture->renderer, FX_EFFECT_WINDOW, "vec4 window(vec2 uv) { return vec4(1.0, 0.0, 1.0, 1.0); }",
+		"in-place-shape-paint");
+	ok &= check(paint != NULL, "paint program compiles");
+	if (paint != NULL) {
+		scene = wlr_scene_create();
+		scene_output = wlr_scene_output_create(scene, fixture->output);
+		wlr_scene_rect_create(&scene->tree, 8, 8, blue);
+		struct wlr_scene_tree *surface = wlr_scene_tree_create(&scene->tree);
+		wlr_scene_node_set_position(&surface->node, 0, 1);
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_create(surface, content);
+		wlr_scene_buffer_set_dest_size(buffer, 8, 6);
+		wlr_scene_buffer_set_corner_radii(buffer, corner_radii_all(2));
+		// Node bounds are the buffer's own dest box, (0,1,8,6): this corner box, (1,2,11,8) once
+		// positioned, is cut on the right and bottom, well past the buffer's own (uncut) rounded
+		// corner, so the two corners' arcs do not overlap.
+		wlr_scene_buffer_set_corner_box(buffer, &(struct wlr_box) { 1, 1, 10, 6 });
+		wlr_scene_node_set_animation(&surface->node, FX_SLOT_WINDOW, paint, &parameters);
+		rendered = render_transformed(fixture, scene_output, 2, WL_OUTPUT_TRANSFORM_NORMAL);
+		ok &= check(rendered != NULL, "cut-corner frame");
+		if (rendered != NULL) {
+			uint8_t pixel[4];
+			ok &= read_logical(fixture, rendered, WL_OUTPUT_TRANSFORM_NORMAL, 7.9f, 6.8f, pixel);
+			ok &= is_colour(pixel, 255, 0, 255, "the node-bounds-cut corner is fully shaded");
+			wlr_buffer_unlock(rendered);
+		}
+		wlr_scene_node_destroy(&scene->tree.node);
+		fx_effect_shader_unref(paint);
+	}
 	wlr_buffer_drop(content);
 	fx_effect_shader_unref(program);
 	return ok;
