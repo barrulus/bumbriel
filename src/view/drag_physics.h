@@ -16,6 +16,13 @@ namespace umbriel {
     // `grabX`/`grabY` are the grab point as fractions of the window (0-1). `transitionId` comes from the
     // shared transition-id source (never 0), since this class mints no ids of its own.
     void begin(float width, float height, float grabX, float grabY, uint64_t transitionId);
+    // Carries the sheet onto a resized window or a moved grab point: displacements keep their size relative to the
+    // window, and the new grab point is pinned.
+    void resize(float width, float height, float grabX, float grabY);
+    // The grab point as fractions of the box the sheet spans, for a pointer at (localX, localY); the box and the
+    // pointer share one coordinate space.
+    [[nodiscard]] static std::array<float, 2>
+    grabIn(float boxX, float boxY, float boxWidth, float boxHeight, double localX, double localY);
     // Pointer delta in logical pixels since the previous call.
     void move(float dx, float dy);
     void release();
@@ -26,10 +33,15 @@ namespace umbriel {
     [[nodiscard]] uint64_t transitionId() const { return m_transitionId; }
     // Displacements divided by the window size, as the shader expects.
     [[nodiscard]] Sheet normalizedDisplacement() const;
-    // Largest displacement in logical pixels, for the drawn rectangle's expand.
+    // Largest displacement in logical pixels.
     [[nodiscard]] float maxDisplacement() const;
+    // The displacement at (u, v) of the window (0-1) in logical pixels, interpolated as the shader does.
+    [[nodiscard]] std::array<float, 2> displacementAt(float u, float v) const;
+    // The largest displacement constrain() allows on either axis, in logical pixels.
+    [[nodiscard]] float displacementBound() const;
 
   private:
+    void setGrab(float grabX, float grabY);
     void constrain();
     Sheet m_displacement{};
     Sheet m_velocity{};

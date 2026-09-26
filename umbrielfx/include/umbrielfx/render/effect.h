@@ -161,6 +161,12 @@ bool wlr_scene_node_set_animation_output_clip(struct wlr_scene_node* node, const
 // never copies.
 void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destination, struct wlr_scene_node* source);
 
+// The extents of the enabled leaves under `node` in node-local coordinates: the box a slot on `node` draws over
+// before its expand. False, with an empty box, when nothing under it is drawn.
+bool wlr_scene_node_effect_bounds(struct wlr_scene_node* node, struct wlr_box* box);
+// The largest expand among the slots on `node` itself; 0 without any.
+int wlr_scene_node_animation_expand(struct wlr_scene_node* node);
+
 // Border slots with light enabled screen-blend their emission into `layer`,
 // which must be a child of the scene root. Borders stacked above the layer
 // emit nothing. NULL removes the layer and every light in it.

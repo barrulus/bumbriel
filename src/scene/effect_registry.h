@@ -89,6 +89,8 @@ namespace umbriel {
     void compile(const EffectPreset& preset);
     void referencedNames(std::vector<std::string>& names) const;
     void updateCursorActive();
+    // Forgets the deformation program so the next deformationShader() compiles afresh.
+    void dropDeformation();
 
     Server* m_server = nullptr;
     wlr_renderer* m_renderer = nullptr;

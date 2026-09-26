@@ -22,6 +22,12 @@ namespace umbriel {
     // A pointer delta beyond this cannot come from real input; `move()` clamps to it so a single huge,
     // finite delta cannot overflow to inf before `constrain()` gets a chance to bound the result.
     constexpr float kMaxDelta = 1.0e6F;
+
+    // Cubic Bernstein weights at t, shared by the pin and the shader's interpolation.
+    std::array<float, 4> bernstein(float t) {
+      const float s = 1 - t;
+      return {s * s * s, 3 * t * s * s, 3 * t * t * s, t * t * t};
+    }
   } // namespace
 
   void DragPhysics::begin(float width, float height, float grabX, float grabY, uint64_t transitionId) {
@@ -34,13 +40,43 @@ namespace umbriel {
     m_height = std::max(height, 1.0F);
     m_transitionId = transitionId;
     m_grabbed = true;
+    setGrab(grabX, grabY);
+  }
+
+  void DragPhysics::resize(float width, float height, float grabX, float grabY) {
+    if (!std::isfinite(width) || !std::isfinite(height) || !std::isfinite(grabX) || !std::isfinite(grabY)) {
+      return;
+    }
+    width = std::max(width, 1.0F);
+    height = std::max(height, 1.0F);
+    const float scale[2] = {width / m_width, height / m_height};
+    for (int i = 0; i < kPoints; ++i) {
+      for (int axis = 0; axis < 2; ++axis) {
+        m_displacement[i][axis] *= scale[axis];
+        m_velocity[i][axis] *= scale[axis];
+      }
+    }
+    m_width = width;
+    m_height = height;
+    setGrab(grabX, grabY);
+    constrain();
+  }
+
+  std::array<float, 2>
+  DragPhysics::grabIn(float boxX, float boxY, float boxWidth, float boxHeight, double localX, double localY) {
+    return {
+        static_cast<float>((localX - boxX) / std::max(boxWidth, 1.0F)),
+        static_cast<float>((localY - boxY) / std::max(boxHeight, 1.0F))
+    };
+  }
+
+  void DragPhysics::setGrab(float grabX, float grabY) {
     // One bicubic Bernstein surface couples the whole window; the shader
     // interpolates with the same weights, so the pin lands exactly on the pointer.
     const float u = std::clamp(grabX, 0.0F, 1.0F);
     const float v = std::clamp(grabY, 0.0F, 1.0F);
-    const float ux = 1 - u, vy = 1 - v;
-    const float horizontal[4] = {ux * ux * ux, 3 * u * ux * ux, 3 * u * u * ux, u * u * u};
-    const float vertical[4] = {vy * vy * vy, 3 * v * vy * vy, 3 * v * v * vy, v * v * v};
+    const std::array<float, 4> horizontal = bernstein(u);
+    const std::array<float, 4> vertical = bernstein(v);
     for (int i = 0; i < kPoints; ++i) {
       m_weights[i] = horizontal[i % 4] * vertical[i / 4];
     }
@@ -186,6 +222,20 @@ namespace umbriel {
     }
     return sheet;
   }
+
+  std::array<float, 2> DragPhysics::displacementAt(float u, float v) const {
+    const std::array<float, 4> horizontal = bernstein(std::clamp(u, 0.0F, 1.0F));
+    const std::array<float, 4> vertical = bernstein(std::clamp(v, 0.0F, 1.0F));
+    std::array<float, 2> displacement{};
+    for (int i = 0; i < kPoints; ++i) {
+      const float weight = horizontal[i % 4] * vertical[i / 4];
+      displacement[0] += weight * m_displacement[i][0];
+      displacement[1] += weight * m_displacement[i][1];
+    }
+    return displacement;
+  }
+
+  float DragPhysics::displacementBound() const { return std::min(kMaxDisplacementPx, std::max(m_width, m_height) / 5); }
 
   float DragPhysics::maxDisplacement() const {
     float largest = 0;

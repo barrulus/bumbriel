@@ -263,6 +263,7 @@ if build_tests
     'transient-policy',
     'margin-damage',
     'move-margin-damage',
+    'effect-bounds',
     'border-geometry',
     'border-geometry-tree',
     'border-light',

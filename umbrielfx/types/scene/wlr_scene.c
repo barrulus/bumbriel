@@ -1183,6 +1183,18 @@ static void scene_node_bounds(struct wlr_scene_node* node, int x, int y, pixman_
   pixman_region32_union_rect(visible, visible, x, y, width, height);
 }
 
+bool wlr_scene_node_effect_bounds(struct wlr_scene_node* node, struct wlr_box* box) {
+  pixman_region32_t bounds;
+  pixman_region32_init(&bounds);
+  scene_node_bounds(node, 0, 0, &bounds);
+  const bool drawn = pixman_region32_not_empty(&bounds);
+  const pixman_box32_t* extents = pixman_region32_extents(&bounds);
+  *box = drawn ? (struct wlr_box){extents->x1, extents->y1, extents->x2 - extents->x1, extents->y2 - extents->y1}
+               : (struct wlr_box){0};
+  pixman_region32_fini(&bounds);
+  return drawn;
+}
+
 static bool node_belongs_to(struct wlr_scene_node* node, struct wlr_scene_node* ancestor);
 
 // True when `node`'s root-level ancestor sorts above `layer` among the scene
@@ -1427,6 +1439,18 @@ static int scene_node_effect_expand(struct wlr_scene_node* node) {
   return expand;
 }
 
+// The node's own, its ancestors', and its descendants' expand margins: everything drawn past its bounds.
+static int scene_node_drawn_expand(struct wlr_scene_node* node) {
+  const int own = scene_node_effect_expand(node);
+  const int nested = scene_subtree_effect_expand(node);
+  return own > nested ? own : nested;
+}
+
+int wlr_scene_node_animation_expand(struct wlr_scene_node* node) {
+  struct scene_animation* animation = scene_animation_get(node);
+  return animation != NULL ? animation_expand(animation) : 0;
+}
+
 /**
  * Updates the nodes visibility, xwayland restacking, send leave/enter events
  * and damages the screen. The damage region is used to not only damage the
@@ -1454,11 +1478,8 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
       scene_lights_sync(effects, node);
       scene_node_cleanup_when_disabled(node, scene->restack_xwayland_surfaces, &scene->outputs);
 
-      // The node's own, its ancestors', and its descendants' expand margins were drawn too.
       if (effects != NULL) {
-        const int own = scene_node_effect_expand(node);
-        const int nested = scene_subtree_effect_expand(node);
-        const int expand = own > nested ? own : nested;
+        const int expand = scene_node_drawn_expand(node);
         if (expand > 0) {
           wlr_region_expand(damage, damage, expand);
         }
@@ -1486,10 +1507,7 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
   pixman_region32_copy(&update_region, damage);
   scene_node_bounds(node, x, y, &update_region);
   if (effects != NULL) {
-    // The node's own, its ancestors', and its descendants' expand margins, as in the disabled branch.
-    const int own = scene_node_effect_expand(node);
-    const int nested = scene_subtree_effect_expand(node);
-    const int expand = own > nested ? own : nested;
+    const int expand = scene_node_drawn_expand(node);
     if (expand > 0) {
       wlr_region_expand(&update_region, &update_region, expand);
       wlr_region_expand(damage, damage, expand);

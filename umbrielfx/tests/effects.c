@@ -716,6 +716,38 @@ static bool test_move_margin_damage(struct fixture *fixture) {
 	return ok;
 }
 
+// A node's effect bounds are its enabled leaves' extents in node-local coordinates, and its animation expand is
+// the largest expand among its own slots.
+static bool test_effect_bounds(struct fixture *fixture) {
+	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return umbriel_sample(uv); }", "effect-bounds");
+	bool ok = check(shader != NULL, "program compiles");
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_tree *tree = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_node_set_position(&tree->node, 7, 7);
+	struct wlr_box box;
+	ok &= check(!wlr_scene_node_effect_bounds(&tree->node, &box) && box.width == 0, "an empty tree has no bounds");
+	const float white[4] = { 1, 1, 1, 1 };
+	struct wlr_scene_rect *ring = wlr_scene_rect_create(tree, 10, 8, white);
+	wlr_scene_node_set_position(&ring->node, -2, -1);
+	struct wlr_scene_rect *hidden = wlr_scene_rect_create(tree, 4, 4, white);
+	wlr_scene_node_set_position(&hidden->node, 9, 9);
+	wlr_scene_node_set_enabled(&hidden->node, false);
+	ok &= check(wlr_scene_node_effect_bounds(&tree->node, &box)
+		&& box.x == -2 && box.y == -1 && box.width == 10 && box.height == 8,
+		"bounds are node-local and skip disabled leaves");
+	ok &= check(wlr_scene_node_animation_expand(&tree->node) == 0, "no slots, no expand");
+	struct fx_animation_parameters parameters = {
+		.progress = 1, .linear_progress = 1, .direction = 1, .transition_id = 1, .expand = 5 };
+	wlr_scene_node_set_animation(&tree->node, FX_SLOT_DRAG, shader, &parameters);
+	parameters.expand = 9;
+	wlr_scene_node_set_animation(&tree->node, FX_SLOT_WINDOWS_IN, shader, &parameters);
+	ok &= check(wlr_scene_node_animation_expand(&tree->node) == 5, "only expanding slots count");
+	wlr_scene_node_destroy(&scene->tree.node);
+	fx_effect_shader_unref(shader);
+	return ok;
+}
+
 // A border program sees the client hole through umbriel_border_hole and
 // umbriel_border_distance, and its result is cut out of the hole.
 static bool test_border_geometry(struct fixture *fixture) {
@@ -1923,6 +1955,8 @@ int main(int argc, char *argv[]) {
 		ok = test_transient_policy(&fixture);
 	} else if (strcmp(argv[1], "margin-damage") == 0) {
 		ok = test_margin_damage(&fixture);
+	} else if (strcmp(argv[1], "effect-bounds") == 0) {
+		ok = test_effect_bounds(&fixture);
 	} else if (strcmp(argv[1], "move-margin-damage") == 0) {
 		ok = test_move_margin_damage(&fixture);
 	} else if (strcmp(argv[1], "border-geometry") == 0) {

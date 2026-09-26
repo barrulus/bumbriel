@@ -28,7 +28,8 @@ namespace umbriel {
 
     // The drag slot's built-in program. uv spans the drawn rectangle (node plus
     // expand); the inverse lookup is a contraction because DragPhysics bounds the
-    // sheet's slopes. Uniform indices are constants for GLSL ES 1.00.
+    // sheet's slopes to 0.7, so 22 steps reach 0.1 px on a 200 px displacement and
+    // most fragments stop earlier. Uniform indices are constants for GLSL ES 1.00.
     constexpr const char* kDeformation = R"(uniform vec2 umbriel_deformation[16];
 vec2 physics_row(float t, vec2 a, vec2 b, vec2 c, vec2 d) {
   float u = 1.0 - t;
@@ -45,7 +46,12 @@ vec2 physics_offset(vec2 p) {
 vec4 animation(vec2 uv) {
   vec2 inner = (uv - umbriel_expand) / (1.0 - 2.0 * umbriel_expand);
   vec2 source = inner;
-  for (int i = 0; i < 28; i++) source = inner - physics_offset(source);
+  for (int i = 0; i < 22; i++) {
+    vec2 next = inner - physics_offset(source);
+    bool done = all(lessThan(abs(next - source), vec2(1e-5)));
+    source = next;
+    if (done) break;
+  }
   return umbriel_sample(source * (1.0 - 2.0 * umbriel_expand) + umbriel_expand);
 })";
 
@@ -89,8 +95,7 @@ vec4 animation(vec2 uv) {
   void EffectRegistry::clear() {
     m_programs.clear();
     m_builtinFade.reset();
-    m_deformation.reset();
-    m_deformationCompiled = false;
+    dropDeformation();
     m_persistentReferenced = false;
     m_inPlaceReferenced = false;
     m_cursorActive = false;
@@ -175,8 +180,7 @@ vec4 animation(vec2 uv) {
       // Programs belong to one GL context. A new renderer starts from nothing.
       m_programs.clear();
       m_builtinFade.reset();
-      m_deformation.reset();
-      m_deformationCompiled = false;
+      dropDeformation();
       m_renderer = renderer;
     }
     const Config& settings = config();
@@ -211,8 +215,7 @@ vec4 animation(vec2 uv) {
     if (settings.animation.enabled && settings.animation.windowsDrag.physics) {
       (void)deformationShader();
     } else {
-      m_deformation.reset();
-      m_deformationCompiled = false;
+      dropDeformation();
     }
     syncLightLayer();
     applyOutputEffects();
@@ -281,6 +284,11 @@ vec4 animation(vec2 uv) {
       return custom;
     }
     return builtinFadeApplies(config().animation, event) ? m_builtinFade.get() : nullptr;
+  }
+
+  void EffectRegistry::dropDeformation() {
+    m_deformation.reset();
+    m_deformationCompiled = false;
   }
 
   fx_effect_shader* EffectRegistry::deformationShader() {

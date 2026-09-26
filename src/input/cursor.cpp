@@ -567,7 +567,7 @@ namespace umbriel {
     m_grabButton = button;
     if (!grab.pending) {
       view->enterDragPresentation();
-      view->beginDragPhysics(m_cursor->x, m_cursor->y);
+      view->beginDragPhysics(grab.offsetX, grab.offsetY);
     }
     updateInteractiveCursor(view);
     return true;
@@ -1910,9 +1910,7 @@ namespace umbriel {
       grab.sourceWorkspace->layoutDetach(grab.view);
     }
     grab.view->enterDragPresentation();
-    // Pinned where the frame will hold the pointer, not where the pointer crossed the threshold.
-    const wlr_scene_node& frame = grab.view->sceneTree()->node;
-    grab.view->beginDragPhysics(frame.x + grab.offsetX, frame.y + grab.offsetY);
+    grab.view->beginDragPhysics(grab.offsetX, grab.offsetY);
     grab.lastX = m_cursor->x;
     grab.lastY = m_cursor->y;
   }
@@ -2110,6 +2108,7 @@ namespace umbriel {
     }
     view->requestFloatingSize(width, height);
     view->beginResizeAnimation(width, height);
+    view->setDragPhysicsGrab(grab.offsetX, grab.offsetY);
     processMove();
   }
 

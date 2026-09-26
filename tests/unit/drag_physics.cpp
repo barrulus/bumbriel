@@ -168,3 +168,39 @@ UMBRIEL_TEST(tickIgnoresNonPositiveOrNonFiniteSeconds) {
 }
 
 int main() { return RUN_TESTS(); }
+
+UMBRIEL_TEST(aBorderedWindowKeepsTheGrabbedCornerUnderThePointer) {
+  // The sheet spans the box the drag slot draws over: a 400x300 window inside a 24 px ring (border plus padding).
+  const float boxX = -24, boxY = -24, boxWidth = 448, boxHeight = 348;
+  // The pointer holds the window geometry's top-left corner, window-local (0, 0).
+  const auto grab = DragPhysics::grabIn(boxX, boxY, boxWidth, boxHeight, 0.0, 0.0);
+  DragPhysics physics;
+  physics.begin(boxWidth, boxHeight, grab[0], grab[1], 1);
+  for (int i = 0; i < 8; ++i) {
+    physics.move(25, 10);
+    physics.tick(1.0 / 60);
+  }
+  CHECK(physics.maxDisplacement() > 5.0F);
+  // Drawn where the shader puts it: the box origin, plus the grab's fraction of the box, plus its displacement.
+  auto at = physics.displacementAt(grab[0], grab[1]);
+  CHECK(std::abs(boxX + grab[0] * boxWidth + at[0]) < 0.05F);
+  CHECK(std::abs(boxY + grab[1] * boxHeight + at[1]) < 0.05F);
+
+  // Resized with the grab at the same fraction, the deformation keeps its shape relative to the window.
+  const auto before = physics.normalizedDisplacement();
+  physics.resize(boxWidth * 1.5F, boxHeight * 1.25F, grab[0], grab[1]);
+  const auto after = physics.normalizedDisplacement();
+  for (int i = 0; i < DragPhysics::kPoints; ++i) {
+    CHECK(std::abs(before[i][0] - after[i][0]) < 1e-5F && std::abs(before[i][1] - after[i][1]) < 1e-5F);
+  }
+
+  // A retarget grows the window under the same ring and keeps the pointer on the geometry's corner.
+  const auto moved = DragPhysics::grabIn(boxX, boxY, 648, 448, 0.0, 0.0);
+  physics.resize(648, 448, moved[0], moved[1]);
+  physics.move(20, 0);
+  physics.tick(1.0 / 60);
+  at = physics.displacementAt(moved[0], moved[1]);
+  CHECK(std::abs(boxX + moved[0] * 648 + at[0]) < 0.05F);
+  CHECK(std::abs(boxY + moved[1] * 448 + at[1]) < 0.05F);
+  CHECK(physics.maxDisplacement() <= physics.displacementBound() + 1e-3F);
+}

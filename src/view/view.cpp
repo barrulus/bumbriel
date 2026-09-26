@@ -1056,34 +1056,77 @@ namespace umbriel {
     raiseToTop();
   }
 
-  void View::beginDragPhysics(double pointerX, double pointerY) {
+  void View::beginDragPhysics(double localX, double localY) {
     // Null while animations or physics are off, or when the program failed to compile: the window stays rigid.
-    if (effectRegistry().deformationShader() == nullptr) {
+    wlr_box bounds{};
+    if (effectRegistry().deformationShader() == nullptr
+        || !wlr_scene_node_effect_bounds(&m_contentTree->node, &bounds)) {
       return;
     }
-    const wlr_box content = committedContentBox();
-    if (content.width <= 0 || content.height <= 0) {
-      return;
-    }
-    const double localX = pointerX - m_sceneTree->node.x;
-    const double localY = pointerY - m_sceneTree->node.y;
+    m_dragGrabX = localX;
+    m_dragGrabY = localY;
+    m_dragBounds = bounds;
+    const auto grab = DragPhysics::grabIn(
+        static_cast<float>(bounds.x), static_cast<float>(bounds.y), static_cast<float>(bounds.width),
+        static_cast<float>(bounds.height), localX, localY
+    );
     m_dragPhysics.begin(
-        static_cast<float>(content.width), static_cast<float>(content.height),
-        static_cast<float>(localX / content.width), static_cast<float>(localY / content.height),
+        static_cast<float>(bounds.width), static_cast<float>(bounds.height), grab[0], grab[1],
         nextAnimationTransitionId()
     );
     m_dragPhysicsMsec = m_server->animationClockMsec();
   }
+
+  void View::setDragPhysicsGrab(double localX, double localY) {
+    m_dragGrabX = localX;
+    m_dragGrabY = localY;
+    fitDragPhysics(true);
+  }
+
+  void View::fitDragPhysics(bool grabMoved) {
+    wlr_box bounds{};
+    if ((!m_dragPhysics.grabbed() && !m_dragPhysics.active())
+        || !wlr_scene_node_effect_bounds(&m_contentTree->node, &bounds)
+        || (!grabMoved && wlr_box_equal(&bounds, &m_dragBounds))) {
+      return;
+    }
+    // The sheet spans the box the drag slot draws over, which follows presented resizes and decorations.
+    m_dragBounds = bounds;
+    const auto grab = DragPhysics::grabIn(
+        static_cast<float>(bounds.x), static_cast<float>(bounds.y), static_cast<float>(bounds.width),
+        static_cast<float>(bounds.height), m_dragGrabX, m_dragGrabY
+    );
+    m_dragPhysics.resize(static_cast<float>(bounds.width), static_cast<float>(bounds.height), grab[0], grab[1]);
+  }
+
+  bool View::dragPhysicsOn(const Output* output) const {
+    int x = 0;
+    int y = 0;
+    if (output == nullptr || !wlr_scene_node_coords(&m_contentTree->node, &x, &y)) {
+      return false;
+    }
+    const int expand = dragPhysicsExpand();
+    const wlr_box drawn{
+        x + m_dragBounds.x - expand, y + m_dragBounds.y - expand, m_dragBounds.width + 2 * expand,
+        m_dragBounds.height + 2 * expand
+    };
+    const wlr_box outputBox = output->layoutBox();
+    wlr_box overlap{};
+    return wlr_box_intersection(&overlap, &drawn, &outputBox);
+  }
+
+  int View::dragPhysicsExpand() const { return static_cast<int>(std::ceil(m_dragPhysics.displacementBound())) + 2; }
 
   void View::moveDragPhysics(double dx, double dy) {
     if (!m_dragPhysics.grabbed()) {
       return;
     }
     const bool wasActive = m_dragPhysics.active();
+    fitDragPhysics(false);
     m_dragPhysics.move(static_cast<float>(dx), static_cast<float>(dy));
     if (m_dragPhysics.active()) {
       if (!wasActive) {
-        // Integration starts now, not when the sheet last came to rest.
+        // Integration starts at the motion that wakes the sheet.
         m_dragPhysicsMsec = m_server->animationClockMsec();
       }
       scheduleFrame();
@@ -1395,7 +1438,7 @@ namespace umbriel {
       parameters.linear_progress = 1.0F;
       parameters.direction = 1.0F;
       parameters.transition_id = m_dragPhysics.transitionId();
-      parameters.expand = static_cast<int>(std::ceil(m_dragPhysics.maxDisplacement())) + 2;
+      parameters.expand = dragPhysicsExpand();
       if (fx_uniform* sheet =
               fx_parameters_add_uniform(&parameters, "umbriel_deformation", FX_UNIFORM_VEC2, DragPhysics::kPoints)) {
         const DragPhysics::Sheet displacement = m_dragPhysics.normalizedDisplacement();
@@ -1548,18 +1591,24 @@ namespace umbriel {
       m_decoration.setBorderRawColor(m_borderColorAnim.current(), effectiveOpacity());
       active = active || m_borderColorAnim.animating();
     }
-    if (m_dragPhysics.active()) {
-      const auto elapsed = static_cast<int64_t>(nowMsec - m_dragPhysicsMsec);
-      m_dragPhysicsMsec = nowMsec;
-      active = m_dragPhysics.tick(static_cast<double>(elapsed) / 1000.0) || active;
+    if (m_dragPhysics.active() || m_dragPhysics.grabbed()) {
+      if (effectRegistry().deformationShader() == nullptr) {
+        // Without the program (physics turned off), the window stays rigid for the rest of the drag.
+        m_dragPhysics = DragPhysics{};
+      } else if (m_dragPhysics.active()) {
+        fitDragPhysics(false);
+        const auto elapsed = static_cast<int64_t>(nowMsec - m_dragPhysicsMsec);
+        m_dragPhysicsMsec = nowMsec;
+        active = m_dragPhysics.tick(static_cast<double>(elapsed) / 1000.0) || active;
+      }
     }
     syncAnimationShaders();
     return active;
   }
 
   bool View::animatesOn(const Output* output) const {
-    // The dragged window may span outputs.
-    if (m_dragPhysics.active()) {
+    // A dragged window's sheet draws on every output its box reaches.
+    if (m_dragPhysics.active() && dragPhysicsOn(output)) {
       return true;
     }
     const Workspace* workspace = m_workspace;

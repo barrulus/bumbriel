@@ -498,11 +498,19 @@ namespace umbriel {
     // for the temporary global presentation and its resting presentation.
     void enterDragPresentation();
     void restoreHomePresentation();
-    // Drag physics follows the pointer grab: layout coordinates at the grab, then pointer deltas. The sheet keeps
-    // settling after the release.
-    void beginDragPhysics(double pointerX, double pointerY);
+    // Drag physics follows the pointer grab: the grabbed point in frame-local coordinates, then pointer deltas. The
+    // sheet keeps settling after the release.
+    void beginDragPhysics(double localX, double localY);
+    // The grabbed point moved within the frame (a retarget resized the window under the pointer).
+    void setDragPhysicsGrab(double localX, double localY);
     void moveDragPhysics(double dx, double dy);
     void endDragPhysics();
+    // Refits the sheet to the content tree's drawn bounds when they changed, or when the grab moved.
+    void fitDragPhysics(bool grabMoved);
+    // The drag slot's expand: the sheet's displacement bound plus a filtering margin.
+    [[nodiscard]] int dragPhysicsExpand() const;
+    // True when the drag slot's drawn box reaches `output`.
+    [[nodiscard]] bool dragPhysicsOn(const Output* output) const;
     // Kick the owning output so an animation started outside a frame gets ticked.
     void scheduleFrame();
     void cancelSizeAnimation();
@@ -632,6 +640,10 @@ namespace umbriel {
     ResizeCrossfade m_resizeCrossfade;
     DragPhysics m_dragPhysics;
     uint64_t m_dragPhysicsMsec = 0; // animation clock at the sheet's last tick
+    // The frame-local grab and the content tree's drawn bounds the sheet was last fitted to.
+    double m_dragGrabX = 0;
+    double m_dragGrabY = 0;
+    wlr_box m_dragBounds{};
     wlr_box m_presentedBox{};
     // Last unscaled box supplied by the workspace. A tiled popin or zoom presents an inset inside this logical box,
     // so a later layout change must animate from the logical box rather than scaling the inset a second time.
