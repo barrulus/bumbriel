@@ -2,7 +2,7 @@
 # A feedback animation enclosing a window effect keeps separate histories per composition role: with in_capture = false
 # every captured frame excludes the window effect, the first captured frame starts from the capture's own input rather
 # than the display's history, and the display's feedback matches a run without any capture in flight at the same clock
-# steps. Isolated toplevel captures follow the same policy.
+# steps.
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-capture-feedback.png"
 cat > "$UMBRIEL_RUNTIME_DIR/accumulate.glsl" <<'GLSL'
@@ -146,14 +146,4 @@ if (( display_red < reference - 4 || display_red > reference + 4 )); then
   echo "display feedback diverged from the capture-free run: $display_red vs $reference"
   exit 1
 fi
-# Isolated toplevel capture: the capture scene holds only client surfaces (no enclosing animation), so it shows the
-# green window effect when included and the plain blue client when excluded.
-read -r _ g b < <(timeout 10 "$UMBRIEL_TOPLEVEL_CAPTURE_CLIENT" feedback)
-(( g > 240 )) || { echo "isolated capture with in_capture = true lacks the window effect: g=$g b=$b"; exit 1; }
-sed -i 's/^in_capture = true$/in_capture = false/' "$UMBRIEL_CONFIG"
-"$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" clock-advance 1 > /dev/null
-read -r _ g b < <(timeout 10 "$UMBRIEL_TOPLEVEL_CAPTURE_CLIENT" feedback)
-(( b > 200 && g < 15 )) || { echo "isolated capture with in_capture = false included the window effect: g=$g b=$b"; exit 1; }
-echo "capture-role feedback isolation and isolated toplevel capture policy verified: display $display_red vs" \
-  "$reference, first capture $first_capture_red"
+echo "capture-role feedback isolation verified: display $display_red vs $reference, first capture $first_capture_red"

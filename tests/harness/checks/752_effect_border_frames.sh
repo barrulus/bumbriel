@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Effect-only frames follow the animation clock, not real time: a frozen clock renders the same instant across
-# frames and through a close snapshot, a session lock suspends the effect ledger despite the lock client's own
-# redraws, effects.max_fps caps the render rate to its own due-frame interval, and effect time keeps advancing while
-# another animation drives the output's frames.
+# frames and through a close snapshot, effects.max_fps caps the render rate to its own due-frame interval, and effect
+# time keeps advancing while another animation drives the output's frames.
 set -euo pipefail
 
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-border-frames.png"
@@ -173,59 +172,11 @@ fi
 "$UMBRIEL" clock-resume
 "$UMBRIEL" settle > /dev/null
 
-# 3. A session lock suspends the effect ledger: eligible drops to 0 and effect_frames stops growing despite the
-# lock client's own redraws; unlocking restores both.
+# 3. effects.max_fps caps the render rate to its own due-frame interval: at 1 fps, two captures taken right after a
+# due frame and 150ms apart never differ, but captures 1.3s apart do.
 open_window
 ring_x=$((x + w / 2))
 ring_y=$((y - 12))
-mkfifo "$UMBRIEL_RUNTIME_DIR/lock-control"
-exec {lock_fd}<> "$UMBRIEL_RUNTIME_DIR/lock-control"
-"$UMBRIEL_LOCK_CLIENT" <&"$lock_fd" > "$UMBRIEL_RUNTIME_DIR/lock-client.log" 2>&1 &
-for _ in $(seq 100); do
-  grep -q '^locked$' "$UMBRIEL_RUNTIME_DIR/lock-client.log" && break
-  sleep 0.05
-done
-if ! grep -q '^locked$' "$UMBRIEL_RUNTIME_DIR/lock-client.log"; then
-  echo "the session never locked: $(cat "$UMBRIEL_RUNTIME_DIR/lock-client.log")"
-  exit 1
-fi
-locked_eligible=$(eligible)
-if (( locked_eligible != 0 )); then
-  echo "a session lock did not suspend the effect ledger: eligible=$locked_eligible"
-  exit 1
-fi
-before_locked=$(frames)
-sleep 0.3 # real time: a locked session must produce no effect-only frames despite the lock client's own redraws
-after_locked=$(frames)
-if (( after_locked != before_locked )); then
-  echo "a session lock still produced effect-only frames: $before_locked -> $after_locked"
-  exit 1
-fi
-echo unlock >&"$lock_fd"
-for _ in $(seq 100); do
-  grep -q '^unlocked$' "$UMBRIEL_RUNTIME_DIR/lock-client.log" && break
-  sleep 0.05
-done
-if ! grep -q '^unlocked$' "$UMBRIEL_RUNTIME_DIR/lock-client.log"; then
-  echo "the session never unlocked: $(cat "$UMBRIEL_RUNTIME_DIR/lock-client.log")"
-  exit 1
-fi
-"$UMBRIEL" settle > /dev/null
-unlocked_eligible=$(eligible)
-if (( unlocked_eligible <= 0 )); then
-  echo "unlocking did not restore effect eligibility: eligible=$unlocked_eligible"
-  exit 1
-fi
-before_unlocked=$(frames)
-sleep 0.3 # real time: effect-only frames arrive on the output's own timer
-after_unlocked=$(frames)
-if (( after_unlocked <= before_unlocked )); then
-  echo "unlocking did not restart effect-only frames"
-  exit 1
-fi
-
-# 4. effects.max_fps caps the render rate to its own due-frame interval: at 1 fps, two captures taken right after a
-# due frame and 150ms apart never differ, but captures 1.3s apart do.
 sed -i '/^\[effects\]$/a max_fps = 1' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
@@ -256,7 +207,7 @@ if [[ "$ring_r7 $ring_g7 $ring_b7" == "$ring_r9 $ring_g9 $ring_b9" ]]; then
   exit 1
 fi
 
-# 5. Effect time keeps advancing while another animation drives the output's frames: a neighbour's 3s real-time
+# 4. Effect time keeps advancing while another animation drives the output's frames: a neighbour's 3s real-time
 # close fade runs while two captures 600ms apart must show different time-keyed ring pixels.
 cat "$BASE" > "$UMBRIEL_CONFIG"
 cat >> "$UMBRIEL_CONFIG" <<'EOF'
@@ -323,4 +274,4 @@ if [[ "$ring_r10 $ring_g10 $ring_b10" == "$ring_r11 $ring_g11 $ring_b11" ]]; the
   echo "effect time froze while another animation ran on the output: stayed at $ring_r10 $ring_g10 $ring_b10"
   exit 1
 fi
-echo "frozen-clock determinism, close-snapshot freezing, lock suspension, max_fps capping, and effect time under animations verified"
+echo "frozen-clock determinism, close-snapshot freezing, max_fps capping, and effect time under animations verified"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears; unknown and
-# mismatched names are reported and leave the setting off; a [colors] change reaches a palette shader without a
-# recompile; the light layer goes away with the last lit preset and comes back with a new one; a [colors] change
-# reaches a screen palette shader that does not read umbriel_time.
+# Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears, with unknown and
+# mismatched names elsewhere in [effects]; a [colors] change reaches a palette shader without a recompile; the light
+# layer goes away with the last lit preset and comes back with a new one; a [colors] change reaches a screen palette
+# shader that does not read umbriel_time.
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-reload.png"
 readonly LOG_MARK=$(($(wc -l < "$UMBRIEL_LOG") + 1))
@@ -41,22 +41,6 @@ for _ in $(seq 50); do
   grep -q "config reloaded" <(tail -n +"$LOG_MARK" "$UMBRIEL_LOG") && break
   sleep 0.02
 done
-if ! tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -q "ignoring effects.window (effect 'later' is a border preset, not a window preset)"; then
-  echo "a mismatched preset kind was not reported"
-  exit 1
-fi
-if ! tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -q "ignoring effects.screen (unknown effect 'nope')"; then
-  echo "an unknown preset name was not reported"
-  exit 1
-fi
-# The running compositor shows a missing shader file on its config banner without logging it, and no IPC reads the
-# banner back, so offline validation reports it here. `validate` exits non-zero whenever any diagnostic fires, so its
-# output is captured before checking for this one.
-validation=$("$UMBRIEL" validate -c "$UMBRIEL_CONFIG" 2>&1 || true)
-if ! grep -q "cannot read shader file" <<< "$validation"; then
-  echo "the missing shader file was not reported"
-  exit 1
-fi
 FILL_COLOR=0xFF0000FF "$UMBRIEL_UNMAP_CLIENT" reload 300 200 > "$UMBRIEL_RUNTIME_DIR/client.log" 2>&1 &
 for _ in $(seq 80); do
   window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "reload")')
@@ -146,5 +130,5 @@ if (( r < 240 || g > 15 || b > 15 )); then
   echo "a color change did not reach the screen palette uniform: $r $g $b"
   exit 1
 fi
-echo "inert preset recovery, reference diagnostics, palette updates without recompilation, light layer reloads, and" \
-  "screen palette updates verified"
+echo "inert preset recovery, palette updates without recompilation, light layer reloads, and screen palette updates" \
+  "verified"

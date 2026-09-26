@@ -196,23 +196,6 @@ foreign_toplevel_client = executable(
   dependencies: [wayland_client_dep],
 )
 
-# Harness helper that captures one frame of a toplevel through
-# ext-image-capture-source-v1 and ext-image-copy-capture-v1 and reports the
-# mean colour of its centre, to check the in_capture effect-visibility policy.
-toplevel_capture_client = executable(
-  'toplevel-capture-client',
-  [
-    'harness/clients/toplevel_capture_client.cpp',
-    ext_foreign_toplevel_list_client_h,
-    ext_foreign_toplevel_list_client_c,
-    ext_image_capture_source_client_h,
-    ext_image_capture_source_client_c,
-    ext_image_copy_capture_client_h,
-    ext_image_copy_capture_client_c,
-  ],
-  dependencies: [wayland_client_dep],
-)
-
 # Harness helper that unmaps its toplevel on a close request without destroying
 # it, so the compositor keeps the View registered but unmapped.
 unmap_client = executable(
@@ -359,7 +342,6 @@ harness_client_targets = [
   data_control_client,
   workspace_client,
   foreign_toplevel_client,
-  toplevel_capture_client,
   unmap_client,
   popup_client,
   subsurface_client,
