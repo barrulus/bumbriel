@@ -5,10 +5,7 @@
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-capture-feedback.png"
 cat > "$UMBRIEL_RUNTIME_DIR/accumulate.glsl" <<'GLSL'
-// Each rendered frame adds a little red to the previous result: the value depends on how many frames the history has
-// seen. The 0.01 step stays well short of the 8-bit ceiling across the several dozen frames a run actually renders
-// (more than its own clock-advance and grim calls: every damaged frame is a feedback step), so two runs with the same
-// step count read back the same value instead of both saturating to white.
+// Each rendered frame adds 0.01 red to the previous result, well under the 8-bit ceiling for a run's frame count.
 vec4 animation(vec2 uv) { vec4 p = umbriel_sample_previous(uv); return vec4(min(p.r + 0.01, 1.0), 0.0, umbriel_sample(uv).b, 1.0); }
 GLSL
 cat > "$UMBRIEL_RUNTIME_DIR/green.glsl" <<'GLSL'
