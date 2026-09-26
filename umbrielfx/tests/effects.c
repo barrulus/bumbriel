@@ -377,18 +377,19 @@ static bool test_persistent_scene(struct fixture *fixture) {
 	}
 	wlr_output_state_finish(&state);
 	struct fx_offscreen_buffers *captured = fx_offscreen_buffers_try_get(fixture->output);
-	ok &= check(captured != NULL && captured->animation_buffers[0] != NULL,
-		"the window slot's capture holds an animation buffer");
+	ok &= check(captured != NULL && captured->in_place_source != NULL && captured->animation_buffers[0] == NULL,
+		"the in-place window slot copies its target without a capture");
 
 	// With the slot removed nothing keeps the scene's effect list: the next
 	// render must not re-add offscreen buffers (a second render succeeds and the
-	// output's fx_offscreen_buffers hold no animation buffers).
+	// output's fx_offscreen_buffers hold no effect buffers).
 	wlr_scene_node_set_animation(&effect->node, FX_SLOT_WINDOW, NULL, NULL);
 	struct wlr_output_state again;
 	struct wlr_buffer *plain = fixture_render_scene(fixture, scene_output, &again);
 	ok &= check(plain != NULL, "scene renders after the slot is removed");
 	struct fx_offscreen_buffers *fbos = fx_offscreen_buffers_try_get(fixture->output);
-	ok &= check(fbos == NULL || fbos->animation_buffers[0] == NULL, "animation buffers are released without effects");
+	ok &= check(fbos == NULL || (fbos->animation_buffers[0] == NULL && fbos->in_place_source == NULL),
+		"effect buffers are released without effects");
 	if (plain != NULL) wlr_buffer_unlock(plain);
 	wlr_output_state_finish(&again);
 
@@ -1019,6 +1020,104 @@ static bool test_visible_in_box(struct fixture *fixture) {
 	return ok;
 }
 
+// An in-place window program reads what is already on the target (the blue
+// background through a translucent client) and rewrites only its own
+// rectangle, keeping the corner fringe.
+static bool test_in_place(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float blue[4] = { 0, 0, 1, 1 }, half_red[4] = { 0.5f, 0, 0, 0.5f };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+	struct wlr_scene_rect *window = wlr_scene_rect_create(&scene->tree, 8, 8, half_red);
+	wlr_scene_node_set_position(&window->node, 4, 4);
+	wlr_scene_rect_set_corner_radius(window, 3);
+	// Swap red and blue of whatever is under the window: 0.5 red over blue becomes 0.5 blue over red.
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return umbriel_sample(uv).bgra; }", "in-place");
+	bool ok = check(program != NULL, "window program compiles");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, program, &parameters);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "renders");
+	if (rendered != NULL) {
+		uint8_t centre[4], corner[4], outside[4];
+		ok &= fixture_read_pixel(fixture, rendered, 8, 8, centre);
+		ok &= fixture_read_pixel(fixture, rendered, 4, 4, corner);
+		ok &= fixture_read_pixel(fixture, rendered, 2, 2, outside);
+		// Under the window: 0.5 red + 0.5 blue -> swapped: red 0.5, blue 0.5 (the backdrop was seen and rewritten).
+		ok &= check(centre[2] > 100 && centre[2] < 160 && centre[0] > 100 && centre[0] < 160,
+			"the program read the backdrop through the translucent window");
+		ok &= check(corner[0] > 250 && corner[2] < 5, "the rounded corner keeps the untouched background");
+		ok &= check(outside[0] > 250 && outside[2] < 5, "nothing outside the window changes");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(program);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
+// A mirror program reads the far side of its rectangle. After a small change
+// on one side, the mirrored pixels on the other side must update too, even
+// though only the small area was damaged.
+static bool test_damage_expansion(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *mirror = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		"vec4 window(vec2 uv) { return umbriel_sample(vec2(1.0 - uv.x, uv.y)); }", "mirror");
+	if (!check(swapchain != NULL && mirror != NULL, "swapchain and mirror program")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(mirror);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, white[4] = { 1, 1, 1, 1 }, red[4] = { 1, 0, 0, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	// The effect node: a 12x12 tree at (2,2) holding a white background and a 2x2 marker that moves.
+	struct wlr_scene_tree *window = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_node_set_position(&window->node, 2, 2);
+	wlr_scene_rect_create(window, 12, 12, white);
+	struct wlr_scene_rect *marker = wlr_scene_rect_create(window, 2, 2, red);
+	wlr_scene_node_set_position(&marker->node, 0, 5);   // left edge, middle rows
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, mirror, &parameters);
+	bool ok = warm_up(scene_output, swapchain);
+	wlr_scene_output_damage_whole_for_test(scene_output);
+	struct wlr_output_state state;
+	struct wlr_buffer *buffer = render_frame(scene_output, swapchain, &state);
+	ok &= check(buffer != NULL, "whole-damage frame");
+	if (buffer != NULL) {
+		uint8_t pixel[4];
+		ok &= fixture_read_pixel(fixture, buffer, 12, 8, pixel);
+		ok &= check(pixel[2] > 250 && pixel[1] < 5, "a whole-damage frame mirrors the marker to the right edge");
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	pixman_region32_t *pending = &scene_output->pending_commit_damage;
+	ok &= check(pixman_region32_empty(pending), "acknowledged frames leave no pending damage");
+	// Move the marker down by 4 rows. Only the two small rects are damaged by the scene; the mirrored copy at
+	// the right edge lies outside that damage and must still update.
+	wlr_scene_node_set_position(&marker->node, 0, 9);
+	ok &= check(pixman_region32_not_empty(pending) && !pixman_region32_contains_point(pending, 12, 8, NULL),
+		"the move damages only the marker's rows on the left");
+	buffer = render_frame(scene_output, swapchain, &state);
+	ok &= check(buffer != NULL, "partial-damage frame");
+	if (buffer != NULL) {
+		uint8_t old_spot[4], new_spot[4];
+		ok &= fixture_read_pixel(fixture, buffer, 12, 8, old_spot);
+		ok &= fixture_read_pixel(fixture, buffer, 12, 12, new_spot);
+		ok &= check(old_spot[2] > 250 && old_spot[1] > 250, "the stale mirrored marker was repainted white");
+		ok &= check(new_spot[2] > 250 && new_spot[1] < 5, "the moved marker is mirrored at its new rows");
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(mirror);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -1063,6 +1162,10 @@ int main(int argc, char *argv[]) {
 		ok = test_border_light_lifecycle(&fixture);
 	} else if (strcmp(argv[1], "visible-in-box") == 0) {
 		ok = test_visible_in_box(&fixture);
+	} else if (strcmp(argv[1], "in-place") == 0) {
+		ok = test_in_place(&fixture);
+	} else if (strcmp(argv[1], "damage-expansion") == 0) {
+		ok = test_damage_expansion(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

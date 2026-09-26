@@ -92,10 +92,17 @@ struct fx_effect_composite {
   bool update_history;
   const struct fx_effect_geometry* geometry; // NULL unless a border slot composites a border node
   struct fx_effect_light_cache* light;       // NULL unless this composite emits light
+  bool replace;                              // write without blending; set by the in-place path
+  unsigned role;                             // selects the history: 0 display, 1 unfiltered capture
+  const float* corner_radius;                // tl, tr, br, bl logical px for umbriel_corner_radius; may be NULL
 };
 
 // Pops the capture begun by fx_render_pass_begin_animation and draws it
 // through the composite's program.
 void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
+// Renders `composite->shader` over the current target's pixels under `box`,
+// writing back with blending off through the rounded mask. The subtree must
+// already be drawn. Reads and promotes history like a capture composite.
+void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
 
 #endif

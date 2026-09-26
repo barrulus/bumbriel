@@ -105,6 +105,7 @@ ensure_offscreen_buffer(struct fx_gles_render_pass* pass, struct fx_framebuffer*
 struct fx_animation_output_history {
   struct wl_list link;
   struct wlr_output* output;
+  unsigned role;
   struct fx_renderer* renderer;
   struct wl_listener output_destroy;
   struct wl_listener renderer_destroy;
@@ -178,6 +179,15 @@ void fx_animation_history_finish(struct fx_animation_history* history) {
 
 void fx_animation_history_reset(struct fx_animation_history* history) { fx_animation_history_finish(history); }
 
+void fx_animation_history_reset_role(struct fx_animation_history* history, struct wlr_output* output, unsigned role) {
+  struct fx_animation_output_history *output_history, *tmp;
+  wl_list_for_each_safe(output_history, tmp, &history->outputs, link) {
+    if (output_history->role == role && (output == NULL || output_history->output == output)) {
+      animation_output_history_destroy(output_history);
+    }
+  }
+}
+
 void fx_animation_history_move(struct fx_animation_history* destination, struct fx_animation_history* source) {
   fx_animation_history_finish(destination);
   while (!wl_list_empty(&source->outputs)) {
@@ -188,11 +198,12 @@ void fx_animation_history_move(struct fx_animation_history* destination, struct 
 }
 
 static struct fx_animation_output_history* animation_history_get_output(
-    struct fx_animation_history* history, struct wlr_output* output, struct fx_renderer* renderer, bool create
+    struct fx_animation_history* history, struct wlr_output* output, struct fx_renderer* renderer, unsigned role,
+    bool create
 ) {
   struct fx_animation_output_history* output_history;
   wl_list_for_each(output_history, &history->outputs, link) {
-    if (output_history->output == output) {
+    if (output_history->output == output && output_history->role == role) {
       if (output_history->renderer == renderer) {
         return output_history;
       }
@@ -215,6 +226,7 @@ static struct fx_animation_output_history* animation_history_get_output(
     return NULL;
   }
   output_history->output = output;
+  output_history->role = role;
   output_history->renderer = renderer;
   output_history->output_destroy.notify = animation_history_handle_output_destroy;
   output_history->renderer_destroy.notify = animation_history_handle_renderer_destroy;
@@ -653,8 +665,9 @@ static void draw_animation_texture(
     struct fx_gles_render_pass* pass, struct wlr_texture* wlr_texture, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* source_box,
     const struct wlr_box* logical_box, int expand, const struct fx_effect_geometry* geometry,
-    enum wl_output_transform transform, const pixman_region32_t* clip, struct wlr_texture* previous_texture,
-    const struct wlr_box* previous_source_box, const float projection[9], bool blend, bool mark_updated
+    const float* corner_radius, enum wl_output_transform transform, const pixman_region32_t* clip,
+    struct wlr_texture* previous_texture, const struct wlr_box* previous_source_box, const float projection[9],
+    bool blend, bool mark_updated
 ) {
   struct fx_texture* texture = fx_get_texture(wlr_texture);
   glUseProgram(shader->program);
@@ -687,6 +700,13 @@ static void draw_animation_texture(
     struct fx_uniform radius = {.name = "umbriel_border_radius", .type = FX_UNIFORM_VEC4, .count = 1};
     memcpy(radius.floats, border->radius, sizeof(border->radius));
     fx_effect_shader_bind_uniform(shader, &radius);
+  }
+  if (shader->kind == FX_EFFECT_WINDOW || shader->kind == FX_EFFECT_CURSOR) {
+    struct fx_uniform corners = {.name = "umbriel_corner_radius", .type = FX_UNIFORM_VEC4, .count = 1};
+    if (corner_radius != NULL) {
+      memcpy(corners.floats, corner_radius, 4 * sizeof(*corner_radius));
+    }
+    fx_effect_shader_bind_uniform(shader, &corners);
   }
   glUniform1f(shader->scale, animation_box_scale(box, logical_box));
   glUniform4fv(shader->random_seed, 1, parameters->random_seed);
@@ -935,8 +955,8 @@ static void light_blur(
 // thresholds it into level 0 and blurs the pyramid. Restores the pass target.
 static void emit_light(
     struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite, struct wlr_texture* texture,
-    struct wlr_texture* previous_texture, const struct wlr_box* previous_box, const struct wlr_box* box,
-    const struct wlr_box* logical_box, const struct fx_effect_geometry* geometry
+    const struct wlr_box* source_box, struct wlr_texture* previous_texture, const struct wlr_box* previous_box,
+    const struct wlr_box* box, const struct wlr_box* logical_box, const struct fx_effect_geometry* geometry
 ) {
   struct fx_effect_light_cache* cache = composite->light;
   struct fx_renderer* renderer = pass->buffer->renderer;
@@ -962,8 +982,9 @@ static void emit_light(
   matrix_projection(projection, box->width, box->height, WL_OUTPUT_TRANSFORM_FLIPPED_180);
   const struct wlr_box local = {.width = box->width, .height = box->height};
   draw_animation_texture(
-      pass, texture, composite->shader, composite->parameters, &local, box, logical_box, composite->expand, geometry,
-      composite->transform, NULL, previous_texture, previous_box, projection, false, false
+      pass, texture, composite->shader, composite->parameters, &local, source_box, logical_box, composite->expand,
+      geometry, composite->corner_radius, composite->transform, NULL, previous_texture, previous_box, projection, false,
+      false
   );
   // 2. Threshold into level 0 (half resolution, margin around).
   glBindFramebuffer(GL_FRAMEBUFFER, cache->framebuffers[0]);
@@ -1029,7 +1050,12 @@ void fx_render_pass_add_effect_light(
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite) {
+// Draws `texture` through the composite's program over `composite->box`, the
+// drawn box. `source_box` is the region of `texture` that maps onto it.
+static void effect_composite(
+    struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite, struct wlr_texture* texture,
+    const struct wlr_box* source_box
+) {
   struct fx_effect_shader* shader = composite->shader;
   const struct fx_animation_parameters* parameters = composite->parameters;
   const enum wl_output_transform transform = composite->transform;
@@ -1037,11 +1063,9 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
   const pixman_region32_t* output_clip = composite->output_clip;
   const int expand = composite->expand;
   const bool update_history = composite->update_history;
-  struct wlr_box drawn = composite->box;
-  struct wlr_box logical = composite->logical_box;
-  expand_animation_boxes(&drawn, &logical, expand);
-  const struct wlr_box* box = &drawn;
-  const struct wlr_box* logical_box = &logical;
+  const float* corner_radius = composite->corner_radius;
+  const struct wlr_box* box = &composite->box;
+  const struct wlr_box* logical_box = &composite->logical_box;
   // The hole is relative to the node box; the drawn box grew by `expand`.
   struct fx_effect_geometry shifted;
   const struct fx_effect_geometry* geometry = NULL;
@@ -1051,7 +1075,6 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
     shifted.hole.y += expand;
     geometry = &shifted;
   }
-  struct wlr_texture* texture = pop_animation_capture(pass);
   struct fx_renderer* renderer = pass->buffer->renderer;
   struct fx_animation_output_history* output_history = NULL;
   struct wlr_texture* previous_texture = NULL;
@@ -1059,7 +1082,7 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
   const uint32_t format = pass->has_color_transform ? DRM_FORMAT_ABGR16161616F : DRM_FORMAT_ABGR8888;
   if (shader->previous_tex >= 0 && composite->history != NULL && composite->output != NULL) {
     output_history =
-        animation_history_get_output(composite->history, composite->output, renderer, update_history);
+        animation_history_get_output(composite->history, composite->output, renderer, composite->role, update_history);
     if (output_history != NULL && update_history && !animation_history_matches(output_history, format, transform)) {
       animation_history_set_format(output_history, format, transform);
     }
@@ -1125,9 +1148,9 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
         history_clip_ptr = &history_clip;
       }
       draw_animation_texture(
-          pass, texture, shader, parameters, &history_box, box, logical_box, expand, geometry, transform,
-          history_clip_ptr, previous_texture, previous_texture != NULL ? &previous_box : NULL, history_projection,
-          false, false
+          pass, texture, shader, parameters, &history_box, source_box, logical_box, expand, geometry, corner_radius,
+          transform, history_clip_ptr, previous_texture, previous_texture != NULL ? &previous_box : NULL,
+          history_projection, false, false
       );
       if (history_clip_ptr != NULL) {
         pixman_region32_fini(&history_clip);
@@ -1140,7 +1163,7 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
               .dst_box = *box,
               .clip = output_clip,
               .filter_mode = WLR_SCALE_FILTER_NEAREST,
-              .blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
+              .blend_mode = composite->replace ? WLR_RENDER_BLEND_MODE_NONE : WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
               .transfer_function = pass->has_color_transform ? WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR : 0,
           },
       };
@@ -1148,14 +1171,13 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
       wlr_texture_destroy(result_texture);
       if (composite->light != NULL) {
         emit_light(
-            pass, composite, texture, previous_texture, previous_texture != NULL ? &previous_box : NULL, box,
-            logical_box, geometry
+            pass, composite, texture, source_box, previous_texture, previous_texture != NULL ? &previous_box : NULL,
+            box, logical_box, geometry
         );
       }
       if (previous_texture != NULL) {
         wlr_texture_destroy(previous_texture);
       }
-      wlr_texture_destroy(texture);
       return;
     }
     if (result_texture != NULL) {
@@ -1167,18 +1189,60 @@ void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx
   }
 fallback:
   draw_animation_texture(
-      pass, texture, shader, parameters, box, box, logical_box, expand, geometry, transform, output_clip,
-      previous_texture, previous_texture != NULL ? &previous_box : NULL, pass->projection_matrix, true, true
+      pass, texture, shader, parameters, box, source_box, logical_box, expand, geometry, corner_radius, transform,
+      output_clip, previous_texture, previous_texture != NULL ? &previous_box : NULL, pass->projection_matrix,
+      !composite->replace, true
   );
   if (composite->light != NULL) {
     emit_light(
-        pass, composite, texture, previous_texture, previous_texture != NULL ? &previous_box : NULL, box, logical_box,
-        geometry
+        pass, composite, texture, source_box, previous_texture, previous_texture != NULL ? &previous_box : NULL, box,
+        logical_box, geometry
     );
   }
   if (previous_texture != NULL) {
     wlr_texture_destroy(previous_texture);
   }
+}
+
+void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite) {
+  struct fx_effect_composite drawn = *composite;
+  expand_animation_boxes(&drawn.box, &drawn.logical_box, composite->expand);
+  struct wlr_texture* texture = pop_animation_capture(pass);
+  effect_composite(pass, &drawn, texture, &drawn.box);
+  wlr_texture_destroy(texture);
+}
+
+void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite) {
+  if (pass->fx_offscreen_buffers == NULL) {
+    return;
+  }
+  struct fx_effect_composite drawn = *composite;
+  expand_animation_boxes(&drawn.box, &drawn.logical_box, composite->expand);
+  drawn.replace = true;
+  const struct wlr_box target_box = {.width = pass->buffer->buffer->width, .height = pass->buffer->buffer->height};
+  struct wlr_box visible;
+  if (!wlr_box_intersection(&visible, &drawn.box, &target_box)) {
+    return;
+  }
+  // Sampled from a copy: a program may read any texel of its rectangle while
+  // writing others, which GL forbids on the bound target.
+  struct fx_framebuffer* source = ensure_offscreen_buffer(pass, &pass->fx_offscreen_buffers->in_place_source, true);
+  if (source == NULL) {
+    return;
+  }
+  pixman_region32_t region;
+  pixman_region32_init_rect(&region, visible.x, visible.y, visible.width, visible.height);
+  fx_render_pass_read_to_buffer(pass, &region, source, pass->buffer);
+  pixman_region32_fini(&region);
+  struct wlr_texture* texture = fx_texture_from_buffer(&pass->buffer->renderer->wlr_renderer, source->buffer);
+  if (texture == NULL || fx_get_texture(texture)->target != GL_TEXTURE_2D) {
+    if (texture != NULL) {
+      wlr_texture_destroy(texture);
+    }
+    fx_framebuffer_bind(pass->buffer);
+    return;
+  }
+  effect_composite(pass, &drawn, texture, &drawn.box);
   wlr_texture_destroy(texture);
 }
 
@@ -1294,7 +1358,7 @@ bool fx_render_pass_end_animation_shadow(
   glUseProgram(horizontal->program);
   glUniform2f(glGetUniformLocation(horizontal->program, "shadow_step"), softness / (8.0f * full.width), 0);
   draw_animation_texture(
-      pass, caster, horizontal, &params, &reduced, &full, &full, 0, NULL, WL_OUTPUT_TRANSFORM_NORMAL, NULL, NULL,
+      pass, caster, horizontal, &params, &reduced, &full, &full, 0, NULL, NULL, WL_OUTPUT_TRANSFORM_NORMAL, NULL, NULL,
       NULL, pass->projection_matrix, true, true
   );
   struct wlr_texture* blurred = pop_animation_capture(pass);
@@ -1315,8 +1379,8 @@ bool fx_render_pass_end_animation_shadow(
   glBindTexture(GL_TEXTURE_2D, fx_get_texture(caster)->tex);
   glUniform1i(glGetUniformLocation(vertical->program, "shadow_mask"), 1);
   draw_animation_texture(
-      pass, blurred, vertical, &params, &full, &reduced, &reduced, 0, NULL, WL_OUTPUT_TRANSFORM_NORMAL, clip, NULL,
-      NULL, pass->projection_matrix, true, true
+      pass, blurred, vertical, &params, &full, &reduced, &reduced, 0, NULL, NULL, WL_OUTPUT_TRANSFORM_NORMAL, clip,
+      NULL, NULL, pass->projection_matrix, true, true
   );
   glActiveTexture(GL_TEXTURE1);
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -2710,10 +2774,11 @@ void fx_render_pass_read_to_buffer(
   // Draw onto the dst_buffer. Only the pass target feeds the output
   // transform, so a copy into an offscreen buffer must not extend the
   // region that gets copied out at submit time.
-  pass->suppress_updated = dst_buffer != pass->buffer;
+  const bool suppress_updated = pass->suppress_updated;
+  pass->suppress_updated = suppress_updated || dst_buffer != pass->buffer;
   fx_framebuffer_bind(dst_buffer);
   wlr_render_pass_add_texture(&pass->base, &options);
-  pass->suppress_updated = false;
+  pass->suppress_updated = suppress_updated;
   wlr_texture_destroy(src_tex);
 
   // Bind back to the main WLR buffer

@@ -803,6 +803,8 @@ struct render_data {
   struct render_list_entry* entries;
   int entry_count;
   bool shadow_capture;
+  // Rendering an unfiltered effect capture: in-place slots do not run.
+  bool effect_capture;
   // The scene's effect state for this frame, NULL when it has none. Nothing may
   // add or remove slots while entries render: output_sample listeners run then.
   struct scene_effects* effects;
@@ -3517,6 +3519,68 @@ static bool scene_border_geometry(
   return true;
 }
 
+// Corner radii of the in-place mask: a rect's or buffer's own, or a tree's
+// first enabled buffer (the toplevel surface).
+static bool in_place_corners(struct wlr_scene_node* node, float out[4]) {
+  const struct fx_corner_radii* radii = NULL;
+  if (node->type == WLR_SCENE_NODE_RECT) {
+    radii = &wlr_scene_rect_from_node(node)->corners;
+  } else if (node->type == WLR_SCENE_NODE_BUFFER) {
+    radii = &wlr_scene_buffer_from_node(node)->corners;
+  } else if (node->type == WLR_SCENE_NODE_TREE) {
+    struct wlr_scene_node* child;
+    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+      if (child->enabled && child->type == WLR_SCENE_NODE_BUFFER) {
+        radii = &wlr_scene_buffer_from_node(child)->corners;
+        break;
+      }
+    }
+  }
+  if (radii == NULL) {
+    return false;
+  }
+  out[0] = radii->top_left;
+  out[1] = radii->top_right;
+  out[2] = radii->bottom_right;
+  out[3] = radii->bottom_left;
+  return true;
+}
+
+// Runs the node's in-place slots over what its subtree has drawn into the current target.
+static void render_in_place_slots(
+    struct scene_animation* animation, const struct render_data* data, const struct wlr_box* box,
+    const struct wlr_box* logical_box, const pixman_region32_t* clip
+) {
+  if (data->effect_capture) {
+    return;
+  }
+  struct fx_gles_render_pass* pass = fx_get_render_pass(data->render_pass);
+  float corners[4];
+  const float* corner_radius = in_place_corners(animation->node, corners) ? corners : NULL;
+  for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
+    struct fx_effect_shader* shader = animation->shaders[slot];
+    if (!fx_slot_in_place(slot) || shader == NULL || shader->renderer != pass->buffer->renderer) {
+      continue;
+    }
+    const struct fx_effect_composite composite = {
+        .shader = shader,
+        .parameters = &animation->parameters[slot],
+        .box = *box,
+        .logical_box = *logical_box,
+        .transform = data->transform,
+        .expand = 0,
+        .capture_clip = clip,
+        .output_clip = clip,
+        .history = &animation->histories[slot],
+        .output = data->output->output,
+        .update_history = !data->shadow_capture,
+        .role = 0,
+        .corner_radius = corner_radius,
+    };
+    fx_render_pass_effect_in_place(pass, &composite);
+  }
+}
+
 static void render_animated_range(
     struct render_list_entry* entries, int high, int low, struct wlr_scene_node* stop, const struct render_data* data
 ) {
@@ -3548,24 +3612,24 @@ static void render_animated_range(
     bool captured_any = false;
     for (int slot = FX_ANIMATION_SLOTS - 1; slot >= 0; slot--) {
       struct fx_effect_shader* shader = animation->shaders[slot];
-      if (shader != NULL && shader->renderer == pass->buffer->renderer) {
+      if (shader != NULL && shader->renderer == pass->buffer->renderer && !fx_slot_in_place(slot)) {
         captured[slot] = fx_render_pass_begin_animation(pass);
         captured_any |= captured[slot];
       }
     }
+    // Without a capture to clip, the output clip limits the subtree and its in-place slots.
+    struct render_data clipped;
+    const struct render_data* subtree = data;
     if (!captured_any && has_animation_clip) {
-      struct render_data fallback = *data;
-      pixman_region32_init(&fallback.damage);
-      pixman_region32_copy(&fallback.damage, &data->damage);
+      clipped = *data;
+      pixman_region32_init(&clipped.damage);
+      pixman_region32_copy(&clipped.damage, &data->damage);
       pixman_region32_intersect_rect(
-          &fallback.damage, &fallback.damage, output_box.x, output_box.y, output_box.width, output_box.height
+          &clipped.damage, &clipped.damage, output_box.x, output_box.y, output_box.width, output_box.height
       );
-      render_animated_range(entries, i, end, animation->node, &fallback);
-      pixman_region32_fini(&fallback.damage);
-      i = end - 1;
-      continue;
+      subtree = &clipped;
     }
-    render_animated_range(entries, i, end, animation->node, data);
+    render_animated_range(entries, i, end, animation->node, subtree);
 
     pixman_region32_t bounds;
     pixman_region32_init(&bounds);
@@ -3581,7 +3645,7 @@ static void render_animated_range(
     transform_output_box(&box, data);
     pixman_region32_t clip;
     pixman_region32_init(&clip);
-    pixman_region32_copy(&clip, &data->damage);
+    pixman_region32_copy(&clip, &subtree->damage);
     struct wlr_box ancestor_clip;
     bool has_clip = scene_node_ancestor_clip(animation->node, lx, ly, &ancestor_clip);
     if (animation->node->type == WLR_SCENE_NODE_TREE) {
@@ -3606,6 +3670,7 @@ static void render_animated_range(
           &clip, &clip, ancestor_clip.x, ancestor_clip.y, ancestor_clip.width, ancestor_clip.height
       );
     }
+    render_in_place_slots(animation, data, &box, &logical_box, &clip);
     pixman_region32_t output_clip;
     bool has_output_clip = false;
     if (has_animation_clip) {
@@ -3656,6 +3721,9 @@ static void render_animated_range(
       pixman_region32_fini(&output_clip);
     }
     pixman_region32_fini(&clip);
+    if (subtree == &clipped) {
+      pixman_region32_fini(&clipped.damage);
+    }
     i = end - 1;
   }
 }
