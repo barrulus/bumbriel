@@ -120,7 +120,7 @@ objects. Shutdown cancels a pending recovery, and a failure to queue or
 construct the replacement terminates the compositor without attempting
 synchronous teardown.
 
-[`600_renderer_recovery.sh`](../../tests/harness/checks/600_renderer_recovery.sh)
+[`render/renderer_recovery.sh`](../../tests/harness/checks/render/renderer_recovery.sh)
 emits two lost notifications in one dispatch and requires exactly one completed
 replacement followed by a drawn frame. The headless check covers signal
 lifetime, coalescing, and renderer rebinding. It does not exercise a hardware

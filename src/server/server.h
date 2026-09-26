@@ -4,7 +4,6 @@
 #include "core/dirty.h"
 #include "input/modifier_tap.h"
 #include "input/surface_layouts.h"
-#include "scene/animation_shader.h"
 #include "scene/border_rect.h"
 #include "scene/effect_registry.h"
 #include "scene/surface_shadow.h"

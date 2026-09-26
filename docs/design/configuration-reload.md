@@ -108,23 +108,23 @@ The relevant regression coverage is in:
   startup.
 - [`tests/unit/config_change.cpp`](../../tests/unit/config_change.cpp), which checks
   change classification and runtime effects.
-- [`tests/harness/checks/050_config_reload.sh`](../../tests/harness/checks/050_config_reload.sh),
+- [`tests/harness/checks/session/config_reload.sh`](../../tests/harness/checks/session/config_reload.sh),
   which checks inert reloads, selective layout updates, border dependencies,
   and recovery after an included file fails to parse.
-- [`tests/harness/checks/744_rule_decoration.sh`](../../tests/harness/checks/744_rule_decoration.sh),
+- [`tests/harness/checks/rule/decoration.sh`](../../tests/harness/checks/rule/decoration.sh),
   which checks that a window rule's decoration keys reach the window on reload
   without moving it.
-- [`tests/harness/checks/780_effect_reload.sh`](../../tests/harness/checks/780_effect_reload.sh),
+- [`tests/harness/checks/effect/reload.sh`](../../tests/harness/checks/effect/reload.sh),
   which checks effect recovery after a missing shader appears, reference
   diagnostics, palette updates without recompilation, and light layer reloads.
-- [`tests/harness/checks/144_output_scrolling_width.sh`](../../tests/harness/checks/144_output_scrolling_width.sh),
+- [`tests/harness/checks/layout/output_scrolling_width.sh`](../../tests/harness/checks/layout/output_scrolling_width.sh),
   which checks per-output initial scrolling widths and preserves existing
   column widths when that default changes on reload.
-- [`tests/harness/checks/179_scratchpad_seat_focus_output.sh`](../../tests/harness/checks/179_scratchpad_seat_focus_output.sh),
+- [`tests/harness/checks/focus/scratchpad_seat_focus_output.sh`](../../tests/harness/checks/focus/scratchpad_seat_focus_output.sh),
   which checks that an output scale reload preserves keyboard focus when the
   pointer and focused scratchpad are on different outputs.
-- [`tests/harness/checks/622_scratchpad_output_reposition.sh`](../../tests/harness/checks/622_scratchpad_output_reposition.sh),
+- [`tests/harness/checks/output/scratchpad_reposition.sh`](../../tests/harness/checks/output/scratchpad_reposition.sh),
   which checks scratchpad geometry, backdrop, and focus across live output
   changes.
-- [`tests/harness/checks/045_session_environment.sh`](../../tests/harness/checks/045_session_environment.sh),
+- [`tests/harness/checks/session/environment.sh`](../../tests/harness/checks/session/environment.sh),
   which checks that environment changes remain unapplied until restart.

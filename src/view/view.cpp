@@ -11,7 +11,6 @@
 #include "layout/scrolling.h"
 #include "output/output.h"
 #include "overview/overview.h"
-#include "scene/animation_shader.h"
 #include "scene/effect_registry.h"
 #include "scene/surface_blur.h"
 #include "server/server.h"
@@ -695,8 +694,7 @@ namespace umbriel {
     if (!m_fade.animating()) {
       return false;
     }
-    return m_customFade
-        || (!m_inScratchpad && lifecycleShader(m_server->renderer(), AnimationEvent::WindowsIn) != nullptr);
+    return m_customFade || (!m_inScratchpad && effectRegistry().lifecycleEffect(AnimationEvent::WindowsIn) != nullptr);
   }
 
   float View::effectiveOpacity() const {
@@ -1258,7 +1256,7 @@ namespace umbriel {
     if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
       overview->onViewPresentationChanged(this);
     }
-    syncAnimationShaders();
+    syncAnimationEffects();
   }
 
   void View::deferTiledOpening() {
@@ -1269,7 +1267,7 @@ namespace umbriel {
     m_fade.snap(0.0);
     setFadeAlpha(0.0F);
     setNodeEnabled(false);
-    syncAnimationShaders();
+    syncAnimationEffects();
   }
 
   void View::resumeTiledOpening() {
@@ -1283,14 +1281,13 @@ namespace umbriel {
 
     const auto& animation = config().animation;
     const auto& open = animation.windowsIn;
-    m_customFade = animation.enabled
-        && open.enabled
-        && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) != nullptr;
+    m_customFade =
+        animation.enabled && open.enabled && effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
     m_openingScale = 1.0;
     m_openingSlide = 0;
     if (!animation.enabled
         || !open.enabled
-        || (open.style == "none" && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) == nullptr)) {
+        || (open.style == "none" && effectRegistry().animationEffect(AnimationEvent::WindowsIn) == nullptr)) {
       m_fade.snap(1.0);
       setFadeAlpha(1.0F);
     } else {
@@ -1303,7 +1300,7 @@ namespace umbriel {
       scheduleFrame();
     }
     setNodeEnabled(m_onActiveWorkspace);
-    syncAnimationShaders();
+    syncAnimationEffects();
   }
 
   void View::beginLayoutMotion(float direction) {
@@ -1355,7 +1352,7 @@ namespace umbriel {
     } else {
       finishSizeAnimation();
     }
-    syncAnimationShaders();
+    syncAnimationEffects();
   }
 
   void View::endLayoutMotion() {
@@ -1372,12 +1369,12 @@ namespace umbriel {
       dropOpeningInset();
       finishSizeAnimation();
     }
-    // Clears the windows_move shader on the frame the motion ends.
-    syncAnimationShaders();
+    // Clears the windows_move effect on the frame the motion ends.
+    syncAnimationEffects();
   }
 
   void View::animateFadeTo(float toAlpha, int durationMs, const AnimationCurve& curve) {
-    m_customFade = m_inScratchpad && animationShader(m_server->renderer(), AnimationEvent::Scratchpad) != nullptr;
+    m_customFade = m_inScratchpad && effectRegistry().animationEffect(AnimationEvent::Scratchpad) != nullptr;
     m_fade.snap(m_fadeAlpha);
     m_fade.retarget(toAlpha, durationMs, curve);
     scheduleFrame();
@@ -1415,7 +1412,7 @@ namespace umbriel {
     scheduleFrame();
   }
 
-  void View::syncAnimationShaders(
+  void View::syncAnimationEffects(
       wlr_scene_tree* target, wlr_scene_node* border, wlr_scene_node* surface, const BorderEffectGate* gate,
       Output* cardOutput
   ) {
@@ -1440,18 +1437,17 @@ namespace umbriel {
       m_effects.detach();
       return;
     }
-    auto* renderer = m_server->renderer();
     if (m_posX.animating() || m_posY.animating() || m_presentation.animating()) {
       const auto& movement = m_posX.animating() ? m_posX : (m_posY.animating() ? m_posY : m_presentation.animation());
-      updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, movement);
+      bindAnimationEffect(&target->node, AnimationEvent::WindowsMove, movement);
     } else if (
         const AnimatedValue* motion =
             m_layoutMotion && m_workspace != nullptr ? m_workspace->layoutMotionValue() : nullptr;
         motion != nullptr
     ) {
-      updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, *motion, m_layoutMotionDirection);
+      bindAnimationEffect(&target->node, AnimationEvent::WindowsMove, *motion, m_layoutMotionDirection);
     } else {
-      updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, m_presentation.animation());
+      bindAnimationEffect(&target->node, AnimationEvent::WindowsMove, m_presentation.animation());
     }
     // Only the view's own content tree deforms; overview cards stay rigid.
     if (ownTrees && m_dragPhysics.active()) {
@@ -1475,17 +1471,13 @@ namespace umbriel {
       wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, nullptr, nullptr);
       m_dragSlotBound = false;
     }
-    updateAnimationShader(&target->node, renderer, AnimationEvent::DimUnfocused, m_focusDim);
-    updateAnimationShader(
-        &target->node, renderer, m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn, m_fade
-    );
+    bindAnimationEffect(&target->node, AnimationEvent::DimUnfocused, m_focusDim);
+    bindAnimationEffect(&target->node, m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn, m_fade);
     wlr_scene_node_set_animation(
         &target->node, static_cast<unsigned>(m_inScratchpad ? AnimationEvent::WindowsIn : AnimationEvent::Scratchpad),
         nullptr, nullptr
     );
-    updateAnimationShader(
-        border, renderer, AnimationEvent::Border, m_borderColorAnim, m_borderFocusedState ? 1.0F : -1.0F
-    );
+    bindAnimationEffect(border, AnimationEvent::Border, m_borderColorAnim, m_borderFocusedState ? 1.0F : -1.0F);
     // Persistent effects. With none configured this costs one string check per slot and never reads the clock.
     if (m_effects.configured() || effectRegistry().active()) {
       wlr_scene_node* captureSurface = nullptr;
@@ -1559,14 +1551,13 @@ namespace umbriel {
     if (m_fade.tick(nowMsec)) {
       m_customFade = m_customFade
           && m_fade.animating()
-          && animationShader(
-                 m_server->renderer(), m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn
-             ) != nullptr;
+          && effectRegistry().animationEffect(m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn)
+              != nullptr;
       const float rawAlpha = std::clamp(static_cast<float>(m_fade.current()), 0.0F, 1.0F);
       const bool builtInSlide = !m_inScratchpad
           && !m_customFade
           && config().animation.windowsIn.style == "slide"
-          && animationShader(m_server->renderer(), AnimationEvent::WindowsIn) == nullptr;
+          && effectRegistry().animationEffect(AnimationEvent::WindowsIn) == nullptr;
       // Keep the window visible through more of its travel so slide is clearly distinct from fade.
       setFadeAlpha(builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);
       if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
@@ -1626,7 +1617,7 @@ namespace umbriel {
         active = m_dragPhysics.tick(static_cast<double>(elapsed) / 1000.0) || active;
       }
     }
-    syncAnimationShaders();
+    syncAnimationEffects();
     return active;
   }
 
@@ -2265,7 +2256,7 @@ namespace umbriel {
     m_borderColorAnim.snap(m_borderColorAnim.target());
     m_focusDim.snap(m_focusDim.target());
     setFadeAlpha(m_fadeAlpha);
-    syncAnimationShaders();
+    syncAnimationEffects();
   }
 
   void View::setUrgent(bool urgent) {
@@ -3106,7 +3097,7 @@ namespace umbriel {
     if (m_onActiveWorkspace) {
       const auto& animation = config().animation;
       const auto& open = animation.windowsIn;
-      const bool customShader = animationShader(m_server->renderer(), AnimationEvent::WindowsIn) != nullptr;
+      const bool customShader = effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
       m_customFade = animation.enabled && open.enabled && customShader;
       const bool animates = animation.enabled && open.enabled && (open.style != "none" || customShader);
       const bool tiledMember =

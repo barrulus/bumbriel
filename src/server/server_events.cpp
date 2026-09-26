@@ -560,7 +560,7 @@ namespace umbriel {
       }
     }
     if (effects.animation || effects.effects) {
-      prepareAnimationShaders(m_renderer);
+      effectRegistry().prepare(m_renderer);
     }
     if (effects.effects) {
       // The next frame re-arms the effect timer from the new max_fps.
@@ -826,7 +826,7 @@ namespace umbriel {
 
     m_renderer = newRenderer;
     m_allocator = newAllocator;
-    prepareAnimationShaders(m_renderer);
+    effectRegistry().prepare(m_renderer);
 
     // Point the compositor at the new renderer so clients' shm/dma-buf textures get
     // re-imported on next attach.

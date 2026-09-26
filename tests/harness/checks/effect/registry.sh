@@ -76,7 +76,7 @@ expect "compilations of a preset no event names" "$(compiled animation "$SHOWN")
 write_config '[animation.windows_move]' 'effect = "shown"'
 expect "compilations of a preset an enabled event names" "$(compiled animation "$SHOWN")" 1
 
-readonly EFFECTS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects" && pwd)"
+readonly EFFECTS="$(cd "$UMBRIEL_REPO/examples/effects" && pwd)"
 readonly LOG_MARK=$(($(wc -l < "$UMBRIEL_LOG") + 1))
 write_bundled() {
   cp "$BASE" "$UMBRIEL_CONFIG"

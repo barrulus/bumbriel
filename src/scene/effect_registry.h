@@ -1,7 +1,8 @@
 #pragma once
 
+#include "config/animation_event.h"
 #include "config/effects.h"
-#include "scene/animation_shader.h"
+#include "core/animation.h"
 #include "scene/effect_ledger.h"
 
 #include <cstdint>
@@ -14,6 +15,7 @@
 struct fx_effect_shader;
 struct fx_animation_parameters;
 struct wlr_output;
+struct wlr_scene_node;
 struct wlr_renderer;
 
 namespace umbriel {
@@ -40,10 +42,11 @@ namespace umbriel {
     [[nodiscard]] fx_effect_shader* preset(std::string_view name, EffectKind kind) const;
     [[nodiscard]] const EffectPreset* presetConfig(std::string_view name) const;
     // The preset bound to an animation event through `effect =`, or null.
-    [[nodiscard]] fx_effect_shader* animationShader(AnimationEvent event) const;
+    [[nodiscard]] fx_effect_shader* animationEffect(AnimationEvent event) const;
     // The program a lifecycle fade composes through: the event's preset, or for windows_in and windows_out without
-    // one, the built-in fade. Null when buffers fade individually.
-    [[nodiscard]] fx_effect_shader* lifecycleShader(AnimationEvent event) const;
+    // one, a built-in fade that applies the lifecycle alpha to the whole window at once. Null when buffers fade
+    // individually; prepare() compiles every program, never this lookup.
+    [[nodiscard]] fx_effect_shader* lifecycleEffect(AnimationEvent event) const;
     // The drag slot's built-in deformation program, compiled by prepare() for the current renderer. Null while
     // animations or windows_drag.physics are off, or when it failed to compile.
     [[nodiscard]] fx_effect_shader* deformationShader() const;
@@ -110,6 +113,12 @@ namespace umbriel {
 
   // The Server's registry. Set in Server's constructor before any view exists.
   [[nodiscard]] EffectRegistry& effectRegistry();
+
+  // Binds `event`'s slot on `node` to its lifecycle effect while `value` animates, and clears it otherwise. For an
+  // AnimatedValue, a zero `direction` follows the sign of the value's travel.
+  void
+  bindAnimationEffect(wlr_scene_node* node, AnimationEvent event, const AnimatedValue& value, float direction = 0.0F);
+  void bindAnimationEffect(wlr_scene_node* node, AnimationEvent event, const AnimatedColor& value, float direction);
 
   // Seconds elapsed from `epochMsec` to `nowMsec`, computed in double precision so the result keeps
   // sub-millisecond resolution long after the raw millisecond count exceeds a float's exact range.

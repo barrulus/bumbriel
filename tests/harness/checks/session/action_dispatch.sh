@@ -214,7 +214,7 @@ if [[ $returned_workspace != "$start_workspace" ]]; then
 fi
 
 # window-modify-primary-extent: Headless output is 1280x720 with the shipped defaults (gap 8, border 2): viewport 1260, so -0.2 shrinks a column by about 252px.
-# The exact geometry math lives in 110_scrolling_layout.sh (624 wide at 0.5).
+# The exact geometry math lives in layout/scrolling.sh (624 wide at 0.5).
 before_w=$(jq -r '.[0].w' <<< "$("$UMBRIEL" windows --json)")
 accepts "window-modify-primary-extent:-0.2"
 after_w=$before_w

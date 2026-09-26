@@ -8,7 +8,7 @@ GLSL
 readonly BASE="$UMBRIEL_RUNTIME_DIR/lifetime-base.toml"
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/lifetime.png"
 readonly SOURCE="${UMBRIEL_CONFIG%/*}/lifetime.glsl"
-readonly EXAMPLES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects/animation" && pwd)"
+readonly EXAMPLES="$(cd "$UMBRIEL_REPO/examples/effects/animation" && pwd)"
 cp "$UMBRIEL_CONFIG" "$BASE"
 cp "$EXAMPLES/reveal/shader.glsl" "$SOURCE"
 cat >> "$UMBRIEL_CONFIG" <<EOF

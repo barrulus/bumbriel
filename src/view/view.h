@@ -58,12 +58,12 @@ namespace umbriel {
     [[nodiscard]] const std::optional<std::string>& xdgTag() const { return m_xdgTag; }
     [[nodiscard]] ContentType contentType() const { return m_contentType; }
     // The view's frame: it carries the position, parent, stacking order, and visibility of the whole window. Its
-    // content tree (surfaces, borders, backdrop, blur, and animation shaders) sits at (0, 0) inside it, above the
+    // content tree (surfaces, borders, backdrop, blur, and animation effects) sits at (0, 0) inside it, above the
     // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
     // Refreshes the animation and persistent effect slots on the view's own trees, or on an overview card's `target`,
     // `border`, and `surface`, gated by `gate` and driven by `cardOutput`.
-    void syncAnimationShaders(
+    void syncAnimationEffects(
         wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr, wlr_scene_node* surface = nullptr,
         const BorderEffectGate* gate = nullptr, Output* cardOutput = nullptr
     );

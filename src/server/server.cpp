@@ -332,7 +332,7 @@ namespace umbriel {
       throw std::runtime_error("renderer or allocator opened an excluded GPU");
     }
 
-    prepareAnimationShaders(m_renderer);
+    effectRegistry().prepare(m_renderer);
     m_compositor = wlr_compositor_create(m_display, 5, m_renderer);
     wlr_subcompositor_create(m_display);
     wlr_data_device_manager_create(m_display);
@@ -658,7 +658,7 @@ namespace umbriel {
     m_scratchpadManager.reset();
     wlr_scene_node_destroy(&m_scene->tree.node);
     wlr_allocator_destroy(m_allocator);
-    clearAnimationShaderCache();
+    effectRegistry().clear();
     wlr_renderer_destroy(m_renderer);
     m_backendManager.reset();
     m_backend = nullptr;
@@ -1091,7 +1091,7 @@ namespace umbriel {
     m_alpha.snap(1.0);
     m_alpha.retarget(0.0, durationMs, curve);
 
-    if (animationShader(server.renderer(), event) == nullptr) {
+    if (effectRegistry().animationEffect(event) == nullptr) {
       if (style == "slide") {
         m_slide.snap(0.0);
         m_slide.retarget(80.0, durationMs, curve);
@@ -1225,7 +1225,7 @@ namespace umbriel {
   bool Server::CloseSnapshot::tickAnimations(uint64_t nowMsec) {
     const bool movedAlpha = m_alpha.tick(nowMsec);
     const bool movedSlide = m_slide.tick(nowMsec);
-    updateAnimationShader(&m_tree->node, m_server->renderer(), m_event, m_alpha, -1.0F);
+    bindAnimationEffect(&m_tree->node, m_event, m_alpha, -1.0F);
 
     if (!movedAlpha && !movedSlide) {
       return false;
@@ -1233,7 +1233,7 @@ namespace umbriel {
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
     const float rawAlpha = std::clamp(static_cast<float>(m_alpha.current()), 0.0F, 1.0F);
     // A lifecycle shader fades the whole snapshot at once, so its buffers and borders stay opaque under it.
-    const bool composited = lifecycleShader(m_server->renderer(), m_event) != nullptr;
+    const bool composited = effectRegistry().lifecycleEffect(m_event) != nullptr;
     const bool builtInSlide = !composited && m_slide.target() != m_slide.from();
     // Keep the moving snapshot visible long enough for slide to read as motion. Fade keeps the configured timeline.
     const float alpha = composited ? 1.0F : (builtInSlide ? std::sqrt(rawAlpha) : rawAlpha);

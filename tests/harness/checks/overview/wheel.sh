@@ -2,7 +2,7 @@
 # The overview steps workspaces from a wheel notch, and stops at the ends. While the overview is up the real window
 # trees are hidden, so switching is a discrete step down the filmstrip rather than the animated slide it is outside.
 # The wheel and middle-button drag reach Overview::selectRelativeWorkspace. This check
-# exercises the wheel path, while 346_overview_keybind_actions covers arrow input, which navigates cards first. The
+# exercises the wheel path, while overview/keybind_actions covers arrow input, which navigates cards first. The
 # headless backend has no touchpad, and zwlr_virtual_pointer_v1 carries motion, buttons and axes but no gesture
 # events, so the gesture state machine is not reachable without a real device. The active workspace is observed
 # through ext-workspace-v1.

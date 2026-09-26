@@ -1,7 +1,6 @@
 #include "overview/overview.h"
 
 #include "overview/preview_geometry.h"
-#include "scene/animation_shader.h"
 extern "C" {
 #include <umbrielfx/render/effect.h>
 }
@@ -574,7 +573,7 @@ namespace umbriel {
         .urgent = view->urgent(),
         .fullscreen = view->toplevel()->scheduled.fullscreen,
     };
-    view->syncAnimationShaders(
+    view->syncAnimationEffects(
         card.tree, card.border != nullptr ? &card.border->node : nullptr, &card.surfaceTree->node, &cardGate,
         card.owner->output
     );
@@ -1784,9 +1783,9 @@ namespace umbriel {
       syncCardEffects();
     }
     for (const auto& state : m_outputs) {
-      updateAnimationShader(
-          &state->tree->node, m_server->renderer(), AnimationEvent::Overview,
-          m_zoomAnim.animating() ? m_zoomAnim : state->rowScroll, m_closing ? -1.0F : 1.0F
+      bindAnimationEffect(
+          &state->tree->node, AnimationEvent::Overview, m_zoomAnim.animating() ? m_zoomAnim : state->rowScroll,
+          m_closing ? -1.0F : 1.0F
       );
     }
     if (zoomTicked && !m_zoomAnim.animating()) {

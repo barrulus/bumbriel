@@ -364,8 +364,7 @@ fx_effect_shader_create(struct wlr_renderer* renderer, enum fx_effect_kind kind,
   shader->program = link_program(fragment);
   free(fragment);
   if (shader->program == 0) {
-    // Checks grep for "Animation shader .*rejected; using built-in animation".
-    wlr_log(WLR_ERROR, "Animation shader '%s' [%s] rejected; using built-in animation", label, kind_name(kind));
+    wlr_log(WLR_ERROR, "Animation effect '%s' [%s] rejected; using built-in animation", label, kind_name(kind));
     free(shader);
     wlr_egl_restore_context(&previous);
     return NULL;

@@ -16,6 +16,11 @@ namespace umbriel {
   namespace {
     // Event loops here and in change.cpp end at Overview; the slot table must agree.
     static_assert(static_cast<unsigned>(AnimationEvent::Overview) + 1 == FX_ANIMATION_SLOTS);
+    static_assert(static_cast<unsigned>(AnimationEvent::Window) == FX_SLOT_WINDOW);
+    static_assert(static_cast<unsigned>(AnimationEvent::BorderEffect) == FX_SLOT_BORDER_EFFECT);
+    static_assert(static_cast<unsigned>(AnimationEvent::Drag) == FX_SLOT_DRAG);
+    static_assert(static_cast<unsigned>(AnimationEvent::WindowsIn) == FX_SLOT_WINDOWS_IN);
+    static_assert(static_cast<unsigned>(AnimationEvent::WindowsOut) == FX_SLOT_WINDOWS_OUT);
     constexpr Logger kLog("effects");
     EffectRegistry* s_registry = nullptr;
 
@@ -78,6 +83,29 @@ vec4 animation(vec2 uv) {
         return FX_EFFECT_CURSOR;
       }
       return FX_EFFECT_ANIMATION;
+    }
+
+    template <typename Value>
+    void bind(wlr_scene_node* node, AnimationEvent event, const Value& value, float progress, float direction) {
+      if (node == nullptr) {
+        return;
+      }
+      fx_animation_parameters parameters{};
+      parameters.progress = progress;
+      parameters.linear_progress = static_cast<float>(value.progress());
+      parameters.direction = direction;
+      parameters.transition_id = value.transitionId();
+      std::ranges::copy(value.shaderSeed(), parameters.random_seed);
+      EffectRegistry& registry = effectRegistry();
+      fx_effect_shader* shader = value.animating() ? registry.lifecycleEffect(event) : nullptr;
+      // A preset bound to this event gets the shared uniforms too: umbriel_time (when it reads it) and, for
+      // palette = true, the [colors] palette. The built-in fade has no preset and reads neither.
+      if (shader != nullptr) {
+        if (const EffectPreset* preset = registry.animationPreset(event)) {
+          registry.fillTimeUniforms(parameters, registry.clockSeconds(), *preset, shader);
+        }
+      }
+      wlr_scene_node_set_animation(node, static_cast<unsigned>(event), shader, &parameters);
     }
   } // namespace
 
@@ -277,7 +305,7 @@ vec4 animation(vec2 uv) {
     return findEffectPreset(config().effects, name);
   }
 
-  fx_effect_shader* EffectRegistry::animationShader(AnimationEvent event) const {
+  fx_effect_shader* EffectRegistry::animationEffect(AnimationEvent event) const {
     const Config::Animation& settings = config().animation;
     const auto binding = settings.eventEffect(event);
     if (binding.effect == nullptr || !settings.enabled || !binding.enabled || binding.effect->empty()) {
@@ -286,8 +314,8 @@ vec4 animation(vec2 uv) {
     return preset(*binding.effect, EffectKind::Animation);
   }
 
-  fx_effect_shader* EffectRegistry::lifecycleShader(AnimationEvent event) const {
-    if (fx_effect_shader* custom = animationShader(event)) {
+  fx_effect_shader* EffectRegistry::lifecycleEffect(AnimationEvent event) const {
+    if (fx_effect_shader* custom = animationEffect(event)) {
       return custom;
     }
     return builtinFadeApplies(config().animation, event) ? m_builtinFade.get() : nullptr;
@@ -340,6 +368,18 @@ vec4 animation(vec2 uv) {
     if (fx_uniform* count = fx_parameters_add_uniform(&parameters, "umbriel_palette_count", FX_UNIFORM_INT, 1)) {
       count->ints[0] = static_cast<int32_t>(palette.size());
     }
+  }
+
+  void bindAnimationEffect(wlr_scene_node* node, AnimationEvent event, const AnimatedValue& value, float direction) {
+    const double distance = value.target() - value.from();
+    const auto progress = static_cast<float>(
+        distance != 0.0 ? (value.current() - value.from()) / distance : evaluateCurve(value.curve(), value.progress())
+    );
+    bind(node, event, value, progress, direction != 0.0F ? direction : (distance < 0.0 ? -1.0F : 1.0F));
+  }
+
+  void bindAnimationEffect(wlr_scene_node* node, AnimationEvent event, const AnimatedColor& value, float direction) {
+    bind(node, event, value, static_cast<float>(evaluateCurve(value.curve(), value.progress())), direction);
   }
 
 } // namespace umbriel

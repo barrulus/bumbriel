@@ -2,7 +2,7 @@
 # Hold layout still while the opening timeline exercises the bundled shader.
 # Its middle frame must compress the client, then restore the same edge pixels.
 set -euo pipefail
-readonly EXAMPLES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../examples/effects/animation" && pwd)"
+readonly EXAMPLES="$(cd "$UMBRIEL_REPO/examples/effects/animation" && pwd)"
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/squash.png"
 cat >> "$UMBRIEL_CONFIG" <<EOF
 

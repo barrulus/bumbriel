@@ -1767,7 +1767,7 @@ bool wlr_scene_node_set_animation_output_clip(struct wlr_scene_node* node, const
     animation->output_clip_enabled = true;
     animation->output_clip = *box;
   }
-  // Animation shaders can sample or produce any texel inside their canvas.
+  // Animation effects can sample or produce any texel inside their canvas.
   // Rebuild complete coverage for both the old and new output clip.
   scene_node_update(&scene->tree.node, NULL);
   return true;

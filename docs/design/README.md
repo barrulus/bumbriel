@@ -9,7 +9,6 @@ Use a design note when the detail explains state transitions, subsystem
 boundaries, or regression-sensitive behavior.
 
 - [Configuration reload](configuration-reload.md)
-- [Custom animation shaders](animation-shaders.md)
 - [Effects](effects.md)
 - [Workspace lifecycle](workspace-lifecycle.md)
 - [Overview rendering](overview-rendering.md)
@@ -54,6 +53,6 @@ surface-local input to recalculate hover state and restore their cursor image.
 When `follows_mouse` is enabled, the same refresh selects a different window
 under the pointer and restores keyboard focus there after the drag grab ends.
 The short-drag cursor refresh is covered by
-[`460_external_drag.sh`](../../tests/harness/checks/460_external_drag.sh), and
+[`drag/external_drag.sh`](../../tests/harness/checks/drag/external_drag.sh), and
 cross-window focus is covered by
-[`471_data_drag_hover_focus.sh`](../../tests/harness/checks/471_data_drag_hover_focus.sh).
+[`drag/data_drag_hover_focus.sh`](../../tests/harness/checks/drag/data_drag_hover_focus.sh).
