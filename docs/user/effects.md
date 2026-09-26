@@ -118,7 +118,7 @@ reserved name.
 | `shader` | all | required | Path to the GLSL source, at most 256 KiB. |
 | `palette` | all | `false` | Supply `[colors]` accent and status colors to the program. |
 | `padding` | border | `0` | Transparent space around the ring the effect may paint, 0 to 1024. |
-| `speed` | border | `1.0` | Multiplier on `umbriel_time`, 0 to 10. `0` freezes time. |
+| `speed` | border | `1.0` | Multiplier on `umbriel_time`, 0 to 10. `0` holds `umbriel_time` at zero. |
 | `animated` | border | `true` | `false` freezes `umbriel_time` at zero. |
 | `overlay` | border | `""` | A window preset drawn on the window while the border effect applies. |
 | `light.spread` | border | `80` | How far light from the ring spills, 1 to 256 logical pixels. Defining `[effects.preset.<name>.light]` enables light. |
@@ -166,6 +166,7 @@ Every kind sees:
 | `umbriel_sample_previous(vec2 uv)` | This effect's previous result. Using it allocates two extra buffers for each window or output it runs on. |
 | `umbriel_size` | Drawn width and height in logical pixels. |
 | `umbriel_scale` | Buffer pixels per logical pixel. |
+| `umbriel_expand` | How far the drawn rectangle extends past the window on each side, as a fraction of its width and height. `(0, 0)` except for an animation running while drag physics deforms the window. |
 | `umbriel_time` | Seconds on the animation clock, times the border's `speed`. Held as a single-precision float that is never wrapped, so fine time-based motion loses precision after long uptimes. |
 | `umbriel_palette_count` | `4` for palette presets, `0` otherwise. |
 | `umbriel_palette_at(float t)` | The palette color at `t`, blended between neighboring colors from the wrapping sequence `accent_primary`, `accent_secondary`, `warning`, `error`. Transparent black when there is no palette. |
@@ -195,22 +196,24 @@ follows the same rule.
 Presets compile at startup and on reload. A compile error is logged with the
 preset's name and the driver's message, whose line numbers count from the top
 of the shader file; that preset renders plainly (opening and closing
-animations keep their built-in fade) until a reload fixes it. Unknown names,
-or a preset of the wrong kind for a selector, report a diagnostic and are
-dropped: a top-level `[effects]` selector selects nothing, and a window
-rule's or output's own override falls back to an earlier matching rule or the
-`[effects]` default. Shaders are trusted local GPU code; keep them small and
-side-effect free.
+animations keep their built-in animation, `style` and `scale` included) until
+a reload fixes it. Unknown names, or a preset of the wrong kind for a
+selector, report a diagnostic and are dropped: a top-level `[effects]`
+selector selects nothing, and a window rule's or output's own override falls
+back to an earlier matching rule or the `[effects]` default. Shaders are
+trusted local GPU code; keep them small and side-effect free.
 
 ## Cost
 
 Nothing here costs anything until selected. A border effect renders the ring
 through a capture and one program pass per frame on the focused window, and
 requests extra frames only while its program reads `umbriel_time` and its
-clock advances, capped by `max_fps`. Light adds a small blurred pyramid on
-outputs where the ring is visible. A window effect copies the pixels under the
-window and runs one pass per window per frame. Screen and cursor effects each
-run one pass over the output or the radius square and disable direct scanout
-on that output. Drag physics costs only while a window is held or settling.
-With `in_capture = false`, a pending screencopy or image-copy capture composes
-its frame twice whenever any window, screen, or cursor effect is active.
+clock advances, capped by `max_fps`. Light adds a second program pass and a
+blurred pyramid where the ring draws, and a blend on every output its light
+reaches. A window effect copies the pixels under the window and runs one pass
+per window per frame. Screen and cursor effects each run one pass over the
+output or the radius square and disable direct scanout on that output. Drag
+physics costs only while a window is held or settling.
+With `in_capture = false`, a pending screencopy or image-copy capture of an
+output composes its frame twice whenever any window, screen, or cursor effect
+is visible on that output.
