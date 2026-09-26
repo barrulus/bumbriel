@@ -185,8 +185,10 @@ void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output,
 // Output effects shade the output in place after the scene, the screen slot
 // over the whole output, then the cursor slot over the square `radius` logical
 // px around the pointer (0: the whole output); software cursors draw above
-// both. A NULL shader removes the slot; changing the program resets its
-// feedback history.
+// both. A NULL shader removes the slot; NULL parameters are zeroed. Changing
+// the program resets its feedback history. A cursor program draws nothing
+// until wlr_scene_output_set_effect_pointer runs after it is set: pointer
+// updates while no cursor program is set are dropped.
 void wlr_scene_output_set_screen_effect(
     struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
 );

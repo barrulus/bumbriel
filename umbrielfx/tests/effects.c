@@ -1631,7 +1631,9 @@ static bool test_in_place_shape(struct fixture *fixture) {
 
 // A screen program shades the whole output after the scene and a cursor program
 // the square around the pointer after it. A hidden pointer drops the cursor
-// effect, captures exclude both, and motion damages only the two squares.
+// effect, captures exclude both, motion damages only the two squares, and a
+// re-set cursor effect waits for a pointer push. The square and the pointer uv
+// follow scale and rotation.
 static bool test_output_effects(struct fixture *fixture) {
 	struct wlr_scene *scene = wlr_scene_create();
 	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
@@ -1640,8 +1642,13 @@ static bool test_output_effects(struct fixture *fixture) {
 	struct fx_effect_shader *screen = fx_effect_shader_create(fixture->renderer, FX_EFFECT_SCREEN,
 		"vec4 screen(vec2 uv) { return umbriel_sample(uv).bgra; }", "screen");
 	struct fx_effect_shader *cursor = fx_effect_shader_create(fixture->renderer, FX_EFFECT_CURSOR,
-		"vec4 cursor(vec2 uv) { return distance(uv, umbriel_pointer) < 0.5 ? vec4(0.0, 1.0, 0.0, 1.0) : umbriel_sample(uv); }", "cursor");
-	bool ok = check(screen != NULL && cursor != NULL, "screen and cursor programs compile");
+		"vec4 cursor(vec2 uv) { if (distance(uv, umbriel_pointer) >= 0.5) return umbriel_sample(uv);"
+		" return umbriel_sample(uv).r > 0.5 ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(0.0, 0.0, 0.0, 1.0); }", "cursor");
+	// Paints only the texels within 0.15 uv of the pointer.
+	struct fx_effect_shader *marker = fx_effect_shader_create(fixture->renderer, FX_EFFECT_CURSOR,
+		"vec4 cursor(vec2 uv) { return distance(uv, umbriel_pointer) < 0.15 ? vec4(0.0, 1.0, 0.0, 1.0) : umbriel_sample(uv); }",
+		"cursor-marker");
+	bool ok = check(screen != NULL && cursor != NULL && marker != NULL, "screen and cursor programs compile");
 	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
 	wlr_scene_output_set_screen_effect(scene_output, screen, &parameters);
 	wlr_scene_output_set_cursor_effect(scene_output, cursor, &parameters, 2);
@@ -1654,7 +1661,7 @@ static bool test_output_effects(struct fixture *fixture) {
 		ok &= fixture_read_pixel(fixture, rendered, 2, 2, far);
 		ok &= fixture_read_pixel(fixture, rendered, 12, 12, at_pointer);
 		ok &= check(far[2] > 250 && far[0] < 5, "the screen effect swapped the whole output to red");
-		ok &= check(at_pointer[1] > 250, "the cursor effect paints around the pointer after the screen effect");
+		ok &= check(at_pointer[1] > 250, "the cursor effect reads the screen effect's result");
 		wlr_buffer_unlock(rendered);
 	}
 	wlr_output_state_finish(&state);
@@ -1704,12 +1711,74 @@ static bool test_output_effects(struct fixture *fixture) {
 		&& pixman_region32_contains_point(&state.damage, 14, 14, NULL), "motion damages the old square");
 	ok &= check(!pixman_region32_contains_point(&state.damage, 8, 8, NULL)
 		&& !pixman_region32_contains_point(&state.damage, 0, 15, NULL), "motion damages nothing else");
+	wlr_scene_output_acknowledge_damage_for_test(scene_output, &state);
+	wlr_output_state_finish(&state);
+	// Pointer updates while the cursor effect is cleared are dropped: a re-set effect draws nothing until the
+	// pointer is pushed again. A one-pixel change inside the old square then damages only itself.
+	struct wlr_scene_rect *dot = wlr_scene_rect_create(&scene->tree, 1, 1, blue);
+	wlr_scene_node_set_position(&dot->node, 3, 3);
+	wlr_scene_output_set_cursor_effect(scene_output, NULL, NULL, 0);
+	wlr_scene_output_set_effect_pointer(scene_output, 12, 12, false);
+	wlr_scene_output_set_cursor_effect(scene_output, cursor, &parameters, 2);
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL,
+		"renders the re-set cursor effect");
+	if (state.buffer != NULL) {
+		uint8_t old_square[4];
+		ok &= fixture_read_display_pixel(fixture, state.buffer, 4, 4, old_square);
+		ok &= check(old_square[0] > 250, "a re-set cursor effect draws nothing at the stale pointer");
+	}
+	wlr_scene_output_acknowledge_damage_for_test(scene_output, &state);
+	wlr_output_state_finish(&state);
+	const float near_blue[4] = { 0, 0, 0.5, 1 };
+	wlr_scene_rect_set_color(dot, near_blue);
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options), "renders the changed pixel");
+	ok &= check(pixman_region32_contains_point(&state.damage, 3, 3, NULL)
+		&& !pixman_region32_contains_point(&state.damage, 2, 2, NULL)
+		&& !pixman_region32_contains_point(&state.damage, 6, 6, NULL),
+		"an inactive cursor effect grows no damage around the stale pointer");
+	wlr_output_state_finish(&state);
+	wlr_scene_output_set_effect_pointer(scene_output, 12, 12, true);
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL,
+		"renders after the pointer push");
+	if (state.buffer != NULL) {
+		uint8_t at_pointer[4];
+		ok &= fixture_read_display_pixel(fixture, state.buffer, 12, 12, at_pointer);
+		ok &= check(at_pointer[0] < 5 && at_pointer[1] < 5, "the pushed pointer draws the cursor effect");
+	}
 	wlr_output_state_finish(&state);
 	wlr_swapchain_destroy(swapchain);
+	wlr_scene_node_destroy(&dot->node);
+	// At scale 2, normal and rotated, the square sits around the pointer's logical position and the pointer uv
+	// marks it inside the square: the transposed point stays unpainted.
+	wlr_scene_output_set_cursor_effect(scene_output, marker, &parameters, 2);
+	wlr_scene_output_set_effect_pointer(scene_output, 6.9, 2.1, true);
+	for (int rotated = 0; rotated < 2; rotated++) {
+		const enum wl_output_transform transform = rotated ? WL_OUTPUT_TRANSFORM_90 : WL_OUTPUT_TRANSFORM_NORMAL;
+		rendered = render_transformed(fixture, scene_output, 2, transform);
+		ok &= check(rendered != NULL, rotated ? "rotated scale-2 frame" : "scale-2 frame");
+		if (rendered != NULL) {
+			uint8_t pixel[4];
+			ok &= read_logical(fixture, rendered, transform, 6.9f, 2.1f, pixel);
+			ok &= is_colour(pixel, 0, 255, 0, "the pointer's texel is painted");
+			ok &= read_logical(fixture, rendered, transform, 6.1f, 2.9f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "the transposed texel is not");
+			ok &= read_logical(fixture, rendered, transform, 2.1f, 6.9f, pixel);
+			ok &= is_colour(pixel, 0, 0, 255, "outside the square is untouched");
+			wlr_buffer_unlock(rendered);
+		}
+	}
+	// NULL parameters are zeroed, also when the same program is set again.
+	wlr_scene_output_set_screen_effect(scene_output, screen, NULL);
+	wlr_scene_output_set_screen_effect(scene_output, screen, NULL);
+	wlr_scene_output_set_cursor_effect(scene_output, marker, NULL, 2);
 	wlr_scene_output_set_screen_effect(scene_output, NULL, NULL);
 	wlr_scene_output_set_cursor_effect(scene_output, NULL, NULL, 0);
 	fx_effect_shader_unref(screen);
 	fx_effect_shader_unref(cursor);
+	fx_effect_shader_unref(marker);
 	wlr_scene_node_destroy(&scene->tree.node);
 	return ok;
 }

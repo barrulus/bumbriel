@@ -4074,12 +4074,17 @@ static void output_effects_update_configured(struct scene_output_effects* effect
   effects->output->output_effects_configured = effects->screen != NULL || effects->cursor != NULL;
 }
 
+static const struct fx_animation_parameters output_effects_no_parameters = {0};
+
 void wlr_scene_output_set_screen_effect(
     struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
 ) {
   struct scene_output_effects* effects = scene_output_effects_get(output, shader != NULL);
   if (effects == NULL) {
     return;
+  }
+  if (parameters == NULL) {
+    parameters = &output_effects_no_parameters;
   }
   if (effects->screen == shader && (shader == NULL || parameters_equal(parameters, &effects->screen_parameters))) {
     return;
@@ -4089,9 +4094,7 @@ void wlr_scene_output_set_screen_effect(
   }
   fx_effect_shader_unref(effects->screen);
   effects->screen = fx_effect_shader_ref(shader);
-  if (parameters != NULL) {
-    effects->screen_parameters = *parameters;
-  }
+  effects->screen_parameters = *parameters;
   output_effects_update_configured(effects);
   scene_output_damage_whole(output);
 }
@@ -4104,21 +4107,24 @@ void wlr_scene_output_set_cursor_effect(
   if (effects == NULL) {
     return;
   }
+  if (parameters == NULL) {
+    parameters = &output_effects_no_parameters;
+  }
   if (effects->cursor == shader
       && effects->cursor_radius == radius
       && (shader == NULL || parameters_equal(parameters, &effects->cursor_parameters))) {
     return;
   }
   output_effects_damage_cursor(effects);
+  // Pointer updates are dropped without a program, so a new one waits for the next push.
   if (effects->cursor != shader) {
     fx_animation_history_reset(&effects->cursor_history);
+    effects->pointer_visible = false;
   }
   fx_effect_shader_unref(effects->cursor);
   effects->cursor = fx_effect_shader_ref(shader);
   effects->cursor_radius = radius;
-  if (parameters != NULL) {
-    effects->cursor_parameters = *parameters;
-  }
+  effects->cursor_parameters = *parameters;
   output_effects_update_configured(effects);
   output_effects_damage_cursor(effects);
 }
@@ -4197,8 +4203,8 @@ static void render_output_effects(struct scene_output_effects* effects, const st
   }
   const struct wlr_box box = output_effects_cursor_box(effects, data->logical.width, data->logical.height);
   const float pointer[2] = {
-      box.width > 0 ? (float)((effects->pointer_x - data->logical.x - box.x) / box.width) : 0,
-      box.height > 0 ? (float)((effects->pointer_y - data->logical.y - box.y) / box.height) : 0,
+      box.width > 0 ? (float)((effects->pointer_x - effects->output->x - box.x) / box.width) : 0,
+      box.height > 0 ? (float)((effects->pointer_y - effects->output->y - box.y) / box.height) : 0,
   };
   render_output_effect(effects->cursor, &effects->cursor_parameters, &effects->cursor_history, &box, pointer, data);
 }
@@ -5207,9 +5213,10 @@ bool wlr_scene_output_build_state(
   render_data.entry_count = list_len;
 
   // The output addon holds the output slots and the capture policy. Without it
-  // the policy is the default (effects excluded from captures); an unfiltered
-  // composition creates it. With no scene effects, output slots, or pending
-  // capture there is nothing to draw, save, or release.
+  // the policy is the default (effects excluded from captures). The output slot
+  // setters, an in_capture policy, and an unfiltered composition create it.
+  // With no scene effects, output slots, or pending capture there is nothing to
+  // draw, save, or release.
   const bool capture_pending = options->effect_capture_pending;
   struct scene_output_effects* output_effects =
       effects != NULL || capture_pending || scene_output->output_effects_configured
