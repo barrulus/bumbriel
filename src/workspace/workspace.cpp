@@ -11,7 +11,7 @@
 #include "layout/scrolling.h"
 #include "output/output.h"
 #include "overview/overview.h"
-#include "scene/animation_shader.h"
+#include "scene/effect_registry.h"
 #include "server/server.h"
 #include "view/floating.h"
 #include "view/registry.h"
@@ -2525,7 +2525,7 @@ namespace umbriel {
 
   bool WorkspaceGroup::tickAnimations(uint64_t nowMsec) {
     const bool ticked = m_slideAnim.tick(nowMsec);
-    updateAnimationShader(&m_output->viewRoot()->node, m_server->renderer(), AnimationEvent::Workspaces, m_slideAnim);
+    bindAnimationEffect(&m_output->viewRoot()->node, AnimationEvent::Workspaces, m_slideAnim);
     bool active = false;
     if (ticked) {
       slideApply(m_slideAnim.current());

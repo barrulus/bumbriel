@@ -63,6 +63,12 @@ struct fx_framebuffer {
 	struct fx_framebuffer *sdr_capture_parent;
 	bool capture_sdr;
 	bool sdr_capture_valid;
+	// Unfiltered composition of this swapchain buffer while a capture is pending
+	// with effects excluded from captures. dmabuf imports read it instead.
+	struct fx_framebuffer *effect_capture_buffer;
+	struct fx_framebuffer *effect_capture_parent;
+	bool effect_capture_valid;
+	const void *effect_capture_owner;
 
 	EGLImageKHR image;
 	GLuint rbo;
@@ -91,6 +97,15 @@ void fx_framebuffer_bind(struct fx_framebuffer *buffer);
  * Note: Doesn't drop the wlr_buffer, so should only be used internally.
  */
 void fx_framebuffer_destroy(struct fx_framebuffer *buffer);
+
+// Drops the buffer's effect capture and clears its owner.
+void fx_framebuffer_release_effect_capture(struct fx_framebuffer *buffer);
+
+// Draws all of `source` over `target` in a pass of its own, decoding `source`
+// with `transfer_function`. Leaves no framebuffer bound.
+bool fx_framebuffer_copy(struct fx_framebuffer *target,
+		struct fx_framebuffer *source,
+		enum wlr_color_transfer_function transfer_function);
 
 ///
 /// fx_texture
@@ -242,8 +257,21 @@ struct fx_renderer {
 	} shaders;
 
 	bool animation_shadow_attempted;
-	struct fx_animation_shader *animation_shadow_horizontal;
-	struct fx_animation_shader *animation_shadow_vertical;
+	// Each effect copy failure is logged once per renderer.
+	bool in_place_copy_failure_logged;
+	bool effect_capture_failure_logged;
+	// Set only through fx_renderer_fail_target_copies_for_test and fx_renderer_fail_effect_capture_for_test.
+	bool fail_target_copies_for_test;
+	bool fail_effect_capture_for_test;
+	struct fx_effect_shader *animation_shadow_horizontal;
+	struct fx_effect_shader *animation_shadow_vertical;
+
+	// Linked on first use; a failed link is not retried.
+	bool effect_light_attempted;
+	GLuint effect_light_program;
+	GLint effect_light_proj, effect_light_tex_proj, effect_light_pos, effect_light_tex, effect_light_gain,
+		effect_light_linear, effect_light_emission, effect_light_source_linear, effect_light_threshold,
+		effect_light_source_region;
 
 	struct wl_list buffers; // fx_framebuffer.link
 	struct wl_list textures; // fx_texture.link

@@ -4,8 +4,8 @@
 #include "core/dirty.h"
 #include "input/modifier_tap.h"
 #include "input/surface_layouts.h"
-#include "scene/animation_shader.h"
 #include "scene/border_rect.h"
+#include "scene/effect_registry.h"
 #include "scene/surface_shadow.h"
 #include "server/focus.h"
 #include "view/registry.h"
@@ -188,6 +188,8 @@ namespace umbriel {
     [[nodiscard]] wlr_scene_tree* dragTree() const { return m_dragTree; }
     // Parent for wl_data_device drag icons; moved to the cursor while a drag is active.
     [[nodiscard]] wlr_scene_tree* dragIconTree() const { return m_dragIconTree; }
+    // Creates the border light layer once the scene exists, or destroys it and unregisters it from the scene.
+    void setEffectLightLayer(bool present);
     // Above top panels, below overlay/lock (fullscreen xdg views).
     [[nodiscard]] wlr_scene_tree* fullscreenTree() const { return m_fullscreenTree; }
     [[nodiscard]] wlr_scene_tree* pinnedTree() const { return m_pinnedTree; }
@@ -199,6 +201,8 @@ namespace umbriel {
     [[nodiscard]] InputMethodRelay* inputMethodRelay() const { return m_inputMethodRelay.get(); }
     [[nodiscard]] Seat* seat() const { return m_seat.get(); }
     [[nodiscard]] Cursor* cursor() const { return m_cursor.get(); }
+    [[nodiscard]] EffectRegistry& effects() { return m_effects; }
+    [[nodiscard]] const EffectRegistry& effects() const { return m_effects; }
     // Central animation tick: advances every registered owner once per msec and
     // reports whether anything is still animating.
     bool tickAnimations(uint64_t nowMsec);
@@ -446,6 +450,8 @@ namespace umbriel {
     static void onIdleInhibitorDestroy(wl_listener* listener, void* data);
     static void onNewShortcutsInhibitor(wl_listener* listener, void* data);
     static void onShortcutsInhibitorDestroy(wl_listener* listener, void* data);
+    static void onNewImageCopySession(wl_listener* listener, void* data);
+    static void onImageCopySessionDestroy(wl_listener* listener, void* data);
     static void onNewActivationToken(wl_listener* listener, void* data);
     static void onActivationTokenDestroy(wl_listener* listener, void* data);
     static void onRequestActivate(wl_listener* listener, void* data);
@@ -549,6 +555,10 @@ namespace umbriel {
       wlr_keyboard_shortcuts_inhibitor_v1* inhibitor = nullptr;
       wl_listener destroy{};
     };
+    struct ImageCopySessionWatch {
+      Server* server = nullptr;
+      wl_listener destroy{};
+    };
     struct PointerDevice {
       Server* server = nullptr;
       wlr_input_device* device = nullptr;
@@ -585,6 +595,7 @@ namespace umbriel {
     wlr_content_type_manager_v1* m_contentTypeManager = nullptr;
     wlr_security_context_manager_v1* m_securityContextManager = nullptr;
     std::unique_ptr<WineColorManager> m_wineColorManager;
+    EffectRegistry m_effects;
     wlr_scene_output_layout* m_sceneLayout = nullptr;
     wlr_xdg_shell* m_xdgShell = nullptr;
     wlr_xdg_toplevel_tag_manager_v1* m_xdgToplevelTagManager = nullptr;
@@ -620,6 +631,7 @@ namespace umbriel {
     wlr_scene_tree* m_overviewTree = nullptr;
     wlr_scene_tree* m_dragTree = nullptr;
     wlr_scene_tree* m_dragIconTree = nullptr;
+    wlr_scene_tree* m_effectLightTree = nullptr;
     wlr_scene_tree* m_fullscreenTree = nullptr;
     wlr_scene_tree* m_pinnedTree = nullptr;
     wlr_scene_tree* m_imPopupTree = nullptr;
@@ -786,6 +798,7 @@ namespace umbriel {
     wl_listener m_newVirtualPointer{};
     wl_listener m_newIdleInhibitor{};
     wl_listener m_newShortcutsInhibitor{};
+    wl_listener m_newImageCopySession{};
     wl_listener m_newActivationToken{};
     wl_listener m_requestActivate{};
     wl_listener m_workspaceCommit{};

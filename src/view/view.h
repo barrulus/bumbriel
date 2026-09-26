@@ -4,6 +4,8 @@
 #include "scene/node.h"
 #include "view/decoration.h"
 #include "view/deferred_unfullscreen.h"
+#include "view/drag_physics.h"
+#include "view/effects.h"
 #include "view/floating.h"
 #include "view/presentation.h"
 #include "view/resize_crossfade.h"
@@ -56,10 +58,16 @@ namespace umbriel {
     [[nodiscard]] const std::optional<std::string>& xdgTag() const { return m_xdgTag; }
     [[nodiscard]] ContentType contentType() const { return m_contentType; }
     // The view's frame: it carries the position, parent, stacking order, and visibility of the whole window. Its
-    // content tree (surfaces, borders, backdrop, blur, and animation shaders) sits at (0, 0) inside it, above the
+    // content tree (surfaces, borders, backdrop, blur, and animation effects) sits at (0, 0) inside it, above the
     // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
-    void syncAnimationShaders(wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr);
+    // Refreshes the animation and persistent effect slots on the view's own trees, or on an overview card's `target`,
+    // `border`, and `surface`, gated by `gate` and driven by `cardOutput`.
+    void syncAnimationEffects(
+        wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr, wlr_scene_node* surface = nullptr,
+        const BorderEffectGate* gate = nullptr, Output* cardOutput = nullptr
+    );
+    [[nodiscard]] ViewEffects& effects() { return m_effects; }
     [[nodiscard]] wlr_scene_tree* captureTree() const;
     [[nodiscard]] bool mapped() const { return m_mapped; }
     [[nodiscard]] bool xwayland() const { return m_xwayland; }
@@ -116,6 +124,8 @@ namespace umbriel {
     [[nodiscard]] int decorationBorderWidth() const { return m_decoration.borderWidth(); }
     [[nodiscard]] int decorationOuterBorderWidth() const { return m_decoration.outerBorderWidth(); }
     [[nodiscard]] int decorationCornerRadius() const { return m_decoration.cornerRadius(); }
+    // Padding of this window's border preset, 0 without one.
+    [[nodiscard]] int borderEffectPadding() const { return m_effects.borderPadding(); }
     // Opacity multiplier the overview applies to windows it leaves on screen (pinned ones) while it opens and closes.
     void setOverviewOpacity(float opacity);
     [[nodiscard]] wlr_scene_tree* homeTree() const;
@@ -490,6 +500,26 @@ namespace umbriel {
     // for the temporary global presentation and its resting presentation.
     void enterDragPresentation();
     void restoreHomePresentation();
+    // Drag physics follows the pointer grab: the grabbed point in frame-local coordinates, then pointer deltas. The
+    // sheet keeps settling after the release. False when the sheet did not take the grab (physics off, or nothing
+    // drawn); the drag then makes none of the calls below.
+    [[nodiscard]] bool beginDragPhysics(double localX, double localY);
+    // The grabbed point moved within the frame (a retarget resized the window under the pointer).
+    void setDragPhysicsGrab(double localX, double localY);
+    void moveDragPhysics(double dx, double dy);
+    void endDragPhysics();
+    // Refits the sheet to the content tree's drawn bounds when they changed, or when the grab moved.
+    void fitDragPhysics(bool grabMoved);
+    struct DragFit {
+      wlr_box bounds;
+      std::array<float, 2> grab;
+    };
+    // The content tree's drawn bounds and the grab as fractions of them; empty when the tree draws nothing.
+    [[nodiscard]] std::optional<DragFit> dragPhysicsFit() const;
+    // The drag slot's expand: the sheet's displacement bound plus a filtering margin.
+    [[nodiscard]] int dragPhysicsExpand() const;
+    // True when the drag slot's drawn box reaches `output`.
+    [[nodiscard]] bool dragPhysicsOn(const Output* output) const;
     // Kick the owning output so an animation started outside a frame gets ticked.
     void scheduleFrame();
     void cancelSizeAnimation();
@@ -614,8 +644,16 @@ namespace umbriel {
     // must never sample the composited desktop behind translucent content.
     wlr_scene* m_captureScene = nullptr;
     ViewDecoration m_decoration;
+    ViewEffects m_effects;
     ViewPresentation m_presentation;
     ResizeCrossfade m_resizeCrossfade;
+    DragPhysics m_dragPhysics;
+    uint64_t m_dragPhysicsMsec = 0; // animation clock at the sheet's last tick
+    // The frame-local grab and the content tree's drawn bounds the sheet was last fitted to.
+    double m_dragGrabX = 0;
+    double m_dragGrabY = 0;
+    wlr_box m_dragBounds{};
+    bool m_dragSlotBound = false; // the content tree carries the drag slot
     wlr_box m_presentedBox{};
     // Last unscaled box supplied by the workspace. A tiled popin or zoom presents an inset inside this logical box,
     // so a later layout change must animate from the logical box rather than scaling the inset a second time.

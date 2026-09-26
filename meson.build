@@ -515,7 +515,7 @@ pure_sources = files(
   'src/config/keybind_parse.cpp',
   'src/config/value_parse.cpp',
   'src/config/section.cpp',
-  'src/config/animation_shader.cpp',
+  'src/config/effects.cpp',
   'src/input/modifier_tap.cpp',
   'src/input/swipe_tracker.cpp',
   'src/input/keyboard_layout.cpp',
@@ -534,7 +534,9 @@ pure_sources = files(
   'src/scene/cheatsheet_rows.cpp',
   'src/overview/shortcut_labels.cpp',
   'src/view/border_ring.cpp',
+  'src/view/effects_rules.cpp',
   'src/view/floating.cpp',
+  'src/view/drag_physics.cpp',
 )
 
 umbriel_pure_deps = [
@@ -565,7 +567,7 @@ umbriel_pure_dep = declare_dependency(
 core_sources = files(
   'src/core/animation.cpp',
   'src/core/application_scope.cpp',
-  'src/scene/animation_shader.cpp',
+  'src/scene/effect_registry.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',
@@ -589,6 +591,7 @@ core_sources = files(
   'src/input/cursor_constraint.cpp',
   'src/view/view.cpp',
   'src/view/decoration.cpp',
+  'src/view/effects.cpp',
   'src/view/presentation.cpp',
   'src/view/resize_crossfade.cpp',
   'src/view/registry.cpp',
@@ -723,8 +726,13 @@ install_data(
   'examples/config.toml',
   install_dir: get_option('datadir') / 'umbriel',
 )
-install_data(
-  'examples/shaders/reveal.glsl',
-  'examples/shaders/squash.glsl',
-  install_dir: get_option('datadir') / 'umbriel' / 'shaders',
-)
+# Bundled effect presets: each directory holds the preset's shader and an
+# effect.toml that defines it without selecting it. Users include the TOML and
+# select the name.
+foreach effect : ['animation/reveal', 'animation/squash', 'border/pulse', 'window/scanlines', 'screen/vignette', 'cursor/glow']
+  install_data(
+    'examples/effects' / effect / 'shader.glsl',
+    'examples/effects' / effect / 'effect.toml',
+    install_dir: get_option('datadir') / 'umbriel' / 'effects' / effect,
+  )
+endforeach

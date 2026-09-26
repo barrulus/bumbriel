@@ -20,7 +20,7 @@
 
 #include "render/egl.h"
 #include "render/fx_renderer/shaders.h"
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 #include "render/fx_renderer/fx_renderer.h"
 #include "render/fx_renderer/util.h"
 #include "render/pass.h"
@@ -114,13 +114,14 @@ static inline void free_shaders(struct fx_renderer *renderer) {
 	glDeleteProgram(renderer->shaders.blur1.program);
 	glDeleteProgram(renderer->shaders.blur2.program);
 	glDeleteProgram(renderer->shaders.blur_effects.program);
+	glDeleteProgram(renderer->effect_light_program);
 	pop_fx_debug(renderer);
 }
 
 static void fx_renderer_destroy(struct wlr_renderer *wlr_renderer) {
 	struct fx_renderer *renderer = fx_get_renderer(wlr_renderer);
-	fx_animation_shader_unref(renderer->animation_shadow_horizontal);
-	fx_animation_shader_unref(renderer->animation_shadow_vertical);
+	fx_effect_shader_unref(renderer->animation_shadow_horizontal);
+	fx_effect_shader_unref(renderer->animation_shadow_vertical);
 
 	TRACY_GPU_CONTEXT_DESTROY(renderer->tracy_data);
 

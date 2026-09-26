@@ -1,8 +1,8 @@
 #include "layer/layer_surface.h"
 
-#include "scene/animation_shader.h"
+#include "scene/effect_registry.h"
 extern "C" {
-#include <umbrielfx/render/animation.h>
+#include <umbrielfx/render/effect.h>
 }
 
 #include "config/resolve.h"
@@ -108,7 +108,7 @@ namespace umbriel {
   bool LayerSurface::tickAnimations(uint64_t nowMsec) {
     const bool ticked = m_fade.tick(nowMsec);
     if (m_scene != nullptr) {
-      updateAnimationShader(&m_scene->tree->node, m_server->renderer(), AnimationEvent::Layers, m_fade);
+      bindAnimationEffect(&m_scene->tree->node, AnimationEvent::Layers, m_fade);
     }
     if (!ticked) {
       return false;
@@ -124,7 +124,7 @@ namespace umbriel {
       return;
     }
     // Overshooting curves can push this out of range; wlr_scene_buffer_set_opacity asserts opacity is in [0, 1].
-    float alpha = m_fade.animating() && animationShader(m_server->renderer(), AnimationEvent::Layers) != nullptr
+    float alpha = m_fade.animating() && effectRegistry().animationEffect(AnimationEvent::Layers) != nullptr
         ? 1.0F
         : std::clamp(static_cast<float>(m_fade.current()), 0.0F, 1.0F);
     wlr_scene_node_for_each_buffer(

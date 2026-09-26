@@ -73,6 +73,16 @@ radius = 3
 # backdrop = "#000000FF"
 
 # ==============================================================================
+# Effects
+# Every effect is off until a preset is selected. Include a bundled preset
+# (adjust /usr for the package prefix), then select it by name.
+# https://docs.noctalia.dev/umbriel/effects/
+# [include]
+# files = ["/usr/share/umbriel/effects/border/pulse/effect.toml"]
+# [effects]
+# border = "pulse"
+
+# ==============================================================================
 # Input
 # Enable NumLock when a physical keyboard connects.
 # https://docs.noctalia.dev/umbriel/input/
