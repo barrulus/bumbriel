@@ -1444,7 +1444,7 @@ static int scene_node_drawn_expand(struct wlr_scene_node* node) {
   TRACY_ZONE_START_N("scene_node_drawn_expand");
   const int own = scene_node_effect_expand(node);
   const int nested = scene_subtree_effect_expand(node);
-  TRACY_ZONE_END;
+  TRACY_ZONE_END_QUIET;
   return own > nested ? own : nested;
 }
 
@@ -1509,7 +1509,7 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
   pixman_region32_copy(&update_region, damage);
   TRACY_ZONE_START_N("scene_node_bounds");
   scene_node_bounds(node, x, y, &update_region);
-  TRACY_ZONE_END;
+  TRACY_ZONE_END_QUIET;
   if (effects != NULL) {
     const int expand = scene_node_drawn_expand(node);
     if (expand > 0) {
@@ -5244,17 +5244,21 @@ bool wlr_scene_output_build_state(
       .persistent_effects = persistent_effects,
   };
 
-  TRACY_ZONE_START_N("render list");
-  list_con.render_list->size = 0;
-  scene_nodes_in_box(&scene_output->scene->tree.node, &list_con.box, construct_render_list_iterator, &list_con);
-  array_realloc(list_con.render_list, list_con.render_list->size);
+  {
+    TRACY_ZONE_START_N("render list");
+    list_con.render_list->size = 0;
+    scene_nodes_in_box(&scene_output->scene->tree.node, &list_con.box, construct_render_list_iterator, &list_con);
+    array_realloc(list_con.render_list, list_con.render_list->size);
+    TRACY_WHEN_CONNECTED(TRACY_ZONE_TEXT_f(
+        "%s %zu", output->name, list_con.render_list->size / sizeof(struct render_list_entry)
+    );)
+    TRACY_ZONE_END_QUIET;
+  }
 
   struct render_list_entry* list_data = list_con.render_list->data;
   int list_len = list_con.render_list->size / sizeof(*list_data);
   render_data.entries = list_data;
   render_data.entry_count = list_len;
-  TRACY_ZONE_TEXT_f("%s %d", output->name, list_len);
-  TRACY_ZONE_END;
 
   // Looked up only with scene effects, output slots, or a pending capture; otherwise
   // there is nothing to draw, save, or release.
@@ -5551,7 +5555,7 @@ bool wlr_scene_output_build_state(
     TRACY_ZONE_START_N("fx_render_pass_init_offscreen_buffers");
     TRACY_ZONE_TEXT(output->name, strlen(output->name));
     const bool initialized = fx_render_pass_init_offscreen_buffers(render_pass, output);
-    TRACY_ZONE_END;
+    TRACY_ZONE_END_QUIET;
     if (!initialized) {
       fx_pass->has_blur = false;
       should_compensate_blur = false;
