@@ -1860,7 +1860,7 @@ namespace umbriel {
     void readInput(Section& root, Config& loaded) {
       auto& in = loaded.input;
       root.sub("input", [&](Section& s) {
-        s.boolean("middle_click_paste", in.middleClickPaste);
+        s.boolean("middle_click_paste", in.middleClickPaste).boolean("client_window_drag", in.clientWindowDrag);
         if (const toml::node* node = s.take("window_drag_toggle")) {
           if (const auto value = readWindowDragToggle(*node)) {
             in.windowDragToggle = *value;

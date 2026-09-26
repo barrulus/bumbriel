@@ -833,6 +833,9 @@ namespace umbriel {
       // Advertise and accept the primary-selection clipboard used for
       // middle-click paste.
       bool middleClickPaste = true;
+      // Let a client start an interactive move from its own drag area
+      // (xdg_toplevel.move), such as a CSD title bar or Chromium tab strip.
+      bool clientWindowDrag = true;
       // Retarget an interactive window drag with the free mouse button: float
       // it, pin it, or leave the drag alone.
       WindowDragToggle windowDragToggle = WindowDragToggle::None;

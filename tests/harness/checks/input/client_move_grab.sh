@@ -3,7 +3,9 @@
 # An xdg_toplevel.move request must use the serial from a real pointer press.
 # Once accepted, the requester loses pointer focus and the compositor owns the
 # physical button until release. That release must finish the move and restore
-# ordinary input delivery to a different surface.
+# ordinary input delivery to a different surface. With
+# input.client_window_drag off, the request is ignored and the client keeps
+# its implicit grab through the release.
 set -euo pipefail
 
 readonly BTN_LEFT=272
@@ -163,4 +165,46 @@ if [[ $position != "$expected_position" ]]; then
   exit 1
 fi
 
-echo "client-requested move changed geometry and released input to a different window"
+readonly IGNORED=client-move-ignored
+readonly IGNORED_LOG="$UMBRIEL_RUNTIME_DIR/client-move-ignored.log"
+cat >> "$UMBRIEL_CONFIG" <<'EOF'
+
+[input]
+client_window_drag = false
+
+[[window_rule]]
+match.title = "^client-move-ignored$"
+default_floating = true
+default_floating_size_px = { width = 300, height = 200 }
+default_position = { x = 60, y = 480, anchor = "top_left" }
+EOF
+"$UMBRIEL" msg config-reload > /dev/null
+"$OBSERVER" "$IGNORED" move-on-press > "$IGNORED_LOG" 2>&1 &
+await_windows 3
+read -r ignored_x ignored_y ignored_w ignored_h < <(window_box "$IGNORED")
+ignored_center_x=$((ignored_x + ignored_w / 2))
+ignored_center_y=$((ignored_y + ignored_h / 2))
+"$POINTER" "$OUTPUT_W" "$OUTPUT_H" \
+  move "$ignored_center_x" "$ignored_center_y" pause 300 \
+  press "$BTN_LEFT" pause 300 \
+  move "$((ignored_center_x + MOVE_DX))" "$((ignored_center_y - MOVE_DY))" pause 100 release "$BTN_LEFT" \
+  > "$POINTER_LOG" 2>&1 || {
+  echo "pointer client failed: $(< "$POINTER_LOG")"
+  exit 1
+}
+for _ in $(seq 40); do
+  grep -q "pointer-button code=$BTN_LEFT state=released" "$IGNORED_LOG" && break
+  sleep 0.1
+done
+ignored_sequence=$(grep -E 'pointer-(enter|leave|button)|move-requested' "$IGNORED_LOG" | tr '\n' '|')
+if [[ $ignored_sequence != *"pointer-button code=$BTN_LEFT state=pressed|move-requested|pointer-button code=$BTN_LEFT state=released|"* ]]; then
+  echo "with client_window_drag off, the requester did not keep its grab through release: $ignored_sequence"
+  exit 1
+fi
+read -r after_x after_y _ _ < <(window_box "$IGNORED")
+if [[ "$after_x $after_y" != "$ignored_x $ignored_y" ]]; then
+  echo "with client_window_drag off, $IGNORED moved from $ignored_x,$ignored_y to $after_x,$after_y"
+  exit 1
+fi
+
+echo "client-requested move changed geometry, released input to a different window, and is ignored when disabled"

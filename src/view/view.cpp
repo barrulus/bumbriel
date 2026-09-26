@@ -3756,6 +3756,9 @@ namespace umbriel {
   }
 
   void View::handleRequestMove(void* data) {
+    if (!config().input.clientWindowDrag) {
+      return;
+    }
     auto* event = static_cast<wlr_xdg_toplevel_move_event*>(data);
     m_server->cursor()->beginClientMove(this, event->seat, event->serial);
   }
