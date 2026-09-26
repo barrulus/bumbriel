@@ -1286,7 +1286,8 @@ static bool test_capture_feedback(struct fixture *fixture) {
 			ok &= check(captured[0] > 250, "the capture role sees the plain client");
 			// Green is the previous blue: the capture's own (blue client), never the display's (green client).
 			ok &= check(captured[1] > 250, "the capture role reads only its own history");
-			ok &= check(captured[2] > 55 && captured[2] < 75 + 64 * frame, "the capture role accumulates on its own");
+			ok &= check(captured[2] > 52 + 64 * frame && captured[2] < 76 + 64 * frame,
+				"the capture role accumulates on its own");
 		}
 		// Display role: red grows by 0.25 per frame regardless of captures, and the window is green underneath (blue 0).
 		const int expected = 64 * (frame + 1);
@@ -1330,6 +1331,14 @@ static bool test_capture_policy_encoding(struct fixture *fixture) {
 	bool ok = check(program != NULL && transform != NULL && swapchain != NULL, "program, transform and swapchain");
 	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
 	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOW, program, &parameters);
+	// A second window swaps red and blue in place: its half red must come back as half blue, not decoded twice.
+	const float half_red[4] = { 0.5f, 0, 0, 1 };
+	struct wlr_scene_rect *swapped = wlr_scene_rect_create(&scene->tree, 3, 3, half_red);
+	wlr_scene_node_set_position(&swapped->node, 13, 13);
+	struct fx_effect_shader *swap = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
+		kSources[FX_EFFECT_WINDOW], "capture-policy-encoding-swap");
+	ok &= check(swap != NULL, "swap program");
+	wlr_scene_node_set_animation(&swapped->node, FX_SLOT_WINDOW, swap, &parameters);
 	// Mode 0 renders without a transform, 1 with one, 2 with one and the SDR view.
 	for (int mode = 0; ok && mode < 3; mode++) {
 		uint8_t backgrounds[2][4];
@@ -1353,12 +1362,19 @@ static bool test_capture_policy_encoding(struct fixture *fixture) {
 				ok &= check(fixture_read_pixel(fixture, state.buffer, 8, 8, captured), "import reads");
 				ok &= check(captured[2] > 250 && captured[1] < 5, "the capture sees the plain red window");
 			}
+			if (ok && frame == 0 && mode == 1) {
+				uint8_t display[4];
+				ok &= fixture_read_display_pixel(fixture, state.buffer, 14, 14, display);
+				ok &= check(display[0] > 122 && display[0] < 134 && display[2] < 5,
+					"an in-place swap under a colour transform keeps the encoding");
+			}
 			wlr_output_state_finish(&state);
 		}
 		ok &= check(abs(backgrounds[0][0] - backgrounds[1][0]) <= 2, "the capture is encoded like the usual view");
 	}
 	wlr_swapchain_destroy(swapchain);
 	wlr_color_transform_unref(transform);
+	fx_effect_shader_unref(swap);
 	fx_effect_shader_unref(program);
 	wlr_scene_node_destroy(&scene->tree.node);
 	return ok;

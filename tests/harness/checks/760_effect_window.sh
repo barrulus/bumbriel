@@ -86,22 +86,22 @@ EOF
 "$UMBRIEL" msg config-reload > /dev/null
 
 "$UMBRIEL" clock-freeze
-spawn window-rest
-# 50% red: over the blue backdrop the desktop composite is (0.5, 0, 0.5); swapped it stays (0.5, 0, 0.5) but the
-# window's own pixels are (0.5, 0, 0) -> swapped (0, 0, 0.5), so the two contracts differ in the red channel.
-# Inside the opening capture the program shades only window content: (0.5,0,0) -> swapped (0,0,0.5), then composited
-# over blue: red ~0, blue ~255.
+spawn window-rest 0x40400000
+# 25% red: over the blue backdrop the desktop composite is (0.25, 0, 0.75), swapped (0.75, 0, 0.25), while the
+# window's own pixels are (0.25, 0, 0) -> swapped (0, 0, 0.25), so the two contracts differ in the red channel.
+# Inside the opening capture the program shades only window content: (0.25,0,0) -> swapped (0,0,0.25), then
+# composited over blue: red ~0, blue ~255.
 "$UMBRIEL" clock-advance 500
 read -r r g b < <(centre)
 if (( r > 20 || b < 200 )); then
   echo "inside the opening capture the effect did not shade window content alone: $r $g $b"
   exit 1
 fi
-# After the capture ends the program reads the desktop through the window: (0.5,0,0.5) swapped stays purple.
+# After the capture ends the program reads the desktop through the window: (0.25,0,0.75) swapped is (0.75,0,0.25).
 "$UMBRIEL" clock-advance 3000
 "$UMBRIEL" settle > /dev/null
 read -r r g b < <(centre)
-if (( r < 100 || r > 160 || b < 100 || b > 160 )); then
+if (( r < 170 || r > 210 || b < 45 || b > 85 )); then
   echo "at rest the effect did not sample the desktop backdrop through the window: $r $g $b"
   exit 1
 fi

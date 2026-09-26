@@ -141,6 +141,10 @@ EOF
 "$UMBRIEL" msg config-reload > /dev/null
 spawn cap-snapshot
 "$UMBRIEL" settle > /dev/null
+if ! "$UMBRIEL" effect-frames --json | jq -e '.outputs[0].eligible > 0' > /dev/null; then
+  echo "the display did not keep the window effect eligible before the close while in_capture = false"
+  exit 1
+fi
 "$UMBRIEL" clock-freeze
 "$UMBRIEL" msg "window-close:$id" > /dev/null
 for _ in $(seq 100); do
