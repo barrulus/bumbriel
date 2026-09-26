@@ -644,7 +644,7 @@ void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output,
   // when an unfiltered composition actually runs, so an output without effects never gets the addon.
   const bool exclude_from_capture = output_effects == NULL || !output_effects->in_capture;
   const bool capture_pending = options->effect_capture_pending;
-  const bool unfiltered_pass = exclude_from_capture && capture_pending && render_data.persistent_visible;
+  const bool unfiltered_pass = exclude_from_capture && capture_pending && render_data.in_place_visible;
   if (output_effects == NULL && unfiltered_pass) {
     output_effects = scene_output_effects_get(scene_output, true);
   }
@@ -676,7 +676,7 @@ void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output,
     });
   }
 ```
-`persistent_visible` is true when any in-place slot draws on this output (a node under a persistent effect) — the unfiltered composition is only worth its cost then (screen/cursor join the condition in Stage 6). The whole-output damage is required for the second composition: when this branch runs, `scene_output_damage_whole(scene_output)` must have been called before the damage ring was read — compute `output_effects`, `exclude_from_capture`, `capture_pending`, and `unfiltered_pass` right after the render list is built (where `persistent_visible` is known) and call `scene_output_damage_whole(scene_output)` there when `unfiltered_pass` holds; the block above then reuses those locals. `wlr_scene_output_set_effect_capture_policy(output, false)` on an output that has the addon keeps it (the addon may carry screen/cursor state from Stage 6); only the `true` transition creates it.
+`in_place_visible` (computed in the same render-list walk as `persistent_visible`) is true when a visible node carries a window or overlay slot on this output; `persistent_visible` also counts border-only nodes, whose effects stay in captures, so it must not gate the unfiltered composition.
 
 `output_effects_release_capture(scene_output)`: walk `fx_get_renderer(output->renderer)->buffers` and for each `fx_framebuffer` with `effect_capture_owner == scene_output` drop its `effect_capture_buffer` (same as the fork's `output_postprocess_release_captures`). Call it also from `scene_output_effects_destroy`.
 

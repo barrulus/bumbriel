@@ -251,8 +251,8 @@ Output effects join Stage 1's sampling-aware invalidation. A screen program may 
 The function's actual Stage 1 signature is `expand_damage_to_effects(struct wlr_scene_output* scene_output, struct scene_effects* effects, const struct render_data* data, pixman_region32_t* damage, bool commit)` with `effects` possibly NULL. Replace its early return with `if ((effects == NULL || effects->persistent == 0) && output_effects == NULL) return false;` (look `output_effects` up once at the top of the function) and guard the animation loop with `if (effects != NULL)` so a NULL `effects` never reaches `wl_list_for_each(..., &effects->animations, ...)`. Factor the cursor square computation out of `render_output_effects` into `output_effects_cursor_box(effects, data, box)` (logical box, then `transform_output_box`) so both callers share it.
 
 `build_state`:
-- `persistent_visible` becomes `render_data.persistent_visible = <node scan> || output_effects_active(output_effects);` (move the `output_effects` lookup above the scan).
-- The unfiltered-composition condition already uses `persistent_visible`.
+- `persistent_visible` and `in_place_visible` both OR in `output_effects_active(output_effects)` (move the `output_effects` lookup above the scan): screen and cursor slots veto scanout and, like window/overlay slots, trigger the unfiltered composition.
+- The unfiltered-composition condition uses `in_place_visible` (Stage 5), which now includes the output slots.
 - After the dmabuf-feedback loop that follows `render_animated_range(...)` and before the highlight loop: `render_output_effects(output_effects, &render_data);`. The software cursor call stays where it is (after), so both effects sit under it.
 - Scanout: `persistent_visible` already vetoes.
 
