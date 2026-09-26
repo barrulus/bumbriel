@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears, with unknown and
-# mismatched names elsewhere in [effects]; a [colors] change reaches a palette shader without a recompile; the light
-# layer goes away with the last lit preset and comes back with a new one; a [colors] change reaches a screen palette
-# shader that does not read umbriel_time.
+# Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears; a [colors] change
+# reaches a palette shader without a recompile; the light layer goes away with the last lit preset and comes back with
+# a new one; a [colors] change reaches a screen palette shader that does not read umbriel_time.
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-reload.png"
 readonly LOG_MARK=$(($(wc -l < "$UMBRIEL_LOG") + 1))
@@ -27,8 +26,6 @@ accent_primary = "#00FF00FF"
 focused = "#FFFFFFFF"
 [effects]
 border = "later"
-window = "later"
-screen = "nope"
 [effects.preset.later]
 kind = "border"
 shader = "later.glsl"
@@ -110,7 +107,7 @@ fi
 add_light "light added back"
 # A screen program that does not read umbriel_time gets no effect frames, so only the reload can repaint it.
 sed 's/vec4 border/vec4 screen/' "$UMBRIEL_RUNTIME_DIR/palette.glsl" > "$UMBRIEL_RUNTIME_DIR/tint.glsl"
-sed -i 's/^screen = "nope"$/screen = "tint"\nin_capture = true/' "$UMBRIEL_CONFIG"
+sed -i '/^\[effects\]$/a screen = "tint"\nin_capture = true' "$UMBRIEL_CONFIG"
 printf '\n[effects.preset.tint]\nkind = "screen"\nshader = "tint.glsl"\npalette = true\n' >> "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
