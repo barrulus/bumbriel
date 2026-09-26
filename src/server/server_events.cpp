@@ -2740,13 +2740,29 @@ namespace umbriel {
     wlr_output_manager_v1_set_configuration(m_outputManager, cfg);
   }
 
-  void Server::applyOutputManagerConfig(wlr_output_configuration_v1* config, bool testOnly) {
+  bool Server::commitOutputEnabled(Output& target, bool enabled) {
+    wlr_output_configuration_v1* config = wlr_output_configuration_v1_create();
+    for (const auto& output : m_outputs) {
+      wlr_output_configuration_head_v1* head = wlr_output_configuration_head_v1_create(config, output->wlr());
+      head->state.enabled = output.get() == &target ? enabled : output->desktopEnabled();
+      const wlr_box box = output->layoutBox();
+      head->state.x = box.x;
+      head->state.y = box.y;
+    }
+    return applyOutputManagerConfig(config, false);
+  }
+
+  bool Server::setOutputEnabled(Output& output, bool enabled) {
+    return output.desktopEnabled() == enabled || commitOutputEnabled(output, enabled);
+  }
+
+  bool Server::applyOutputManagerConfig(wlr_output_configuration_v1* config, bool testOnly) {
     size_t statesLen = 0;
     wlr_backend_output_state* states = wlr_output_configuration_v1_build_state(config, &statesLen);
     if (states == nullptr) {
       wlr_output_configuration_v1_send_failed(config);
       wlr_output_configuration_v1_destroy(config);
-      return;
+      return false;
     }
 
     struct RequestedHead {
@@ -3051,6 +3067,7 @@ namespace umbriel {
     if (commitAttempted) {
       updateOutputManagerConfig();
     }
+    return ok;
   }
 
   void Server::onToplevelCaptureRequest(wl_listener* listener, void* data) {

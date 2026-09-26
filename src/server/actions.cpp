@@ -531,6 +531,51 @@ namespace umbriel {
       return true;
     }
 
+    enum class OutputEnableAction {
+      Disable,
+      Enable,
+      Toggle,
+    };
+
+    template <OutputEnableAction Action>
+    bool actionOutputEnablement(Server& server, const Keybind& bind, std::string* error) {
+      const auto* arg = payloadIf<OutputArg>(bind);
+      if (arg == nullptr || arg->output.empty()) {
+        return reject(error, "output name is required");
+      }
+
+      Output* target = nullptr;
+      OutputNameMatch targetMatch = OutputNameMatch::None;
+      for (const auto& output : server.outputs()) {
+        const OutputNameMatch match = outputNameMatch(output->identity(), arg->output);
+        if (match == OutputNameMatch::None) {
+          continue;
+        }
+        if (match == OutputNameMatch::Connector) {
+          target = output.get();
+          targetMatch = match;
+          break;
+        }
+        if (target != nullptr && targetMatch == OutputNameMatch::Descriptor) {
+          return reject(error, "output descriptor is ambiguous: " + arg->output);
+        }
+        target = output.get();
+        targetMatch = match;
+      }
+      if (target == nullptr) {
+        return reject(error, "unknown output: " + arg->output);
+      }
+
+      bool enabled = Action == OutputEnableAction::Enable;
+      if constexpr (Action == OutputEnableAction::Toggle) {
+        enabled = !target->desktopEnabled();
+      }
+      if (!server.setOutputEnabled(*target, enabled)) {
+        return reject(error, "failed to change logical output state: " + arg->output);
+      }
+      return true;
+    }
+
     bool actionKeyboardLayoutNext(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
       return server.cycleKeyboardLayout();
     }
@@ -1841,6 +1886,9 @@ namespace umbriel {
         &actionWorkspaceSetLayout,
         &actionDpms<false>,
         &actionDpms<true>,
+        &actionOutputEnablement<OutputEnableAction::Disable>,
+        &actionOutputEnablement<OutputEnableAction::Enable>,
+        &actionOutputEnablement<OutputEnableAction::Toggle>,
         &actionWorkspaceMove<1>,
         &actionWorkspaceMove<-1>,
         &actionColumnCenter,
