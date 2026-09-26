@@ -95,7 +95,7 @@ namespace umbriel {
 
   bool Output::configuredEnabled() const {
     const OutputRule* rule = findOutputRule(config(), identity());
-    return rule == nullptr || rule->enabled;
+    return rule != nullptr ? rule->enabled : outputCanAutoEnable(m_output);
   }
 
   wlr_box Output::layoutBox() const {
@@ -431,7 +431,15 @@ namespace umbriel {
           m_output->height, m_output->refresh, m_output->scale, static_cast<int>(m_output->transform)
       );
     } else if (!desktopEnabled()) {
-      kLog.info("output '{}': disabled by {}", m_output->name, configuredEnabled() ? "output management" : "config");
+      const OutputRule* rule = findOutputRule(config(), identity());
+      if (rule == nullptr && !outputCanAutoEnable(m_output)) {
+        kLog.info(
+            "output '{}': not enabled automatically because it has no preferred mode or display identity",
+            m_output->name
+        );
+      } else {
+        kLog.info("output '{}': disabled by {}", m_output->name, configuredEnabled() ? "output management" : "config");
+      }
     } else {
       kLog.info("output '{}': powered off", m_output->name);
     }
