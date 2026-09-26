@@ -161,36 +161,49 @@ namespace {
       .global_remove = registryGlobalRemove,
   };
 
-  // Blocks until `done` reports true, the display errors, or the wall-clock deadline passes.
-  bool pumpUntil(wl_display* display, const std::chrono::steady_clock::time_point& deadline, auto done) {
+  // Blocks until `done` reports true, prints which `stage` failed and returns false on a flush/poll/dispatch
+  // error or once `deadline` passes, and never falls back to a blocking roundtrip.
+  bool pumpUntil(
+      wl_display* display, const std::chrono::steady_clock::time_point& deadline, std::string_view stage, auto done
+  ) {
     const int displayFd = wl_display_get_fd(display);
     while (!done()) {
       if (wl_display_flush(display) < 0) {
+        std::println(stderr, "toplevel-capture-client: flush failed while {}", stage);
         return false;
       }
       const auto remaining =
           std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
       if (remaining.count() <= 0) {
+        std::println(stderr, "toplevel-capture-client: timed out {}", stage);
         return false;
       }
       pollfd fds[1] = {{.fd = displayFd, .events = POLLIN, .revents = 0}};
       const int rc = poll(fds, 1, static_cast<int>(remaining.count()));
       if (rc < 0) {
+        std::println(stderr, "toplevel-capture-client: poll failed while {}", stage);
         return false;
       }
       if (rc == 0) {
+        std::println(stderr, "toplevel-capture-client: timed out {}", stage);
         return false;
       }
       if ((fds[0].revents & POLLIN) != 0 && wl_display_dispatch(display) < 0) {
+        std::println(stderr, "toplevel-capture-client: dispatch failed while {}", stage);
         return false;
       }
     }
     return true;
   }
 
-  // Allocates an ARGB8888/XRGB8888 wl_shm buffer of the session's advertised size.
+  // Allocates a wl_shm buffer of the session's advertised size, in its advertised format, which must be
+  // ARGB8888 or XRGB8888 since the centre-pixel sampling below assumes that byte layout.
   Buffer createBuffer(State& state) {
     Buffer buffer{.width = static_cast<int>(state.bufferWidth), .height = static_cast<int>(state.bufferHeight)};
+    if (state.shmFormat != WL_SHM_FORMAT_ARGB8888 && state.shmFormat != WL_SHM_FORMAT_XRGB8888) {
+      std::println(stderr, "toplevel-capture-client: session offered unsupported shm format {}", state.shmFormat);
+      return buffer;
+    }
     const int stride = buffer.width * 4;
     buffer.size = static_cast<size_t>(stride) * static_cast<size_t>(buffer.height);
     const int fd = memfd_create("umbriel-toplevel-capture-client", MFD_CLOEXEC);
@@ -219,7 +232,6 @@ int main(int argc, char** argv) {
     return 1;
   }
   const std::string_view wantedTitle = argv[1];
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
   wl_display* display = wl_display_connect(nullptr);
   if (display == nullptr) {
@@ -242,20 +254,21 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // The first roundtrip delivers the toplevel events; further ones deliver each handle's title/done.
-  for (int roundtrip = 0; roundtrip < 4; ++roundtrip) {
-    if (wl_display_roundtrip(display) < 0) {
-      std::println(stderr, "toplevel-capture-client: toplevel enumeration failed");
-      return 1;
-    }
-    if (std::ranges::any_of(state.toplevels, [](const auto& toplevel) { return toplevel->done; })) {
-      break;
-    }
+  // Finds the toplevel whose title matches and whose properties are fully delivered (its `done` event seen), never
+  // a handle still in flight. A fresh 5 s deadline for enumeration alone, so a slow compositor cannot eat into the
+  // capture budget below.
+  auto findTarget = [&] {
+    return std::ranges::find_if(state.toplevels, [wantedTitle](const auto& toplevel) {
+      return !toplevel->closed && toplevel->done && toplevel->title == wantedTitle;
+    });
+  };
+  const auto enumerateDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  if (!pumpUntil(display, enumerateDeadline, "enumerating toplevels", [&] {
+        return findTarget() != state.toplevels.end() || state.listFinished;
+      })) {
+    return 1;
   }
-
-  const auto target = std::ranges::find_if(state.toplevels, [wantedTitle](const auto& toplevel) {
-    return !toplevel->closed && toplevel->done && toplevel->title == wantedTitle;
-  });
+  const auto target = findTarget();
   if (target == state.toplevels.end()) {
     std::println(stderr, "toplevel-capture-client: no toplevel titled '{}'", wantedTitle);
     return 1;
@@ -268,8 +281,12 @@ int main(int argc, char** argv) {
       ext_image_copy_capture_manager_v1_create_session(state.copyManager, source, 0);
   ext_image_copy_capture_session_v1_add_listener(session, &kSessionListener, &state);
 
-  if (!pumpUntil(display, deadline, [&] { return state.constraintsDone || state.sessionStopped; })) {
-    std::println(stderr, "toplevel-capture-client: timed out waiting for buffer constraints");
+  // A fresh 5 s deadline for the whole capture (buffer negotiation through a ready or failed frame), started only
+  // once the toplevel is found, so enumeration time never shrinks it.
+  const auto captureDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  if (!pumpUntil(display, captureDeadline, "waiting for buffer constraints", [&] {
+        return state.constraintsDone || state.sessionStopped;
+      })) {
     return 1;
   }
   if (state.sessionStopped || state.bufferWidth == 0 || state.bufferHeight == 0 || !state.haveShmFormat) {
@@ -289,8 +306,9 @@ int main(int argc, char** argv) {
   ext_image_copy_capture_frame_v1_damage_buffer(frame, 0, 0, INT32_MAX, INT32_MAX);
   ext_image_copy_capture_frame_v1_capture(frame);
 
-  if (!pumpUntil(display, deadline, [&] { return state.ready || state.failed; })) {
-    std::println(stderr, "toplevel-capture-client: timed out waiting for the captured frame");
+  if (!pumpUntil(display, captureDeadline, "waiting for the captured frame", [&] {
+        return state.ready || state.failed;
+      })) {
     return 1;
   }
   if (state.failed) {
