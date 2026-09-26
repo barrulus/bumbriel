@@ -1053,20 +1053,29 @@ namespace umbriel {
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
     const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
-    const bool effectFrame = m_effectFrameDue;
+    // A frame is an effect frame when one was asked for, or when an instance here is eligible and the max_fps interval
+    // has elapsed (a delay of 1 ms is the helper's "due now"), whichever timeline scheduled the frame. The output's own
+    // timer supplies the frames nothing else asks for.
+    const bool effectFrame = m_effectFrameDue
+        || (!m_server->sessionLocked()
+            && effectEligible() > 0
+            && effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec) <= 1);
     m_effectFrameDue = false;
     if (effectFrame) {
       m_lastEffectFrameMsec = nowMsec;
+      disarmEffectFrame();
     }
-    // Effect time moves only on due effect frames, which caps them at max_fps. It follows the clock while nothing here
+    // Effect time moves only on effect frames, which caps them at max_fps. It follows the clock while nothing here
     // needs frames of its own, so a new instance starts from now, and while the clock is frozen, so the first frozen
     // frame draws the frozen instant.
-    bool stampEffectTime = effectFrame || (effectEligible() == 0 && !config().effects.presets.empty());
+    const EffectRegistry& effects = m_server->effects();
+    bool stampEffectTime =
+        effectFrame || (effectEligible() == 0 && (effects.persistentReferenced() || effects.active()));
 #ifdef UMBRIEL_TEST_IPC
     stampEffectTime = stampEffectTime || m_server->animationClockFrozen();
 #endif
     if (stampEffectTime) {
-      m_effectSeconds = m_server->effects().clockSeconds();
+      m_effectSeconds = effects.clockSeconds();
     }
     m_server->tickAnimations(m_server->animationClockMsec());
 

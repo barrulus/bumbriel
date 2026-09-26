@@ -65,6 +65,7 @@ namespace umbriel {
   void EffectRegistry::clear() {
     m_programs.clear();
     m_builtinFade.reset();
+    m_persistentReferenced = false;
     m_renderer = nullptr;
   }
 
@@ -141,6 +142,9 @@ namespace umbriel {
         compile(*preset);
       }
     }
+    m_persistentReferenced = std::ranges::any_of(m_programs, [](const auto& item) {
+      return item.second.kind != EffectKind::Animation && item.second.shader != nullptr;
+    });
     const bool fadeNeeded = builtinFadeApplies(settings.animation, AnimationEvent::WindowsIn)
         || builtinFadeApplies(settings.animation, AnimationEvent::WindowsOut);
     if (fadeNeeded && m_builtinFade == nullptr) {

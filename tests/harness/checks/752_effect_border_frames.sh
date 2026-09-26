@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Effect-only frames follow the animation clock, not real time: a frozen clock renders the same instant across
 # frames and through a close snapshot, a session lock suspends the effect ledger despite the lock client's own
-# redraws, and effects.max_fps caps the render rate to its own due-frame interval.
+# redraws, effects.max_fps caps the render rate to its own due-frame interval, and effect time keeps advancing while
+# another animation drives the output's frames.
 set -euo pipefail
 
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-border-frames.png"
@@ -254,4 +255,72 @@ if [[ "$ring_r7 $ring_g7 $ring_b7" == "$ring_r9 $ring_g9 $ring_b9" ]]; then
   echo "max_fps = 1 never let the ring advance: stayed at $ring_r7 $ring_g7 $ring_b7"
   exit 1
 fi
-echo "frozen-clock determinism, close-snapshot freezing, lock suspension, and max_fps capping verified"
+
+# 5. Effect time keeps advancing while another animation drives the output's frames: a neighbour's 3s real-time
+# close fade runs while two captures 600ms apart must show different time-keyed ring pixels.
+cat "$BASE" > "$UMBRIEL_CONFIG"
+cat >> "$UMBRIEL_CONFIG" <<'EOF'
+
+[animation]
+enabled = true
+[animation.windows_in]
+enabled = false
+[animation.windows_move]
+enabled = false
+[animation.windows_out]
+enabled = true
+style = "fade"
+duration_ms = 3000
+curve = "linear"
+[appearance]
+border_width = 4
+outer_border_width = 0
+corner_radius = 0
+[appearance.shadow]
+enabled = false
+[colors]
+backdrop = "#000000FF"
+[effects]
+border = "clock"
+[effects.preset.clock]
+kind = "border"
+shader = "clock.glsl"
+padding = 20
+[[window_rule]]
+match.title = "^frame-one$"
+default_floating = true
+default_position = { x = 100, y = 100, anchor = "top_left" }
+[[window_rule]]
+match.title = "^frame-two$"
+default_floating = true
+default_position = { x = 600, y = 100, anchor = "top_left" }
+EOF
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle > /dev/null
+one_id=$id
+open_window frame-two 0xFF0000FF
+two_id=$id
+two_x=$((x + w / 2))
+two_y=$((y + h / 2))
+"$UMBRIEL" msg "window-focus:$one_id" > /dev/null
+"$UMBRIEL" settle > /dev/null
+"$UMBRIEL" msg "window-close:$two_id" > /dev/null
+for _ in $(seq 100); do
+  [[ -z $("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "frame-two")') ]] && break
+  sleep 0.02
+done
+grim "$IMAGE"
+read -r ring_r10 ring_g10 ring_b10 < <(ring_pixel "$ring_x" "$ring_y")
+sleep 0.6 # real time: the close fade runs on the real clock, and effect time must move with it
+grim "$IMAGE"
+read -r ring_r11 ring_g11 ring_b11 < <(ring_pixel "$ring_x" "$ring_y")
+read -r _ _ fading_b < <(ring_pixel "$two_x" "$two_y")
+if (( fading_b < 20 )); then
+  echo "the neighbour's close fade ended before the second capture, so the step proves nothing: blue=$fading_b"
+  exit 1
+fi
+if [[ "$ring_r10 $ring_g10 $ring_b10" == "$ring_r11 $ring_g11 $ring_b11" ]]; then
+  echo "effect time froze while another animation ran on the output: stayed at $ring_r10 $ring_g10 $ring_b10"
+  exit 1
+fi
+echo "frozen-clock determinism, close-snapshot freezing, lock suspension, max_fps capping, and effect time under animations verified"

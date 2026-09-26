@@ -66,10 +66,10 @@ namespace umbriel {
     void markDirty(Dirty what);
     // Asks for a frame on behalf of persistent effects.
     void scheduleEffectFrame();
-    // Frames drawn because a persistent effect asked for them.
+    // Drawn frames that advanced persistent effects' time.
     [[nodiscard]] uint64_t effectFrames() const { return m_effectFrames; }
-    // Seconds persistent effects on this output draw at. Advances on their own frames, follows the clock while
-    // nothing here needs them, and holds the frozen instant while the clock is frozen.
+    // Seconds persistent effects on this output draw at. Advances on effect frames, follows the clock while nothing
+    // here needs them, and holds the frozen instant while the clock is frozen.
     [[nodiscard]] float effectSeconds() const { return m_effectSeconds; }
     // Effect instances on this output that need frames of their own.
     [[nodiscard]] unsigned effectEligible() const;

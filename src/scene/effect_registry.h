@@ -54,6 +54,8 @@ namespace umbriel {
     ) const;
 
     [[nodiscard]] bool active() const { return m_ledger.active() > 0; }
+    // True when a referenced preset of a persistent kind compiled, so views may attach instances.
+    [[nodiscard]] bool persistentReferenced() const { return m_persistentReferenced; }
     [[nodiscard]] EffectLedger& ledger() { return m_ledger; }
     void setSuspended(bool suspended) { m_ledger.setSuspended(suspended); }
     // Records an instance; schedules its output's effect frame when that output gains its first eligible instance.
@@ -76,6 +78,7 @@ namespace umbriel {
     wlr_renderer* m_renderer = nullptr;
     std::map<std::string, Entry, std::less<>> m_programs;
     std::shared_ptr<fx_effect_shader> m_builtinFade;
+    bool m_persistentReferenced = false;
     EffectLedger m_ledger;
     mutable uint64_t m_clockEpochMsec = 0;
     mutable bool m_clockEpochSet = false;

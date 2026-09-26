@@ -499,6 +499,12 @@ namespace umbriel {
     if (effects.animation || effects.effects) {
       prepareAnimationShaders(m_renderer);
     }
+    if (effects.effects) {
+      // The next frame re-arms the effect timer from the new max_fps.
+      for (const auto& output : m_outputs) {
+        output->scheduleEffectFrame();
+      }
+    }
 
     if (effects.sceneBlur) {
       const Config::Appearance::Blur& blur = config().appearance.blur;
