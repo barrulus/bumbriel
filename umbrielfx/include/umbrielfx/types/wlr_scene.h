@@ -373,6 +373,8 @@ struct wlr_scene_output {
 		float sdr_white_level;
 		bool color_transform_dirty;
 		bool direct_scanout_enabled;
+		// A screen or cursor effect is set on this output.
+		bool output_effects_configured;
 	} WLR_PRIVATE;
 };
 

@@ -95,6 +95,7 @@ struct fx_effect_composite {
   bool replace;                              // write without blending; set by the in-place path
   unsigned role;                             // selects the history: 0 display, 1 unfiltered capture
   const float* corner_radius;                // tl, tr, br, bl logical px for umbriel_corner_radius; may be NULL
+  const float* pointer;                      // umbriel_pointer, uv in the drawn box; NULL unless a cursor kind
 };
 
 // Pops the capture begun by fx_render_pass_begin_animation and draws it

@@ -275,6 +275,7 @@ if build_tests
     'in-place-feedback',
     'capture-composition',
     'in-place-shape',
+    'output-effects',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

@@ -3934,6 +3934,15 @@ struct scene_output_effects {
   struct wl_listener destroy;
   bool in_capture;
   bool capture_was_pending;
+  struct fx_effect_shader* screen;
+  struct fx_animation_parameters screen_parameters;
+  struct fx_animation_history screen_history;
+  struct fx_effect_shader* cursor;
+  struct fx_animation_parameters cursor_parameters;
+  struct fx_animation_history cursor_history;
+  int cursor_radius;
+  double pointer_x, pointer_y; // layout coordinates
+  bool pointer_visible;        // shown and inside the output
 };
 
 // Drops the effect captures this scene output saved into its swapchain buffers.
@@ -3961,6 +3970,11 @@ static void output_effects_release_capture(struct wlr_scene_output* scene_output
 static void scene_output_effects_destroy(struct wlr_addon* addon) {
   struct scene_output_effects* effects = wl_container_of(addon, effects, addon);
   output_effects_release_capture(effects->output);
+  effects->output->output_effects_configured = false;
+  fx_effect_shader_unref(effects->screen);
+  fx_effect_shader_unref(effects->cursor);
+  fx_animation_history_finish(&effects->screen_history);
+  fx_animation_history_finish(&effects->cursor_history);
   wl_list_remove(&effects->destroy.link);
   wlr_addon_finish(addon);
   free(effects);
@@ -3990,6 +4004,8 @@ static struct scene_output_effects* scene_output_effects_get(struct wlr_scene_ou
     return NULL;
   }
   effects->output = output;
+  fx_animation_history_init(&effects->screen_history);
+  fx_animation_history_init(&effects->cursor_history);
   wlr_addon_init(&effects->addon, &output->output->addons, output, &scene_output_effects_impl);
   effects->destroy.notify = scene_output_effects_handle_destroy;
   wl_signal_add(&output->events.destroy, &effects->destroy);
@@ -4020,6 +4036,171 @@ void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output,
   scene_reset_capture_histories(output->scene, output->output);
   output_effects_release_capture(output);
   scene_output_damage_whole(output);
+}
+
+// The cursor effect's square in output-local logical coordinates on an output
+// `width` x `height` logical px.
+static struct wlr_box output_effects_cursor_box(const struct scene_output_effects* effects, int width, int height) {
+  const struct wlr_scene_output* output = effects->output;
+  if (effects->cursor_radius <= 0) {
+    return (struct wlr_box){.width = width, .height = height};
+  }
+  const int r = effects->cursor_radius;
+  return (struct wlr_box){
+      .x = (int)floor(effects->pointer_x - output->x) - r,
+      .y = (int)floor(effects->pointer_y - output->y) - r,
+      .width = 2 * r + 1,
+      .height = 2 * r + 1,
+  };
+}
+
+static void output_effects_damage_cursor(struct scene_output_effects* effects) {
+  if (effects->cursor == NULL || !effects->pointer_visible) {
+    return;
+  }
+  struct wlr_scene_output* output = effects->output;
+  int width, height;
+  wlr_output_effective_resolution(output->output, &width, &height);
+  const struct wlr_box box = output_effects_cursor_box(effects, width, height);
+  pixman_region32_t damage;
+  pixman_region32_init_rect(&damage, box.x, box.y, box.width, box.height);
+  scale_region(&damage, output->output->scale, true);
+  output_to_buffer_coords(&damage, output->output);
+  scene_output_damage(output, &damage);
+  pixman_region32_fini(&damage);
+}
+
+static void output_effects_update_configured(struct scene_output_effects* effects) {
+  effects->output->output_effects_configured = effects->screen != NULL || effects->cursor != NULL;
+}
+
+void wlr_scene_output_set_screen_effect(
+    struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
+) {
+  struct scene_output_effects* effects = scene_output_effects_get(output, shader != NULL);
+  if (effects == NULL) {
+    return;
+  }
+  if (effects->screen == shader && (shader == NULL || parameters_equal(parameters, &effects->screen_parameters))) {
+    return;
+  }
+  if (effects->screen != shader) {
+    fx_animation_history_reset(&effects->screen_history);
+  }
+  fx_effect_shader_unref(effects->screen);
+  effects->screen = fx_effect_shader_ref(shader);
+  if (parameters != NULL) {
+    effects->screen_parameters = *parameters;
+  }
+  output_effects_update_configured(effects);
+  scene_output_damage_whole(output);
+}
+
+void wlr_scene_output_set_cursor_effect(
+    struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters,
+    int radius
+) {
+  struct scene_output_effects* effects = scene_output_effects_get(output, shader != NULL);
+  if (effects == NULL) {
+    return;
+  }
+  if (effects->cursor == shader
+      && effects->cursor_radius == radius
+      && (shader == NULL || parameters_equal(parameters, &effects->cursor_parameters))) {
+    return;
+  }
+  output_effects_damage_cursor(effects);
+  if (effects->cursor != shader) {
+    fx_animation_history_reset(&effects->cursor_history);
+  }
+  fx_effect_shader_unref(effects->cursor);
+  effects->cursor = fx_effect_shader_ref(shader);
+  effects->cursor_radius = radius;
+  if (parameters != NULL) {
+    effects->cursor_parameters = *parameters;
+  }
+  output_effects_update_configured(effects);
+  output_effects_damage_cursor(effects);
+}
+
+void wlr_scene_output_set_effect_pointer(struct wlr_scene_output* output, double lx, double ly, bool visible) {
+  if (!output->output_effects_configured) {
+    return;
+  }
+  struct scene_output_effects* effects = scene_output_effects_get(output, false);
+  if (effects == NULL || effects->cursor == NULL) {
+    return;
+  }
+  int width, height;
+  wlr_output_effective_resolution(output->output, &width, &height);
+  const bool inside = lx >= output->x && ly >= output->y && lx < output->x + width && ly < output->y + height;
+  const bool shown = visible && inside;
+  if (effects->pointer_visible == shown && effects->pointer_x == lx && effects->pointer_y == ly) {
+    return;
+  }
+  output_effects_damage_cursor(effects);
+  if (effects->pointer_visible && !shown) {
+    fx_animation_history_reset(&effects->cursor_history);
+  }
+  effects->pointer_x = lx;
+  effects->pointer_y = ly;
+  effects->pointer_visible = shown;
+  output_effects_damage_cursor(effects);
+}
+
+static bool output_effects_active(const struct scene_output_effects* effects) {
+  return effects != NULL && (effects->screen != NULL || (effects->cursor != NULL && effects->pointer_visible));
+}
+
+// Runs one output slot in place over `logical_box` of what the target holds.
+// Nothing runs when the damage misses the box, so feedback history carries over.
+static void render_output_effect(
+    struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters,
+    struct fx_animation_history* history, const struct wlr_box* logical_box, const float* pointer,
+    const struct render_data* data
+) {
+  struct fx_gles_render_pass* pass = fx_get_render_pass(data->render_pass);
+  if (shader == NULL || shader->renderer != pass->buffer->renderer) {
+    return;
+  }
+  struct wlr_box box = *logical_box;
+  transform_output_box(&box, data);
+  if (!region_touches_box(&data->damage, &box)) {
+    return;
+  }
+  const struct fx_effect_composite composite = {
+      .shader = shader,
+      .parameters = parameters,
+      .box = box,
+      .logical_box = *logical_box,
+      .transform = data->transform,
+      .capture_clip = &data->damage,
+      .output_clip = &data->damage,
+      .history = history,
+      .output = data->output->output,
+      .update_history = true,
+      .role = 0,
+      .pointer = pointer,
+  };
+  fx_render_pass_effect_in_place(pass, &composite);
+}
+
+// The screen slot, then the cursor slot over its result.
+static void render_output_effects(struct scene_output_effects* effects, const struct render_data* data) {
+  if (effects == NULL || data->effect_capture) {
+    return;
+  }
+  const struct wlr_box whole = {.width = data->logical.width, .height = data->logical.height};
+  render_output_effect(effects->screen, &effects->screen_parameters, &effects->screen_history, &whole, NULL, data);
+  if (effects->cursor == NULL || !effects->pointer_visible) {
+    return;
+  }
+  const struct wlr_box box = output_effects_cursor_box(effects, data->logical.width, data->logical.height);
+  const float pointer[2] = {
+      box.width > 0 ? (float)((effects->pointer_x - data->logical.x - box.x) / box.width) : 0,
+      box.height > 0 ? (float)((effects->pointer_y - data->logical.y - box.y) / box.height) : 0,
+  };
+  render_output_effect(effects->cursor, &effects->cursor_parameters, &effects->cursor_history, &box, pointer, data);
 }
 
 void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_output) {
@@ -4802,6 +4983,21 @@ static void scene_output_damage_box_quiet(struct wlr_scene_output* scene_output,
   pixman_region32_fini(&damage);
 }
 
+// Transforms an output-local logical box to buffer coordinates, clipped to the
+// buffer so commit and render damage stay inside it. False when nothing is left.
+static bool effect_buffer_box(struct wlr_box* box, const struct render_data* data) {
+  if (box->width <= 0 || box->height <= 0) {
+    return false;
+  }
+  transform_output_box(box, data);
+  struct wlr_box buffer_box = {.width = data->trans_width, .height = data->trans_height};
+  if (data->transform & WL_OUTPUT_TRANSFORM_90) {
+    buffer_box.width = data->trans_height;
+    buffer_box.height = data->trans_width;
+  }
+  return wlr_box_intersection(box, box, &buffer_box);
+}
+
 // The drawn box of a persistent effect, in buffer coordinates: node bounds plus expand.
 static bool
 persistent_effect_box(struct scene_animation* animation, const struct render_data* data, struct wlr_box* box) {
@@ -4832,17 +5028,7 @@ persistent_effect_box(struct scene_animation* animation, const struct render_dat
       .height = extents->y2 - extents->y1,
   };
   pixman_region32_fini(&bounds);
-  if (box->width <= 0 || box->height <= 0) {
-    return false;
-  }
-  transform_output_box(box, data);
-  // Clipped to the buffer so commit and render damage stay inside it.
-  struct wlr_box buffer_box = {.width = data->trans_width, .height = data->trans_height};
-  if (data->transform & WL_OUTPUT_TRANSFORM_90) {
-    buffer_box.width = data->trans_height;
-    buffer_box.height = data->trans_width;
-  }
-  return wlr_box_intersection(box, box, &buffer_box);
+  return effect_buffer_box(box, data);
 }
 
 // Adds `box` to `damage` when the region touches it without covering it.
@@ -4861,28 +5047,47 @@ static bool damage_grow_to_box(
   return true;
 }
 
-// Grows `damage` to cover every persistent effect box it touches, and
-// repeats until nothing grows: covering one box can reach another. A program
-// may read any texel of its box, and its input only holds this frame's pixels
-// where they were damaged. With `commit` the growth also reaches the damage
-// ring and the commit damage.
+// Grows `damage` to cover every persistent effect box and output effect box
+// it touches, and repeats until nothing grows: covering one box can reach
+// another. A program may read any texel of its box, and its input only holds
+// this frame's pixels where they were damaged. With `commit` the growth also
+// reaches the damage ring and the commit damage.
 static bool expand_damage_to_effects(
-    struct wlr_scene_output* scene_output, struct scene_effects* effects, const struct render_data* data,
-    pixman_region32_t* damage, bool commit
+    struct wlr_scene_output* scene_output, struct scene_effects* effects,
+    const struct scene_output_effects* output_effects, const struct render_data* data, pixman_region32_t* damage,
+    bool commit
 ) {
-  if (effects == NULL || effects->persistent == 0) {
+  const bool persistent = effects != NULL && effects->persistent > 0;
+  if (!persistent && !output_effects_active(output_effects)) {
     return false;
+  }
+  struct wlr_box screen_box = {0}, cursor_box = {0};
+  if (output_effects != NULL && output_effects->screen != NULL) {
+    screen_box = (struct wlr_box){.width = data->logical.width, .height = data->logical.height};
+    effect_buffer_box(&screen_box, data);
+  }
+  if (output_effects != NULL && output_effects->cursor != NULL && output_effects->pointer_visible) {
+    cursor_box = output_effects_cursor_box(output_effects, data->logical.width, data->logical.height);
+    effect_buffer_box(&cursor_box, data);
   }
   bool grew_any = false;
   bool grew;
   do {
     grew = false;
-    struct scene_animation* animation;
-    wl_list_for_each(animation, &effects->animations, link) {
-      struct wlr_box box;
-      if (persistent_effect_box(animation, data, &box)) {
-        grew |= damage_grow_to_box(scene_output, damage, &box, commit);
+    if (persistent) {
+      struct scene_animation* animation;
+      wl_list_for_each(animation, &effects->animations, link) {
+        struct wlr_box box;
+        if (persistent_effect_box(animation, data, &box)) {
+          grew |= damage_grow_to_box(scene_output, damage, &box, commit);
+        }
       }
+    }
+    if (!wlr_box_empty(&screen_box)) {
+      grew |= damage_grow_to_box(scene_output, damage, &screen_box, commit);
+    }
+    if (!wlr_box_empty(&cursor_box)) {
+      grew |= damage_grow_to_box(scene_output, damage, &cursor_box, commit);
     }
     grew_any |= grew;
   } while (grew);
@@ -5001,8 +5206,17 @@ bool wlr_scene_output_build_state(
   render_data.entries = list_data;
   render_data.entry_count = list_len;
 
-  // Only a visible in-place slot makes a pending capture differ from the display.
+  // The output addon holds the output slots and the capture policy. Without it
+  // the policy is the default (effects excluded from captures); an unfiltered
+  // composition creates it. With no scene effects, output slots, or pending
+  // capture there is nothing to draw, save, or release.
   const bool capture_pending = options->effect_capture_pending;
+  struct scene_output_effects* output_effects =
+      effects != NULL || capture_pending || scene_output->output_effects_configured
+      ? scene_output_effects_get(scene_output, false)
+      : NULL;
+
+  // Only a visible in-place slot makes a pending capture differ from the display.
   bool in_place_visible = false;
   render_data.persistent_visible = false;
   if (persistent_effects) {
@@ -5018,15 +5232,14 @@ bool wlr_scene_output_build_state(
       }
     }
   }
+  if (output_effects_active(output_effects)) {
+    render_data.persistent_visible = true;
+    in_place_visible = true;
+  }
   if (!transient_effects && !render_data.persistent_visible) {
     fx_renderer_clear_animation_buffers(output);
   }
 
-  // Absent state is the default policy: effects are excluded from captures. The
-  // addon is created only once an unfiltered composition runs. Without effect
-  // state and a pending capture there is nothing to save or release.
-  struct scene_output_effects* output_effects =
-      effects != NULL || capture_pending ? scene_output_effects_get(scene_output, false) : NULL;
   bool unfiltered_pass =
       capture_pending && in_place_visible && (output_effects == NULL || !output_effects->in_capture);
   if (unfiltered_pass && output_effects == NULL) {
@@ -5086,7 +5299,9 @@ bool wlr_scene_output_build_state(
     pixman_region32_fini(&acc_damage);
   }
 
-  expand_damage_to_effects(scene_output, effects, &render_data, &scene_output->pending_commit_damage, true);
+  expand_damage_to_effects(
+      scene_output, effects, output_effects, &render_data, &scene_output->pending_commit_damage, true
+  );
   wlr_output_state_set_damage(state, &scene_output->pending_commit_damage);
 
   // We only want to try direct scanout if:
@@ -5201,7 +5416,7 @@ bool wlr_scene_output_build_state(
 
   pixman_region32_init(&render_data.damage);
   wlr_damage_ring_rotate_buffer(&scene_output->damage_ring, buffer, &render_data.damage);
-  expand_damage_to_effects(scene_output, effects, &render_data, &render_data.damage, false);
+  expand_damage_to_effects(scene_output, effects, output_effects, &render_data, &render_data.damage, false);
 
   struct fx_gles_render_pass* fx_pass = fx_get_render_pass(render_pass);
   if (fx_pass->needs_full_damage) {
@@ -5377,6 +5592,11 @@ bool wlr_scene_output_build_state(
         scene_buffer_send_dmabuf_feedback(scene_output->scene, buffer, &options);
       }
     }
+  }
+
+  // A frame left unfiltered for a failed capture save shows no output effects either.
+  if (!cursors_drawn) {
+    render_output_effects(output_effects, &render_data);
   }
 
   if (debug_damage == WLR_SCENE_DEBUG_DAMAGE_HIGHLIGHT) {

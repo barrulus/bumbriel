@@ -1629,6 +1629,91 @@ static bool test_in_place_shape(struct fixture *fixture) {
 	return ok;
 }
 
+// A screen program shades the whole output after the scene and a cursor program
+// the square around the pointer after it. A hidden pointer drops the cursor
+// effect, captures exclude both, and motion damages only the two squares.
+static bool test_output_effects(struct fixture *fixture) {
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float blue[4] = { 0, 0, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, blue);
+	struct fx_effect_shader *screen = fx_effect_shader_create(fixture->renderer, FX_EFFECT_SCREEN,
+		"vec4 screen(vec2 uv) { return umbriel_sample(uv).bgra; }", "screen");
+	struct fx_effect_shader *cursor = fx_effect_shader_create(fixture->renderer, FX_EFFECT_CURSOR,
+		"vec4 cursor(vec2 uv) { return distance(uv, umbriel_pointer) < 0.5 ? vec4(0.0, 1.0, 0.0, 1.0) : umbriel_sample(uv); }", "cursor");
+	bool ok = check(screen != NULL && cursor != NULL, "screen and cursor programs compile");
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	wlr_scene_output_set_screen_effect(scene_output, screen, &parameters);
+	wlr_scene_output_set_cursor_effect(scene_output, cursor, &parameters, 2);
+	wlr_scene_output_set_effect_pointer(scene_output, 12, 12, true);
+	struct wlr_output_state state;
+	struct wlr_buffer *rendered = fixture_render_scene(fixture, scene_output, &state);
+	ok &= check(rendered != NULL, "renders");
+	if (rendered != NULL) {
+		uint8_t far[4], at_pointer[4];
+		ok &= fixture_read_pixel(fixture, rendered, 2, 2, far);
+		ok &= fixture_read_pixel(fixture, rendered, 12, 12, at_pointer);
+		ok &= check(far[2] > 250 && far[0] < 5, "the screen effect swapped the whole output to red");
+		ok &= check(at_pointer[1] > 250, "the cursor effect paints around the pointer after the screen effect");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	// A hidden pointer removes the cursor square.
+	wlr_scene_output_set_effect_pointer(scene_output, 12, 12, false);
+	rendered = fixture_render_scene(fixture, scene_output, &state);
+	if (rendered != NULL) {
+		uint8_t at_pointer[4];
+		ok &= fixture_read_pixel(fixture, rendered, 12, 12, at_pointer);
+		ok &= check(at_pointer[1] < 5 && at_pointer[2] > 250, "a hidden pointer has no cursor effect");
+		wlr_buffer_unlock(rendered);
+	}
+	wlr_output_state_finish(&state);
+	// With in_capture off, a capture reads the output without the output effects.
+	const struct wlr_drm_format *format = get_render_format(fixture, DRM_FORMAT_ARGB8888);
+	struct wlr_swapchain *swapchain = wlr_swapchain_create(fixture->allocator, TEST_WIDTH, TEST_HEIGHT, format);
+	struct wlr_scene_output_state_options options = { .swapchain = swapchain, .effect_capture_pending = true };
+	wlr_scene_output_set_effect_pointer(scene_output, 12, 12, true);
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options) && state.buffer != NULL,
+		"renders with a pending capture");
+	if (ok) {
+		uint8_t display[4], captured[4];
+		ok &= fixture_read_display_pixel(fixture, state.buffer, 2, 2, display);
+		ok &= check(display[2] > 250 && display[0] < 5, "the display keeps the screen effect");
+		ok &= fixture_read_display_pixel(fixture, state.buffer, 12, 12, display);
+		ok &= check(display[1] > 250, "the display keeps the cursor effect");
+		ok &= fixture_read_pixel(fixture, state.buffer, 2, 2, captured);
+		ok &= check(captured[0] > 250 && captured[2] < 5, "the capture has no screen effect");
+		ok &= fixture_read_pixel(fixture, state.buffer, 12, 12, captured);
+		ok &= check(captured[0] > 250 && captured[1] < 5, "the capture has no cursor effect");
+	}
+	wlr_output_state_finish(&state);
+	// Without a screen effect, motion damages only the old and new cursor squares.
+	wlr_scene_output_set_screen_effect(scene_output, NULL, NULL);
+	options.effect_capture_pending = false;
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options), "renders the cursor effect alone");
+	wlr_scene_output_acknowledge_damage_for_test(scene_output, &state);
+	wlr_output_state_finish(&state);
+	wlr_scene_output_set_effect_pointer(scene_output, 4, 4, true);
+	wlr_output_state_init(&state);
+	ok &= check(wlr_scene_output_build_state(scene_output, &state, &options), "renders after motion");
+	ok &= check(pixman_region32_contains_point(&state.damage, 2, 2, NULL)
+		&& pixman_region32_contains_point(&state.damage, 6, 6, NULL), "motion damages the new square");
+	ok &= check(pixman_region32_contains_point(&state.damage, 10, 10, NULL)
+		&& pixman_region32_contains_point(&state.damage, 14, 14, NULL), "motion damages the old square");
+	ok &= check(!pixman_region32_contains_point(&state.damage, 8, 8, NULL)
+		&& !pixman_region32_contains_point(&state.damage, 0, 15, NULL), "motion damages nothing else");
+	wlr_output_state_finish(&state);
+	wlr_swapchain_destroy(swapchain);
+	wlr_scene_output_set_screen_effect(scene_output, NULL, NULL);
+	wlr_scene_output_set_cursor_effect(scene_output, NULL, NULL, 0);
+	fx_effect_shader_unref(screen);
+	fx_effect_shader_unref(cursor);
+	wlr_scene_node_destroy(&scene->tree.node);
+	return ok;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s CASE\n", argv[0]);
@@ -1689,6 +1774,8 @@ int main(int argc, char *argv[]) {
 		ok = test_capture_composition(&fixture);
 	} else if (strcmp(argv[1], "in-place-shape") == 0) {
 		ok = test_in_place_shape(&fixture);
+	} else if (strcmp(argv[1], "output-effects") == 0) {
+		ok = test_output_effects(&fixture);
 	} else {
 		fprintf(stderr, "unknown case: %s\n", argv[1]);
 		ok = false;

@@ -182,6 +182,22 @@ void wlr_scene_shadow_set_animation_source(
 // a capture pending read a composition without the output's in-place effects.
 void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output, bool in_capture);
 
+// Output effects shade the output in place after the scene, the screen slot
+// over the whole output, then the cursor slot over the square `radius` logical
+// px around the pointer (0: the whole output); software cursors draw above
+// both. A NULL shader removes the slot; changing the program resets its
+// feedback history.
+void wlr_scene_output_set_screen_effect(
+    struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
+);
+void wlr_scene_output_set_cursor_effect(
+    struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters,
+    int radius
+);
+// Layout coordinates. A hidden pointer, or one outside the output, draws no
+// cursor effect and resets its history.
+void wlr_scene_output_set_effect_pointer(struct wlr_scene_output* output, double lx, double ly, bool visible);
+
 // Exist for tests/effects.c: damage the whole output, and acknowledge a built
 // state's damage the way a commit of its buffer does.
 void wlr_scene_output_damage_whole_for_test(struct wlr_scene_output* scene_output);
