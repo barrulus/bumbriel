@@ -21,7 +21,7 @@ See the index. Stage-specific:
 
 - Border gating: focused, decorated, not urgent, not fullscreen (`View::m_borderFocusedState`, `decorated()`, `m_urgent`, `m_toplevel->scheduled.fullscreen`).
 - Time: animation clock seconds × `speed`; 0 when `animated = false` or `speed = 0`. A frozen clock or a snapshot never advances.
-- Effect-only frames come from `Output`'s own timer, never from `Server::animationsActive()`; `settle` keeps working with a border effect running.
+- Effect-only frames come from `Output`'s own timer, never from `Server::animationsActive()`; a frame counts as an effect frame whenever instances are eligible and the `max_fps` interval has elapsed, whoever scheduled it, so effect time keeps advancing while other animations run; `settle` keeps working with a border effect running.
 - Light: emission from the border slot's result, suppressed under a transient ancestor, never from snapshots, never for borders stacked above the light layer.
 - Light layer: created lazily by `src` above `m_dragIconTree`, below the TOP shell layer, registered with `wlr_scene_set_effect_light_layer`.
 
@@ -1309,7 +1309,7 @@ In `handleFrame`:
 - inside `if (sceneChanged || m_gammaDirty) {` after `m_inFrame = true;` add `if (effectFrame) { ++m_effectFrames; m_lastEffectFrameMsec = m_server->animationClockMsec(); }` (use the monotonic clock: add a local `const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + now.tv_nsec / 1000000;` from the `now` already read, and use it here and for `armEffectFrame`).
 - after the `switch (outputFrameFollowup(...))` block add
   ```cpp
-    if (effectsEligible && !animationsActive && !commitFailed) {
+    if (effectsEligible && !commitFailed) {
       armEffectFrame(nowMsec);
     } else if (m_effectFrameTimer != nullptr) {
       wl_event_source_timer_update(m_effectFrameTimer, 0);
