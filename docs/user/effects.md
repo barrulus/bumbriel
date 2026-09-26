@@ -109,13 +109,13 @@ surface.
 `[effects.preset.<name>]` defines one preset. `kind` is required; `shader` is
 a GLSL file relative to the TOML file that names it. The file is watched and
 reloads with the configuration; a missing or unreadable file reports a
-diagnostic and leaves the preset inert until the file appears. `off` is a
-reserved name.
+diagnostic and leaves the preset inert until the file appears, and a preset
+without `shader` is inert as well. `off` is a reserved name.
 
 | Key | Kinds | Default | Description |
 | --- | --- | --- | --- |
 | `kind` | all | required | `animation`, `border`, `window`, `screen`, or `cursor`. |
-| `shader` | all | required | Path to the GLSL source, at most 256 KiB. |
+| `shader` | all | none | Path to the GLSL source, at most 256 KiB. Without it the preset is inert. |
 | `palette` | all | `false` | Supply `[colors]` accent and status colors to the program. |
 | `padding` | border | `0` | Transparent space around the ring the effect may paint, 0 to 1024. |
 | `speed` | border | `1.0` | Multiplier on `umbriel_time`, 0 to 10. `0` holds `umbriel_time` at zero. |
