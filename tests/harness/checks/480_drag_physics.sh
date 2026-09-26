@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Mod+drag deforms a held floating window as an elastic sheet that trails past its own box, relaxes back to a
 # rectangular box after release, and hands its frozen deformation to the close snapshot when the window closes
-# mid-drag. With physics off the same drag stays rigid and leaves nothing running after release.
+# mid-drag. With physics off the same drag stays rigid and leaves nothing running, held or released.
 set -euo pipefail
 source "$UMBRIEL_HARNESS_LIB"
 readonly BTN_LEFT=272
@@ -51,7 +51,7 @@ spawn() {
 
 # Mod must be held before the button press and released after, or it leaks into the next drag. The grabbed corner
 # tracks the pointer exactly, so the window's rigid (undeformed) position is the grab point plus this delta; the
-# logical position IPC reports only updates once the drag finishes, so it cannot be used mid-drag.
+# position IPC reports is the layout target and updates when the drag finishes.
 drag_right() {
   local grab_x=$1 grab_y=$2
   pointer_hold "$OUTPUT_W" "$OUTPUT_H" move "$grab_x" "$grab_y" mod super press "$BTN_LEFT" \
@@ -77,11 +77,11 @@ if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") < 100 )); then
 fi
 pointer_release
 
-# Settling after release: a frozen clock with an animation in flight makes settle block, so each attempt times out;
-# advancing the clock between attempts lets drag physics relax and eventually finish.
+# Settling after release: settle refuses while an animation runs on the frozen clock, so the clock advances between
+# attempts until drag physics relaxes.
 for _ in $(seq 40); do
   "$UMBRIEL" clock-advance 50 > /dev/null
-  if timeout 0.3 "$UMBRIEL" settle > /dev/null 2>&1; then
+  if "$UMBRIEL" settle > /dev/null 2>&1; then
     break
   fi
 done
@@ -105,6 +105,13 @@ drag_right "$grab_x" "$grab_y"
 "$UMBRIEL" clock-advance 16 > /dev/null
 new_x=$((x + DRAG_DX))
 "$UMBRIEL" msg "window-close:$id" > /dev/null
+# Only the snapshot may be left to probe: the live window must have left the window list first.
+for _ in $(seq 80); do
+  window=$("$UMBRIEL" windows --json | jq -c '.[] | select(.title == "physics")')
+  [[ -z $window ]] && break
+  sleep 0.025
+done
+[[ -z $window ]] || { echo "the dragged window never unmapped after the close request"; exit 1; }
 "$UMBRIEL" clock-advance 100 > /dev/null
 grim "$IMAGE"
 if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") < 50 )); then
@@ -121,7 +128,7 @@ if (( $(green_count "${OUTPUT_W}x${OUTPUT_H}+0+0") > 0 )); then
 fi
 "$UMBRIEL" clock-resume
 
-# physics = false: the drag stays rigid, and releasing it leaves no animation for settle to wait for.
+# physics = false: the drag stays rigid and runs no animation, held or released.
 sed -i 's/^physics = true$/physics = false/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 spawn
@@ -130,15 +137,24 @@ read -r x y w h id < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
 grab_x=$((x + 40))
 grab_y=$((y + 40))
 drag_right "$grab_x" "$grab_y"
-"$UMBRIEL" clock-advance 16 > /dev/null
+if ! "$UMBRIEL" settle > /dev/null 2>&1; then
+  echo "physics = false left an animation running while the drag is held"
+  exit 1
+fi
 grim "$IMAGE"
 new_x=$((x + DRAG_DX))
-if (( $(green_count "8x40+$((new_x - 10))+$((y + h / 2))") > 0 )); then
-  echo "physics = false still deformed the dragged window past its box"
+# A 10 px band 2 px clear of the rigid box, on all four sides.
+band=0
+for strip in "$((w + 24))x10+$((new_x - 12))+$((y - 12))" "$((w + 24))x10+$((new_x - 12))+$((y + h + 2))" \
+  "10x$((h + 4))+$((new_x - 12))+$((y - 2))" "10x$((h + 4))+$((new_x + w + 2))+$((y - 2))"; do
+  band=$((band + $(green_count "$strip")))
+done
+if ((band > 0)); then
+  echo "physics = false still deformed the dragged window past its box: $band green pixels around it"
   exit 1
 fi
 pointer_release
-if ! timeout 0.3 "$UMBRIEL" settle > /dev/null 2>&1; then
+if ! "$UMBRIEL" settle > /dev/null 2>&1; then
   echo "physics = false left an animation running after release"
   exit 1
 fi
