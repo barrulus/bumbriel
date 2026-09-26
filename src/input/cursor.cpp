@@ -567,7 +567,7 @@ namespace umbriel {
     m_grabButton = button;
     if (!grab.pending) {
       view->enterDragPresentation();
-      view->beginDragPhysics(grab.offsetX, grab.offsetY);
+      std::get<MoveGrab>(m_grab).physics = view->beginDragPhysics(grab.offsetX, grab.offsetY);
     }
     updateInteractiveCursor(view);
     return true;
@@ -764,7 +764,7 @@ namespace umbriel {
       m_server->gestures()->endPointerScroll(true, 0);
     }
     const bool restoreDragPresentation = isDraggingView(view);
-    if (auto* grab = std::get_if<MoveGrab>(&m_grab); grab != nullptr && grab->view != nullptr) {
+    if (auto* grab = std::get_if<MoveGrab>(&m_grab); grab != nullptr && grab->view != nullptr && grab->physics) {
       grab->view->endDragPhysics();
     }
     const auto* tiledResize = std::get_if<TiledResizeGrab>(&m_grab);
@@ -1887,9 +1887,11 @@ namespace umbriel {
     grab->view->setDragPosition(
         static_cast<int>(m_cursor->x - grab->offsetX), static_cast<int>(m_cursor->y - grab->offsetY)
     );
-    grab->view->moveDragPhysics(m_cursor->x - grab->lastX, m_cursor->y - grab->lastY);
-    grab->lastX = m_cursor->x;
-    grab->lastY = m_cursor->y;
+    if (grab->physics) {
+      grab->view->moveDragPhysics(m_cursor->x - grab->lastX, m_cursor->y - grab->lastY);
+      grab->lastX = m_cursor->x;
+      grab->lastY = m_cursor->y;
+    }
     presentGrabbedViewSpanning();
   }
 
@@ -1910,7 +1912,7 @@ namespace umbriel {
       grab.sourceWorkspace->layoutDetach(grab.view);
     }
     grab.view->enterDragPresentation();
-    grab.view->beginDragPhysics(grab.offsetX, grab.offsetY);
+    grab.physics = grab.view->beginDragPhysics(grab.offsetX, grab.offsetY);
     grab.lastX = m_cursor->x;
     grab.lastY = m_cursor->y;
   }
@@ -1963,7 +1965,9 @@ namespace umbriel {
       return;
     }
     View* view = grab->view;
-    view->endDragPhysics();
+    if (grab->physics) {
+      view->endDragPhysics();
+    }
     // Where the drag left the window. Read before the state change: becoming
     // floating re-places the window at its remembered origin, immediately when
     // position animations are off.
@@ -2108,7 +2112,9 @@ namespace umbriel {
     }
     view->requestFloatingSize(width, height);
     view->beginResizeAnimation(width, height);
-    view->setDragPhysicsGrab(grab.offsetX, grab.offsetY);
+    if (grab.physics) {
+      view->setDragPhysicsGrab(grab.offsetX, grab.offsetY);
+    }
     processMove();
   }
 

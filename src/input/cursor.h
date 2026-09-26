@@ -61,6 +61,8 @@ namespace umbriel {
       // The pointer at the last drag physics update.
       double lastX = 0;
       double lastY = 0;
+      // The view's drag physics took the grab; without it the drag makes no drag physics calls.
+      bool physics = false;
     };
     struct FloatingResizeGrab {
       View* view = nullptr;

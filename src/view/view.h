@@ -499,14 +499,21 @@ namespace umbriel {
     void enterDragPresentation();
     void restoreHomePresentation();
     // Drag physics follows the pointer grab: the grabbed point in frame-local coordinates, then pointer deltas. The
-    // sheet keeps settling after the release.
-    void beginDragPhysics(double localX, double localY);
+    // sheet keeps settling after the release. False when the sheet did not take the grab (physics off, or nothing
+    // drawn); the drag then makes none of the calls below.
+    [[nodiscard]] bool beginDragPhysics(double localX, double localY);
     // The grabbed point moved within the frame (a retarget resized the window under the pointer).
     void setDragPhysicsGrab(double localX, double localY);
     void moveDragPhysics(double dx, double dy);
     void endDragPhysics();
     // Refits the sheet to the content tree's drawn bounds when they changed, or when the grab moved.
     void fitDragPhysics(bool grabMoved);
+    struct DragFit {
+      wlr_box bounds;
+      std::array<float, 2> grab;
+    };
+    // The content tree's drawn bounds and the grab as fractions of them; empty when the tree draws nothing.
+    [[nodiscard]] std::optional<DragFit> dragPhysicsFit() const;
     // The drag slot's expand: the sheet's displacement bound plus a filtering margin.
     [[nodiscard]] int dragPhysicsExpand() const;
     // True when the drag slot's drawn box reaches `output`.
@@ -644,6 +651,7 @@ namespace umbriel {
     double m_dragGrabX = 0;
     double m_dragGrabY = 0;
     wlr_box m_dragBounds{};
+    bool m_dragSlotBound = false; // the content tree carries the drag slot
     wlr_box m_presentedBox{};
     // Last unscaled box supplied by the workspace. A tiled popin or zoom presents an inset inside this logical box,
     // so a later layout change must animate from the logical box rather than scaling the inset a second time.

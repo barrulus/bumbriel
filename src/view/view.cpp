@@ -1056,25 +1056,23 @@ namespace umbriel {
     raiseToTop();
   }
 
-  void View::beginDragPhysics(double localX, double localY) {
+  bool View::beginDragPhysics(double localX, double localY) {
     // Null while animations or physics are off, or when the program failed to compile: the window stays rigid.
-    wlr_box bounds{};
-    if (effectRegistry().deformationShader() == nullptr
-        || !wlr_scene_node_effect_bounds(&m_contentTree->node, &bounds)) {
-      return;
+    if (effectRegistry().deformationShader() == nullptr) {
+      return false;
     }
     m_dragGrabX = localX;
     m_dragGrabY = localY;
-    m_dragBounds = bounds;
-    const auto grab = DragPhysics::grabIn(
-        static_cast<float>(bounds.x), static_cast<float>(bounds.y), static_cast<float>(bounds.width),
-        static_cast<float>(bounds.height), localX, localY
-    );
+    const std::optional<DragFit> fit = dragPhysicsFit();
+    if (!fit) {
+      return false;
+    }
+    m_dragBounds = fit->bounds;
     m_dragPhysics.begin(
-        static_cast<float>(bounds.width), static_cast<float>(bounds.height), grab[0], grab[1],
-        nextAnimationTransitionId()
+        static_cast<float>(fit->bounds.width), static_cast<float>(fit->bounds.height), fit->grab[0], fit->grab[1],
+        m_dragPhysics.active() ? m_dragPhysics.transitionId() : nextAnimationTransitionId()
     );
-    m_dragPhysicsMsec = m_server->animationClockMsec();
+    return true;
   }
 
   void View::setDragPhysicsGrab(double localX, double localY) {
@@ -1084,19 +1082,31 @@ namespace umbriel {
   }
 
   void View::fitDragPhysics(bool grabMoved) {
-    wlr_box bounds{};
-    if ((!m_dragPhysics.grabbed() && !m_dragPhysics.active())
-        || !wlr_scene_node_effect_bounds(&m_contentTree->node, &bounds)
-        || (!grabMoved && wlr_box_equal(&bounds, &m_dragBounds))) {
+    if (!m_dragPhysics.grabbed() && !m_dragPhysics.active()) {
+      return;
+    }
+    const std::optional<DragFit> fit = dragPhysicsFit();
+    if (!fit || (!grabMoved && wlr_box_equal(&fit->bounds, &m_dragBounds))) {
       return;
     }
     // The sheet spans the box the drag slot draws over, which follows presented resizes and decorations.
-    m_dragBounds = bounds;
+    m_dragBounds = fit->bounds;
+    m_dragPhysics.resize(
+        static_cast<float>(fit->bounds.width), static_cast<float>(fit->bounds.height), fit->grab[0], fit->grab[1]
+    );
+  }
+
+  std::optional<View::DragFit> View::dragPhysicsFit() const {
+    wlr_box bounds{};
+    if (!wlr_scene_node_effect_bounds(&m_contentTree->node, &bounds)) {
+      return std::nullopt;
+    }
+    // The bounds are content-tree-local; the grab is frame-local.
     const auto grab = DragPhysics::grabIn(
         static_cast<float>(bounds.x), static_cast<float>(bounds.y), static_cast<float>(bounds.width),
-        static_cast<float>(bounds.height), m_dragGrabX, m_dragGrabY
+        static_cast<float>(bounds.height), m_dragGrabX - m_contentTree->node.x, m_dragGrabY - m_contentTree->node.y
     );
-    m_dragPhysics.resize(static_cast<float>(bounds.width), static_cast<float>(bounds.height), grab[0], grab[1]);
+    return DragFit{.bounds = bounds, .grab = grab};
   }
 
   bool View::dragPhysicsOn(const Output* output) const {
@@ -1122,7 +1132,6 @@ namespace umbriel {
       return;
     }
     const bool wasActive = m_dragPhysics.active();
-    fitDragPhysics(false);
     m_dragPhysics.move(static_cast<float>(dx), static_cast<float>(dy));
     if (m_dragPhysics.active()) {
       if (!wasActive) {
@@ -1413,6 +1422,9 @@ namespace umbriel {
     }
     if (!m_mapped) {
       wlr_scene_node_clear_animations(&target->node);
+      if (ownTrees) {
+        m_dragSlotBound = false;
+      }
       if (border != nullptr) {
         wlr_scene_node_clear_animations(border);
       }
@@ -1432,7 +1444,8 @@ namespace umbriel {
     } else {
       updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, m_presentation.animation());
     }
-    if (m_dragPhysics.active()) {
+    // Only the view's own content tree deforms; overview cards stay rigid.
+    if (ownTrees && m_dragPhysics.active()) {
       fx_animation_parameters parameters{};
       parameters.progress = 1.0F;
       parameters.linear_progress = 1.0F;
@@ -1448,8 +1461,10 @@ namespace umbriel {
         }
       }
       wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, effectRegistry().deformationShader(), &parameters);
-    } else {
+      m_dragSlotBound = true;
+    } else if (ownTrees && m_dragSlotBound) {
       wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, nullptr, nullptr);
+      m_dragSlotBound = false;
     }
     updateAnimationShader(&target->node, renderer, AnimationEvent::DimUnfocused, m_focusDim);
     updateAnimationShader(
@@ -3235,6 +3250,7 @@ namespace umbriel {
     const CloseSnapshotId snapshot = beginCloseAnimation();
     // The closing snapshot must retain any in-flight opening shader first.
     wlr_scene_node_clear_animations(&m_contentTree->node);
+    m_dragSlotBound = false;
     // The snapshot holds the frozen deformation; the live sheet ends here.
     m_dragPhysics = DragPhysics{};
     // The window slots leave with the snapshot; a remap binds them again.
