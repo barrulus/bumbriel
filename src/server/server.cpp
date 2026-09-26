@@ -1331,7 +1331,9 @@ namespace umbriel {
     if (!m_frozenAnimationClockMsec) {
       m_frozenAnimationClockMsec = animationClockMsec();
     }
-    // Views re-sync their effects' clockAdvancing on the next frame.
+    // The frozen instant may equal the last tick's; ticking it once more lets views re-sync their effects'
+    // clockAdvancing on the next frame instead of skipping it as a repeat.
+    m_lastAnimTickMsec = 0;
     for (const auto& output : m_outputs) {
       wlr_output_schedule_frame(output->wlr());
     }
