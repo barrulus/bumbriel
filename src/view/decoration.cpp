@@ -44,7 +44,8 @@ namespace umbriel {
     }
 
     applyBorderGeometry(
-        m_border, makeBorderRing(contentWidth, contentHeight, m_cornerRadius, m_borderWidth, m_outerBorderWidth),
+        m_border,
+        makeBorderRing(contentWidth, contentHeight, m_cornerRadius, m_borderWidth, m_outerBorderWidth, m_borderPadding),
         m_borderWidth, m_outerBorderWidth
     );
   }
@@ -72,7 +73,7 @@ namespace umbriel {
       return false;
     }
     const BorderRing ring =
-        makeBorderRing(contentWidth, contentHeight, m_cornerRadius, m_borderWidth, m_outerBorderWidth);
+        makeBorderRing(contentWidth, contentHeight, m_cornerRadius, m_borderWidth, m_outerBorderWidth, m_borderPadding);
     return m_border->width != ring.box.width || m_border->height != ring.box.height;
   }
 
@@ -104,10 +105,19 @@ namespace umbriel {
         .innerWidth = m_borderWidth,
         .outerWidth = m_outerBorderWidth,
         .cornerRadius = m_cornerRadius,
+        .padding = m_borderPadding,
     };
     captured.innerColor[3] *= opacity;
     captured.outerColor[3] *= opacity;
     out.push_back(captured);
+  }
+
+  bool ViewDecoration::setBorderPadding(int padding) {
+    if (padding == m_borderPadding) {
+      return false;
+    }
+    m_borderPadding = padding;
+    return true;
   }
 
   bool ViewDecoration::applyRule(const ResolvedWindowRule& rule) {

@@ -282,8 +282,10 @@ namespace umbriel {
     const bool borderVisible = decorated && innerWidth + outerWidth > 0;
     wlr_scene_node_set_enabled(&card.border->node, borderVisible);
     if (borderVisible) {
+      const int padding = scaledWidth(view->borderEffectPadding());
       applyBorderGeometry(
-          card.border, makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth), innerWidth, outerWidth
+          card.border, makeBorderRing(contentW, contentH, outerRadius, innerWidth, outerWidth, padding), innerWidth,
+          outerWidth
       );
       const std::array<float, 4> innerColor = tint(cardBorderColor(card, liveTarget), presentedOpacity);
       const std::array<float, 4> outerColor = tint(view->borderColors().outer, presentedOpacity);

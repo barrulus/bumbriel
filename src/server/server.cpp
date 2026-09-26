@@ -1104,7 +1104,8 @@ namespace umbriel {
     const int innerWidth = static_cast<int>(std::lround(captured.innerWidth * ringScale));
     const int outerWidth = static_cast<int>(std::lround(captured.outerWidth * ringScale));
     const int radius = static_cast<int>(std::lround(captured.cornerRadius * ringScale));
-    const BorderRing ring = makeBorderRing(width, height, radius, innerWidth, outerWidth);
+    const int padding = static_cast<int>(std::lround(captured.padding * ringScale));
+    const BorderRing ring = makeBorderRing(width, height, radius, innerWidth, outerWidth, padding);
     const bool ringVisible = innerWidth + outerWidth > 0;
     const wlr_box treeClip = m_borders.empty() || !ringVisible ? wlr_box{0, 0, width, height} : ring.box;
     wlr_scene_tree_set_clip(m_tree, &treeClip);

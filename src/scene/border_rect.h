@@ -16,6 +16,8 @@ namespace umbriel {
     int innerWidth = 0;
     int outerWidth = 0;
     int cornerRadius = 0;
+    // Effect padding the ring was drawn with.
+    int padding = 0;
   };
 
   // Position and size the single-pass border relative to the content origin.

@@ -116,6 +116,8 @@ namespace umbriel {
     [[nodiscard]] int decorationBorderWidth() const { return m_decoration.borderWidth(); }
     [[nodiscard]] int decorationOuterBorderWidth() const { return m_decoration.outerBorderWidth(); }
     [[nodiscard]] int decorationCornerRadius() const { return m_decoration.cornerRadius(); }
+    // Resolved border preset's padding when it applies to this view, else 0.
+    [[nodiscard]] int borderEffectPadding() const { return m_decoration.borderPadding(); }
     // Opacity multiplier the overview applies to windows it leaves on screen (pinned ones) while it opens and closes.
     void setOverviewOpacity(float opacity);
     [[nodiscard]] wlr_scene_tree* homeTree() const;
