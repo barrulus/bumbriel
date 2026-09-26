@@ -5,8 +5,13 @@
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-capture-feedback.png"
 cat > "$UMBRIEL_RUNTIME_DIR/accumulate.glsl" <<'GLSL'
-// Each rendered frame adds 0.01 red to the previous result, well under the 8-bit ceiling for a run's frame count.
-vec4 animation(vec2 uv) { vec4 p = umbriel_sample_previous(uv); return vec4(min(p.r + 0.01, 1.0), 0.0, umbriel_sample(uv).b, 1.0); }
+// Adds 0.01 red once per animation instant: green holds the progress the history last saw, so repeated draws of one
+// instant add nothing. Blue keeps the largest input blue this history has ever composited.
+vec4 animation(vec2 uv) {
+  vec4 p = umbriel_sample_previous(uv);
+  float step = abs(p.g - umbriel_linear_progress) > 2.0 / 255.0 ? 0.01 : 0.0;
+  return vec4(min(p.r + step, 1.0), umbriel_linear_progress, max(p.b, umbriel_sample(uv).b), 1.0);
+}
 GLSL
 cat > "$UMBRIEL_RUNTIME_DIR/green.glsl" <<'GLSL'
 vec4 window(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }
@@ -70,9 +75,10 @@ retire() {
   done
   [[ -z $window ]] || { echo "the retired client's toplevel did not disappear"; exit 1; }
 }
-# The client is blue. The window effect paints it green; the enclosing accumulate program keeps only red (history) and
-# blue (its input). So: an unfiltered frame shows blue > 0 (client seen), a filtered one shows blue = 0 (green window
-# seen), and red counts how many display frames the history has accumulated.
+# The client is blue. The window effect paints it green; the enclosing accumulate program keeps red (instants
+# accumulated) and blue (the most blue its history has seen). So: a history that ever composited an unfiltered frame
+# shows blue > 0 (client seen), one that only saw filtered frames shows blue = 0 (green window seen), and red counts
+# the animation instants the history has drawn.
 centre_red() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + h / 2))" | cut -d' ' -f1; }
 centre_blue() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + h / 2))" | cut -d' ' -f3; }
 # Reads the display's accumulated red through a reload asserting in_capture = true, plus one clock-advance and one
@@ -123,6 +129,11 @@ if (( first_capture_blue < 200 || second_capture_blue < 200 || third_capture_blu
 fi
 # The display kept accumulating through its own history; the capture role kept its own.
 display_red=$(read_display_red)
+display_blue=$(centre_blue)
+if (( display_blue > 15 )); then
+  echo "the display's feedback history composited an unfiltered capture frame: blue $display_blue"
+  exit 1
+fi
 if (( display_red < reference - 12 || display_red > reference + 12 )); then
   echo "display feedback diverged from the capture-free run: $display_red vs $reference"
   exit 1
