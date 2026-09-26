@@ -687,6 +687,35 @@ static bool test_margin_damage(struct fixture *fixture) {
 	return ok;
 }
 
+// Moving an ancestor damages the expand margin its descendant drew at the old position.
+static bool test_move_margin_damage(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
+		"vec4 border(vec2 uv) { return vec4(1.0); }", "move-margin");
+	bool ok = check(swapchain != NULL && shader != NULL, "swapchain and border program");
+	if (!ok) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(shader);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	struct wlr_scene_tree *frame = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_node_set_position(&frame->node, 4, 5);
+	const float white[4] = { 1, 1, 1, 1 };
+	struct wlr_scene_rect *rect = wlr_scene_rect_create(frame, 6, 6, white);
+	struct fx_animation_parameters parameters = { .progress = 1, .linear_progress = 1, .direction = 1, .expand = 3 };
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_BORDER_EFFECT, shader, &parameters);
+	ok &= warm_up(scene_output, swapchain);
+	// Drawn box (1,2)-(13,14) before the move and (3,2)-(15,14) after it.
+	wlr_scene_node_set_position(&frame->node, 6, 5);
+	ok &= frame_damage_is(scene_output, swapchain, 1, 2, 15, 14, "moving the parent damages the old and new margins");
+	wlr_scene_node_destroy(&scene->tree.node);
+	fx_effect_shader_unref(shader);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
 // A border program sees the client hole through umbriel_border_hole and
 // umbriel_border_distance, and its result is cut out of the hole.
 static bool test_border_geometry(struct fixture *fixture) {
@@ -1437,6 +1466,49 @@ static bool test_in_place_feedback(struct fixture *fixture) {
 	return ok;
 }
 
+// A transient slot's history covers its drawn box: each run adds 1/16 red to the previous result, margin included.
+static bool test_expand_feedback(struct fixture *fixture) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *feedback = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"vec4 animation(vec2 uv) { return vec4(min(umbriel_sample_previous(uv).r + 0.0625, 1.0), 0.0, 0.0, 1.0); }",
+		"expand-feedback");
+	if (!check(swapchain != NULL && feedback != NULL, "swapchain and expand feedback program")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(feedback);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *scene_output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 };
+	struct wlr_scene_rect *rect = wlr_scene_rect_create(&scene->tree, 4, 4, black);
+	wlr_scene_node_set_position(&rect->node, 6, 6);
+	struct fx_animation_parameters parameters = {
+		.progress = 1, .linear_progress = 1, .direction = 1, .transition_id = 1, .expand = 2 };
+	wlr_scene_node_set_animation(&rect->node, FX_SLOT_DRAG, feedback, &parameters);
+	// Four warm-up runs and a fifth: 5/16 red over the drawn box (4,4)-(12,12).
+	bool ok = warm_up(scene_output, swapchain);
+	struct wlr_output_state state;
+	struct wlr_buffer *buffer = render_frame(scene_output, swapchain, &state);
+	ok &= check(buffer != NULL, "fifth frame");
+	if (buffer != NULL) {
+		static const int probes[][2] = { { 8, 8 }, { 4, 4 }, { 11, 8 } };
+		for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+			uint8_t pixel[4];
+			ok &= fixture_read_pixel(fixture, buffer, probes[i][0], probes[i][1], pixel);
+			if (pixel[2] < 72 || pixel[2] > 88) {
+				fprintf(stderr, "  red %d at (%d,%d), expected 80\n", pixel[2], probes[i][0], probes[i][1]);
+			}
+			ok &= check(pixel[2] >= 72 && pixel[2] <= 88, "the fifth run reads the fourth run's result at its texel");
+		}
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	fx_effect_shader_unref(feedback);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	return ok;
+}
+
 static bool capture_saved(struct fixture *fixture) {
 	struct fx_framebuffer *framebuffer;
 	wl_list_for_each(framebuffer, &fx_get_renderer(fixture->renderer)->buffers, link) {
@@ -1836,6 +1908,7 @@ int main(int argc, char *argv[]) {
 		ok = test_uniforms(&fixture);
 	} else if (strcmp(argv[1], "expand") == 0) {
 		ok = test_expand(&fixture);
+		ok &= test_expand_feedback(&fixture);
 	} else if (strcmp(argv[1], "renderer-destroy") == 0) {
 		ok = test_renderer_destroy(&fixture);
 	} else if (strcmp(argv[1], "persistent-scene") == 0) {
@@ -1850,6 +1923,8 @@ int main(int argc, char *argv[]) {
 		ok = test_transient_policy(&fixture);
 	} else if (strcmp(argv[1], "margin-damage") == 0) {
 		ok = test_margin_damage(&fixture);
+	} else if (strcmp(argv[1], "move-margin-damage") == 0) {
+		ok = test_move_margin_damage(&fixture);
 	} else if (strcmp(argv[1], "border-geometry") == 0) {
 		ok = test_border_geometry(&fixture);
 	} else if (strcmp(argv[1], "border-geometry-tree") == 0) {

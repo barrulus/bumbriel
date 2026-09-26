@@ -262,6 +262,7 @@ if build_tests
     'whole-box-invalidation',
     'transient-policy',
     'margin-damage',
+    'move-margin-damage',
     'border-geometry',
     'border-geometry-tree',
     'border-light',

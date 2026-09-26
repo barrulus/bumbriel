@@ -1486,7 +1486,10 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
   pixman_region32_copy(&update_region, damage);
   scene_node_bounds(node, x, y, &update_region);
   if (effects != NULL) {
-    const int expand = scene_node_effect_expand(node);
+    // The node's own, its ancestors', and its descendants' expand margins, as in the disabled branch.
+    const int own = scene_node_effect_expand(node);
+    const int nested = scene_subtree_effect_expand(node);
+    const int expand = own > nested ? own : nested;
     if (expand > 0) {
       wlr_region_expand(&update_region, &update_region, expand);
       wlr_region_expand(damage, damage, expand);
