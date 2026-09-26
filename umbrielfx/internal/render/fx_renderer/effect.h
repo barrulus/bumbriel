@@ -29,6 +29,7 @@ struct fx_effect_shader {
   unsigned references;
   struct wl_listener destroy;
   enum fx_effect_kind kind;
+  char label[128]; // for diagnostics; truncated
   GLuint program;
   GLint proj, tex_proj, position, tex, sample_matrix;
   GLint previous_tex, previous_sample_matrix;
@@ -40,8 +41,10 @@ struct fx_effect_shader {
 };
 
 const struct fx_effect_uniform* fx_effect_shader_uniform(const struct fx_effect_shader* shader, const char* name);
-// The program must be in use. A name the program lacks is ignored; a type or
-// size mismatch is logged once per program and name, then ignored.
+// The program must be in use. A name the program lacks is ignored; a type
+// mismatch or a count past the entry's storage is ignored. A count above the
+// program's active array size binds the active elements. Each case is logged
+// once per program and name.
 void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct fx_uniform* uniform);
 void fx_effect_shader_bind_parameters(
     struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters

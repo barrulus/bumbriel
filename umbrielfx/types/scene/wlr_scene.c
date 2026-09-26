@@ -1200,9 +1200,9 @@ static bool transient_ancestor(struct wlr_scene_node* node) {
 }
 
 // Creates, positions, or removes the light proxy for a border slot. Called
-// whenever the slot, the layer, or the node's placement changes.
-static void scene_light_sync(struct scene_animation* animation) {
-  struct scene_effects* effects = scene_effects_get(animation->scene, false);
+// whenever the slot, the layer, or the node's placement changes. Under a
+// transient ancestor the proxy and its cache stay, disabled.
+static void scene_light_sync(struct scene_effects* effects, struct scene_animation* animation) {
   struct fx_effect_shader* shader = animation->shaders[FX_SLOT_BORDER_EFFECT];
   const struct fx_animation_parameters* parameters = &animation->parameters[FX_SLOT_BORDER_EFFECT];
   int lx, ly;
@@ -1214,8 +1214,13 @@ static void scene_light_sync(struct scene_animation* animation) {
       && parameters->light.intensity > 0
       && parameters->light.spread > 0
       && wlr_scene_node_coords(animation->node, &lx, &ly)
-      && !transient_ancestor(animation->node)
       && !node_above_layer(animation->node, effects->light_layer);
+  if (wanted && transient_ancestor(animation->node)) {
+    if (animation->light != NULL) {
+      wlr_scene_node_set_enabled(&animation->light->rect->node, false);
+    }
+    return;
+  }
   pixman_region32_t bounds;
   pixman_region32_init(&bounds);
   if (wanted) {
@@ -1256,6 +1261,7 @@ static void scene_light_sync(struct scene_animation* animation) {
   wlr_scene_node_coords(&effects->light_layer->node, &layer_x, &layer_y);
   wlr_scene_node_set_position(&light->rect->node, extents->x1 - margin - layer_x, extents->y1 - margin - layer_y);
   wlr_scene_rect_set_size(light->rect, extents->x2 - extents->x1 + 2 * margin, extents->y2 - extents->y1 + 2 * margin);
+  wlr_scene_node_set_enabled(&light->rect->node, true);
   pixman_region32_fini(&bounds);
 }
 
@@ -1270,7 +1276,7 @@ static void scene_lights_sync(struct scene_effects* effects, struct wlr_scene_no
   wl_list_for_each(animation, &effects->animations, link) {
     if ((animation->light != NULL || animation->parameters[FX_SLOT_BORDER_EFFECT].light.enabled)
         && (layer || node_belongs_to(animation->node, node) || node_belongs_to(node, animation->node))) {
-      scene_light_sync(animation);
+      scene_light_sync(effects, animation);
     }
   }
 }
@@ -1310,7 +1316,7 @@ void wlr_scene_set_effect_light_layer(struct wlr_scene* scene, struct wlr_scene_
   effects->light_layer_destroy.notify = scene_effects_light_layer_destroy;
   wl_signal_add(&layer->node.events.destroy, &effects->light_layer_destroy);
   wl_list_for_each(animation, &effects->animations, link) {
-    scene_light_sync(animation);
+    scene_light_sync(effects, animation);
   }
 }
 
@@ -1420,14 +1426,15 @@ static int scene_node_effect_expand(struct wlr_scene_node* node) {
  */
 static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* damage) {
   struct wlr_scene* scene = scene_node_get_root(node);
-  struct scene_effects* effects = scene_effects_get(scene, false);
-  scene_lights_sync(effects, node);
+  struct scene_effects* effects = NULL;
 
   int x, y;
   if (!wlr_scene_node_coords(node, &x, &y)) {
     // We assume explicit damage on a disabled tree means the node was just
     // disabled.
     if (damage) {
+      effects = scene_effects_get(scene, false);
+      scene_lights_sync(effects, node);
       scene_node_cleanup_when_disabled(node, scene->restack_xwayland_surfaces, &scene->outputs);
 
       // The node's own, its ancestors', and its descendants' expand margins were drawn too.
@@ -1447,6 +1454,8 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
 
     return;
   }
+  effects = scene_effects_get(scene, false);
+  scene_lights_sync(effects, node);
 
   pixman_region32_t visible;
   if (!damage) {
@@ -1644,8 +1653,8 @@ void wlr_scene_node_set_animation(
   if (effects != NULL) {
     scene_effects_recount(effects);
   }
-  if (populated) {
-    scene_light_sync(animation);
+  if (populated && (animation->shaders[FX_SLOT_BORDER_EFFECT] != NULL || animation->light != NULL)) {
+    scene_light_sync(effects, animation);
   }
   if (!populated) {
     scene_effect_damage(node, previous_expand);

@@ -267,15 +267,11 @@ void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct
   if (cached == NULL) {
     return;
   }
-  const GLsizei count = (GLsizei)uniform->count;
   const bool integer = uniform->type == FX_UNIFORM_INT || uniform->type == FX_UNIFORM_BOOL;
-  // count is bounded by the entry's own arrays as well as by the declaration.
+  // count is bounded by the entry's own arrays.
   const unsigned capacity = integer ? sizeof(uniform->ints) / sizeof(uniform->ints[0])
                                     : FX_UNIFORM_FLOATS_MAX / fx_uniform_components(uniform->type);
-  if (cached->type != gl_type(uniform->type)
-      || count == 0
-      || uniform->count > (unsigned)cached->size
-      || uniform->count > capacity) {
+  if (cached->type != gl_type(uniform->type) || uniform->count == 0 || uniform->count > capacity) {
     if (!cached->warned) {
       cached->warned = true;
       wlr_log(
@@ -284,6 +280,18 @@ void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct
       );
     }
     return;
+  }
+  // Drivers drop array elements a program cannot reach, so the active size may be below the declared one.
+  GLsizei count = (GLsizei)uniform->count;
+  if (count > cached->size) {
+    if (!cached->warned) {
+      cached->warned = true;
+      wlr_log(
+          WLR_INFO, "Effect shader '%s': uniform '%s' supplies %u elements, the program reads %d; binding %d",
+          shader->label, uniform->name, uniform->count, (int)cached->size, (int)cached->size
+      );
+    }
+    count = cached->size;
   }
   switch (uniform->type) {
   case FX_UNIFORM_FLOAT:
@@ -362,6 +370,7 @@ fx_effect_shader_create(struct wlr_renderer* renderer, enum fx_effect_kind kind,
     return NULL;
   }
   shader->renderer = fx;
+  snprintf(shader->label, sizeof(shader->label), "%s", label != NULL ? label : "");
   shader->kind = kind;
   shader->references = 1;
   shader->destroy.notify = effect_renderer_destroy;

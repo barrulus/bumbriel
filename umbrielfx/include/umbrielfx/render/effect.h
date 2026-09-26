@@ -75,7 +75,7 @@ static inline unsigned fx_uniform_components(enum fx_uniform_type type) {
 
 // A named uniform value. Locations are resolved once per program and cached;
 // a name the program does not read is ignored, a type mismatch is logged once
-// and skipped.
+// and skipped, and elements past the program's active array size are dropped.
 struct fx_uniform {
   char name[FX_UNIFORM_NAME_MAX];
   enum fx_uniform_type type;

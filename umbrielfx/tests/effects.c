@@ -5,6 +5,8 @@
 #include "render/fx_renderer/effect.h"
 #include "umbrielfx/render/effect.h"
 #include "umbrielfx/render/pass.h"
+#include <stdarg.h>
+#include <wlr/util/log.h>
 #include <wlr/util/transform.h>
 
 static const char *const kSources[] = {
@@ -72,6 +74,20 @@ static bool render_animation(struct fixture *fixture, struct fx_effect_shader *s
 	return ok;
 }
 
+static int clamp_logs;
+
+// Counts the binder's oversized-count message for `pal` on the oversized-count program.
+static void count_clamp_logs(enum wlr_log_importance importance, const char *fmt, va_list args) {
+	char message[512];
+	vsnprintf(message, sizeof(message), fmt, args);
+	if (strstr(message, "oversized-count") != NULL && strstr(message, "'pal'") != NULL) {
+		clamp_logs++;
+	}
+	if (importance == WLR_ERROR) {
+		fprintf(stderr, "%s\n", message);
+	}
+}
+
 static bool test_uniforms(struct fixture *fixture) {
 	struct fx_effect_shader *shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
 		"uniform float gain; uniform vec3 tint; uniform int steps;\n"
@@ -126,30 +142,48 @@ static bool test_uniforms(struct fixture *fixture) {
 	ok &= check(pixel[3] < 5, "without a palette the lookup is transparent black");
 	fx_effect_shader_unref(palette);
 
-	// An oversized count against a declared array must be rejected wholesale
-	// (logged once, ignored), not clamped down to the declared size. Both
-	// elements are read so every driver reports the declared active size.
+	// A count above the program's active array size binds the active elements and is logged once per program and name.
 	struct fx_effect_shader *oversized = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
-		"uniform vec4 pal[2];\nvec4 animation(vec2 uv) { return uv.x < 2.0 ? pal[0] : pal[1]; }", "oversized-count");
+		"uniform vec4 pal[2];\nvec4 animation(vec2 uv) { return vec4(pal[0].r, 0.0, pal[1].b, 1.0); }", "oversized-count");
 	ok &= check(oversized != NULL, "oversized-count program compiles");
 	struct fx_animation_parameters exact = { .progress = 1, .linear_progress = 1, .direction = 1 };
 	struct fx_uniform *pal_exact = fx_parameters_add_uniform(&exact, "pal", FX_UNIFORM_VEC4, 2);
 	ok &= check(pal_exact != NULL, "a count matching the declared array size fits");
 	if (pal_exact != NULL) {
-		pal_exact->floats[0] = 1.0f; pal_exact->floats[1] = 0.0f; pal_exact->floats[2] = 0.0f; pal_exact->floats[3] = 1.0f; // red
-		pal_exact->floats[4] = 0.0f; pal_exact->floats[5] = 0.0f; pal_exact->floats[6] = 1.0f; pal_exact->floats[7] = 1.0f; // blue
+		pal_exact->floats[0] = 1.0f; pal_exact->floats[3] = 1.0f; // red
 	}
 	ok &= render_animation(fixture, oversized, &exact, 0, pixel);
-	ok &= check(pixel[2] > 250 && pixel[0] < 5, "pal[0] binds red when count matches the declared array size");
+	ok &= check(pixel[2] > 250 && pixel[0] < 5, "pal[0] and pal[1] bind when count matches the declared array size");
 	struct fx_animation_parameters over = { .progress = 1, .linear_progress = 1, .direction = 1 };
 	struct fx_uniform *pal_over = fx_parameters_add_uniform(&over, "pal", FX_UNIFORM_VEC4, 4);
 	ok &= check(pal_over != NULL, "a count larger than the declared array size still fits fx_uniform storage");
 	if (pal_over != NULL) {
-		pal_over->floats[0] = 0.0f; pal_over->floats[1] = 1.0f; pal_over->floats[2] = 0.0f; pal_over->floats[3] = 1.0f; // green
+		const float values[16] = { 1, 0, 0, 1,  0, 0, 1, 1,  0, 1, 0, 1,  0, 1, 0, 1 }; // red, blue, green, green
+		memcpy(pal_over->floats, values, sizeof(values));
 	}
+	clamp_logs = 0;
+	wlr_log_init(WLR_DEBUG, count_clamp_logs);
 	ok &= render_animation(fixture, oversized, &over, 0, pixel);
-	ok &= check(pixel[2] > 250 && pixel[1] < 5, "an oversized count is rejected, leaving the previous binding intact");
+	ok &= check(pixel[2] > 250 && pixel[0] > 250 && pixel[1] < 5, "an oversized count binds pal[0] and pal[1] from its first two values");
+	ok &= render_animation(fixture, oversized, &over, 0, pixel);
+	wlr_log_init(WLR_ERROR, NULL);
+	ok &= check(clamp_logs == 1, "an oversized count is logged once per program and name");
 	fx_effect_shader_unref(oversized);
+
+	// A constant index folds the reads to pal[0], so drivers may report an active size of 1 for a declared pal[2].
+	struct fx_effect_shader *folded = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
+		"uniform vec4 pal[2];\nvec4 animation(vec2 uv) { return pal[0]; }", "folded-count");
+	ok &= check(folded != NULL, "folded-count program compiles");
+	struct fx_animation_parameters pair = { .progress = 1, .linear_progress = 1, .direction = 1 };
+	struct fx_uniform *pal_pair = fx_parameters_add_uniform(&pair, "pal", FX_UNIFORM_VEC4, 2);
+	ok &= check(pal_pair != NULL, "a two-element palette fits");
+	if (pal_pair != NULL) {
+		pal_pair->floats[1] = 1.0f; pal_pair->floats[3] = 1.0f; // green
+		pal_pair->floats[4] = 1.0f; pal_pair->floats[7] = 1.0f; // red
+	}
+	ok &= render_animation(fixture, folded, &pair, 0, pixel);
+	ok &= check(pixel[1] > 250 && pixel[2] < 5, "count 2 binds pal[0] when only pal[0] is read");
+	fx_effect_shader_unref(folded);
 
 	// A name too long for the cache is skipped, never cached as a truncated alias of a real uniform.
 	struct fx_effect_shader *long_name = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
@@ -921,11 +955,15 @@ static bool test_border_light_lifecycle(struct fixture *fixture) {
 	ok &= check(light_proxy(layer) != NULL, "a snapshot adds no light");
 	wlr_scene_node_destroy(&snapshot->node);
 
+	struct wlr_scene_rect *kept = light_proxy(layer);
 	const struct fx_animation_parameters opening = { .transition_id = 1 };
 	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOWS_IN, program, &opening);
-	ok &= check(wl_list_empty(&layer->children), "a transient ancestor suppresses the light");
+	ok &= check(kept != NULL && light_proxy(layer) == kept && !kept->node.enabled,
+		"a transient ancestor disables the proxy without destroying it");
+	ok &= check(light_spill_absent(fixture, scene_output, 3, 8), "nothing spills under a transient ancestor");
 	wlr_scene_node_set_animation(&window->node, FX_SLOT_WINDOWS_IN, NULL, NULL);
-	ok &= check(light_proxy_is(layer, -9, -10, 38, 36), "the light returns when the ancestor settles");
+	ok &= check(light_proxy_is(layer, -9, -10, 38, 36) && light_proxy(layer) == kept && kept->node.enabled,
+		"the same proxy returns when the ancestor settles");
 
 	wlr_scene_node_raise_to_top(&window->node);
 	ok &= check(wl_list_empty(&layer->children), "a border above the light layer emits nothing");

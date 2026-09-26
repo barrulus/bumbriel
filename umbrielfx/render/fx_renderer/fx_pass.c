@@ -758,9 +758,10 @@ static struct wlr_texture* pop_animation_capture(struct fx_gles_render_pass* pas
 }
 
 static bool ensure_light_program(struct fx_renderer* renderer) {
-  if (renderer->effect_light_program != 0) {
-    return true;
+  if (renderer->effect_light_attempted) {
+    return renderer->effect_light_program != 0;
   }
+  renderer->effect_light_attempted = true;
   renderer->effect_light_program = link_program(effect_light_frag_src);
   if (renderer->effect_light_program == 0) {
     return false;
