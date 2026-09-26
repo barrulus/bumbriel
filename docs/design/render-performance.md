@@ -8,7 +8,7 @@ thing to establish when a frame rate is lower than expected.
 ## Scanout eligibility
 
 `scene_entry_try_direct_scanout`
-([`wlr_scene.c:4674`](../../umbrielfx/types/scene/wlr_scene.c)) is attempted only
+([`wlr_scene.c:4678`](../../umbrielfx/types/scene/wlr_scene.c)) is attempted only
 when the render list holds exactly one entry, no color transform applies, no
 gamma LUT upload is pending, SDR capture is off, and damage highlighting is off
 (`:5364-5368`).
@@ -31,7 +31,7 @@ The fork adds three conditions upstream does not have:
   composition even when nothing overlaps the node.
 
 Umbriel holds `wlr_output_lock_attach_render` while an output animates
-([`output.cpp:1185-1188`](../../src/output/output.cpp)) and vetoes tearing for
+([`output.cpp:1265-1268`](../../src/output/output.cpp)) and vetoes tearing for
 the same frames (`:1228-1229`). Persistent effects trigger neither.
 
 `direct_scanout = false` on an output, or `WLR_SCENE_DISABLE_DIRECT_SCANOUT=1`
@@ -53,7 +53,7 @@ buffer's format or from the client's declared opaque region
   so a client presenting an alpha-channel format without declaring one gets a
   blur node even though it never blends.
 - A backdrop rect whose color does not match the scene background. The skip
-  (`wlr_scene.c:4537-4546`) compares against `wlr_scene_set_background_color`,
+  (`wlr_scene.c:4541-4550`) compares against `wlr_scene_set_background_color`,
   which the output clear also paints, so a matching rect renders nothing the
   clear would not. Measured on a headless output with one fullscreen client:
   7 entries with `#000000FF` and 7 with `#26233aFF`, where before the clear
@@ -84,7 +84,7 @@ size and sets a logical destination, so no plane scaling is involved. A client
 that ignores the protocol presents at the logical size, and then
 `scene_entry_try_direct_scanout` stages a `buffer_dst_box` larger than the
 buffer and asks the backend to accept primary-plane scaling
-(`wlr_scene.c:4769-4791`). Hyprland rejects that case outright
+(`wlr_scene.c:4773-4795`). Hyprland rejects that case outright
 (`bufferSize != m_pixelSize`, its `Monitor.cpp:1995`) but has no
 fractional-scale condition of its own, because it has no background node to
 skip and decides eligibility from window state instead of render-list
@@ -92,14 +92,14 @@ cardinality.
 
 ## Per-frame work outside the render pass
 
-`Output::handleFrame` (`output.cpp:1124`) runs before any damage test:
+`Output::handleFrame` (`output.cpp:1204`) runs before any damage test:
 `flushDirty`, `Server::tickAnimations`, `flushPendingViewOpacities` over every
 view, and `WineColorManager::applySurfaceDescriptions`, which walks every
 `wlr_scene_buffer` in the scene with a map lookup per buffer
 ([`wine_color_manager.cpp:1061-1099`](../../src/server/wine_color_manager.cpp)).
 
 `wlr_scene_output_send_frame_done` at the end of that function is unconditional
-and must stay so (`output.cpp:1394`). Mailbox and FIFO clients block on
+and must stay so (`output.cpp:1474`). Mailbox and FIFO clients block on
 `wl_surface.frame`, so skipping it on the nothing-to-render path stalls them
 permanently.
 
@@ -143,11 +143,11 @@ umbrielfx adds these zones for effect costs:
 
 | Zone | Where | Fires | Text |
 | --- | --- | --- | --- |
-| `render list` | `wlr_scene_output_build_state`, [`wlr_scene.c:5247-5256`](../../umbrielfx/types/scene/wlr_scene.c) | Every render-list build, including the scanout ones | Output name and render-list length, such as `HEADLESS-2 4`, formatted only while a profiler is connected |
+| `render list` | `wlr_scene_output_build_state`, [`wlr_scene.c:5251-5260`](../../umbrielfx/types/scene/wlr_scene.c) | Every render-list build, including the scanout ones | Output name and render-list length, such as `HEADLESS-2 4`, formatted only while a profiler is connected |
 | `fx_render_pass_init_offscreen_buffers` | `:5554-5563` | Only when the output initializes offscreen buffers: blur, a transient slot, or `persistent_visible` | Output name |
 | `scene_node_bounds` | `scene_node_update`, `:1510-1512` | Every enabled-path node update | |
 | `scene_node_drawn_expand` | `:1443-1449` | The expand walk, over ancestors and descendants, on every node update while the scene has effect state, including the disabled path | |
-| `draw_animation_texture` (CPU and GPU) | [`fx_pass.c:676`](../../umbrielfx/render/fx_renderer/fx_pass.c) | Every effect program draw: animation slots, border, window, screen, and cursor effects, border light, and the shadow of a slot program | |
+| `draw_animation_texture` (CPU and GPU) | [`fx_pass.c:691`](../../umbrielfx/render/fx_renderer/fx_pass.c) | Every effect program draw: animation slots, border, window, screen, and cursor effects, border light, and the shadow of a slot program | |
 
 `tracy-csvexport -u` prints each CPU zone event with its text in the `value`
 column, and `-g` prints each GPU zone event. These zones end with
@@ -259,7 +259,7 @@ by editing the configuration and running `umbriel msg config-reload`.
   `Direct scan-out disabled` after that line. The log rotates at 1 MiB and
   keeps one previous file, so the check reads both, oldest first:
   `cat umbriel.log.1 umbriel.log 2>/dev/null | sed -n '/Direct scan-out enabled/,$p' | grep -c 'Direct scan-out disabled'`
-  prints `0`. The log names no output (`wlr_scene.c:5386`), so A's fixed
+  prints `0`. The log names no output (`wlr_scene.c:5390`), so A's fixed
   ineligibility is what attributes the lines to B. Highlight mode cannot serve
   this run: scanout requires damage highlighting off (`:5364-5368`), so every
   output composites while it is on.
@@ -330,15 +330,15 @@ against 65 ns). Each time includes the zone's own begin and end.
 - Confirm the surface is presented before trusting any uncapped number. A `fifo`
   run that does not pin to the output's refresh rate means the surface is not
   reaching the screen: Umbriel culls invisible nodes outright
-  (`wlr_scene.c:4529`), and a culled surface has its buffers released
+  (`wlr_scene.c:4533`), and a culled surface has its buffers released
   immediately, which looks like an excellent frame rate.
 - A connected profiler reschedules every output frame as soon as the previous
-  one lands (`wlr_scene.c:4287-4290`), so the compositor renders continuously
+  one lands (`wlr_scene.c:4291-4294`), so the compositor renders continuously
   instead of on damage. Zone costs stay comparable; frame rate and idle
   behavior do not. Take frame rates from an external overlay with the profiler
   disconnected.
 - Scanout state is logged only on transitions, as `Direct scan-out enabled` or
-  `disabled` with no output name (`wlr_scene.c:5386`). `prev_scanout` starts
+  `disabled` with no output name (`wlr_scene.c:5390`). `prev_scanout` starts
   false, so an output that never scanned out once logs nothing at all rather
   than logging a refusal, and on a multi-output machine the lines cannot be
   attributed. Every build records them, since the log file is unfiltered and
