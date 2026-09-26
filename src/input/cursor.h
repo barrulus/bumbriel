@@ -58,6 +58,9 @@ namespace umbriel {
       bool pending = true;
       double startX = 0;
       double startY = 0;
+      // The pointer at the last drag physics update.
+      double lastX = 0;
+      double lastY = 0;
     };
     struct FloatingResizeGrab {
       View* view = nullptr;

@@ -552,6 +552,8 @@ namespace umbriel {
         .pending = tiled,
         .startX = m_cursor->x,
         .startY = m_cursor->y,
+        .lastX = m_cursor->x,
+        .lastY = m_cursor->y,
     };
     if (grab.sourceWorkspace != nullptr) {
       grab.sourceColumn = grab.sourceWorkspace->layout().columnOf(view);
@@ -565,6 +567,7 @@ namespace umbriel {
     m_grabButton = button;
     if (!grab.pending) {
       view->enterDragPresentation();
+      view->beginDragPhysics(m_cursor->x, m_cursor->y);
     }
     updateInteractiveCursor(view);
     return true;
@@ -761,6 +764,9 @@ namespace umbriel {
       m_server->gestures()->endPointerScroll(true, 0);
     }
     const bool restoreDragPresentation = isDraggingView(view);
+    if (auto* grab = std::get_if<MoveGrab>(&m_grab); grab != nullptr && grab->view != nullptr) {
+      grab->view->endDragPhysics();
+    }
     const auto* tiledResize = std::get_if<TiledResizeGrab>(&m_grab);
     Workspace* resizedWorkspace = tiledResize != nullptr ? tiledResize->workspace : nullptr;
     const bool restoreResizePresentation = std::holds_alternative<FloatingResizeGrab>(m_grab);
@@ -1873,7 +1879,7 @@ namespace umbriel {
   }
 
   void Cursor::processMove() {
-    const auto* grab = std::get_if<MoveGrab>(&m_grab);
+    auto* grab = std::get_if<MoveGrab>(&m_grab);
     if (grab == nullptr || grab->view == nullptr) {
       resetMode();
       return;
@@ -1881,6 +1887,9 @@ namespace umbriel {
     grab->view->setDragPosition(
         static_cast<int>(m_cursor->x - grab->offsetX), static_cast<int>(m_cursor->y - grab->offsetY)
     );
+    grab->view->moveDragPhysics(m_cursor->x - grab->lastX, m_cursor->y - grab->lastY);
+    grab->lastX = m_cursor->x;
+    grab->lastY = m_cursor->y;
     presentGrabbedViewSpanning();
   }
 
@@ -1901,6 +1910,11 @@ namespace umbriel {
       grab.sourceWorkspace->layoutDetach(grab.view);
     }
     grab.view->enterDragPresentation();
+    // Pinned where the frame will hold the pointer, not where the pointer crossed the threshold.
+    const wlr_scene_node& frame = grab.view->sceneTree()->node;
+    grab.view->beginDragPhysics(frame.x + grab.offsetX, frame.y + grab.offsetY);
+    grab.lastX = m_cursor->x;
+    grab.lastY = m_cursor->y;
   }
 
   void Cursor::updateDropTarget() {
@@ -1951,6 +1965,7 @@ namespace umbriel {
       return;
     }
     View* view = grab->view;
+    view->endDragPhysics();
     // Where the drag left the window. Read before the state change: becoming
     // floating re-places the window at its remembered origin, immediately when
     // position animations are off.

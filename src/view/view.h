@@ -4,6 +4,7 @@
 #include "scene/node.h"
 #include "view/decoration.h"
 #include "view/deferred_unfullscreen.h"
+#include "view/drag_physics.h"
 #include "view/effects.h"
 #include "view/floating.h"
 #include "view/presentation.h"
@@ -497,6 +498,11 @@ namespace umbriel {
     // for the temporary global presentation and its resting presentation.
     void enterDragPresentation();
     void restoreHomePresentation();
+    // Drag physics follows the pointer grab: layout coordinates at the grab, then pointer deltas. The sheet keeps
+    // settling after the release.
+    void beginDragPhysics(double pointerX, double pointerY);
+    void moveDragPhysics(double dx, double dy);
+    void endDragPhysics();
     // Kick the owning output so an animation started outside a frame gets ticked.
     void scheduleFrame();
     void cancelSizeAnimation();
@@ -624,6 +630,8 @@ namespace umbriel {
     ViewEffects m_effects;
     ViewPresentation m_presentation;
     ResizeCrossfade m_resizeCrossfade;
+    DragPhysics m_dragPhysics;
+    uint64_t m_dragPhysicsMsec = 0; // animation clock at the sheet's last tick
     wlr_box m_presentedBox{};
     // Last unscaled box supplied by the workspace. A tiled popin or zoom presents an inset inside this logical box,
     // so a later layout change must animate from the logical box rather than scaling the inset a second time.

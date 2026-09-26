@@ -1056,6 +1056,42 @@ namespace umbriel {
     raiseToTop();
   }
 
+  void View::beginDragPhysics(double pointerX, double pointerY) {
+    // Null while animations or physics are off, or when the program failed to compile: the window stays rigid.
+    if (effectRegistry().deformationShader() == nullptr) {
+      return;
+    }
+    const wlr_box content = committedContentBox();
+    if (content.width <= 0 || content.height <= 0) {
+      return;
+    }
+    const double localX = pointerX - m_sceneTree->node.x;
+    const double localY = pointerY - m_sceneTree->node.y;
+    m_dragPhysics.begin(
+        static_cast<float>(content.width), static_cast<float>(content.height),
+        static_cast<float>(localX / content.width), static_cast<float>(localY / content.height),
+        nextAnimationTransitionId()
+    );
+    m_dragPhysicsMsec = m_server->animationClockMsec();
+  }
+
+  void View::moveDragPhysics(double dx, double dy) {
+    if (!m_dragPhysics.grabbed()) {
+      return;
+    }
+    const bool wasActive = m_dragPhysics.active();
+    m_dragPhysics.move(static_cast<float>(dx), static_cast<float>(dy));
+    if (m_dragPhysics.active()) {
+      if (!wasActive) {
+        // Integration starts now, not when the sheet last came to rest.
+        m_dragPhysicsMsec = m_server->animationClockMsec();
+      }
+      scheduleFrame();
+    }
+  }
+
+  void View::endDragPhysics() { m_dragPhysics.release(); }
+
   void View::restoreHomePresentation() {
     // The drag derived its own presented size and crop; drop them so the
     // resting presentation below is re-applied through a real reconfigure.
@@ -1353,6 +1389,25 @@ namespace umbriel {
     } else {
       updateAnimationShader(&target->node, renderer, AnimationEvent::WindowsMove, m_presentation.animation());
     }
+    if (m_dragPhysics.active()) {
+      fx_animation_parameters parameters{};
+      parameters.progress = 1.0F;
+      parameters.linear_progress = 1.0F;
+      parameters.direction = 1.0F;
+      parameters.transition_id = m_dragPhysics.transitionId();
+      parameters.expand = static_cast<int>(std::ceil(m_dragPhysics.maxDisplacement())) + 2;
+      if (fx_uniform* sheet =
+              fx_parameters_add_uniform(&parameters, "umbriel_deformation", FX_UNIFORM_VEC2, DragPhysics::kPoints)) {
+        const DragPhysics::Sheet displacement = m_dragPhysics.normalizedDisplacement();
+        for (int i = 0; i < DragPhysics::kPoints; ++i) {
+          sheet->floats[i * 2] = displacement[i][0];
+          sheet->floats[i * 2 + 1] = displacement[i][1];
+        }
+      }
+      wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, effectRegistry().deformationShader(), &parameters);
+    } else {
+      wlr_scene_node_set_animation(&target->node, FX_SLOT_DRAG, nullptr, nullptr);
+    }
     updateAnimationShader(&target->node, renderer, AnimationEvent::DimUnfocused, m_focusDim);
     updateAnimationShader(
         &target->node, renderer, m_inScratchpad ? AnimationEvent::Scratchpad : AnimationEvent::WindowsIn, m_fade
@@ -1493,11 +1548,20 @@ namespace umbriel {
       m_decoration.setBorderRawColor(m_borderColorAnim.current(), effectiveOpacity());
       active = active || m_borderColorAnim.animating();
     }
+    if (m_dragPhysics.active()) {
+      const auto elapsed = static_cast<int64_t>(nowMsec - m_dragPhysicsMsec);
+      m_dragPhysicsMsec = nowMsec;
+      active = m_dragPhysics.tick(static_cast<double>(elapsed) / 1000.0) || active;
+    }
     syncAnimationShaders();
     return active;
   }
 
   bool View::animatesOn(const Output* output) const {
+    // The dragged window may span outputs.
+    if (m_dragPhysics.active()) {
+      return true;
+    }
     const Workspace* workspace = m_workspace;
     if (workspace != nullptr && workspace->group() != nullptr) {
       return workspace->group()->output() == output;
@@ -1513,7 +1577,8 @@ namespace umbriel {
         || m_fade.animating()
         || m_borderColorAnim.animating()
         || m_focusDim.animating()
-        || m_resizeCrossfade.active();
+        || m_resizeCrossfade.active()
+        || m_dragPhysics.active();
   }
 
   bool View::layoutFullscreen() const { return m_toplevel->scheduled.fullscreen; }
@@ -3121,6 +3186,8 @@ namespace umbriel {
     const CloseSnapshotId snapshot = beginCloseAnimation();
     // The closing snapshot must retain any in-flight opening shader first.
     wlr_scene_node_clear_animations(&m_contentTree->node);
+    // The snapshot holds the frozen deformation; the live sheet ends here.
+    m_dragPhysics = DragPhysics{};
     // The window slots leave with the snapshot; a remap binds them again.
     if (m_effects.needsSurface()) {
       wlr_surface* surface = m_toplevel->base->surface;

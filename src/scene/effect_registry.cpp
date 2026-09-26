@@ -26,6 +26,29 @@ namespace umbriel {
     return umbriel_sample(uv) * alpha;
 })";
 
+    // The drag slot's built-in program. uv spans the drawn rectangle (node plus
+    // expand); the inverse lookup is a contraction because DragPhysics bounds the
+    // sheet's slopes. Uniform indices are constants for GLSL ES 1.00.
+    constexpr const char* kDeformation = R"(uniform vec2 umbriel_deformation[16];
+vec2 physics_row(float t, vec2 a, vec2 b, vec2 c, vec2 d) {
+  float u = 1.0 - t;
+  return u * u * (u * a + 3.0 * t * b) + t * t * (3.0 * u * c + t * d);
+}
+vec2 physics_offset(vec2 p) {
+  p = clamp(p, 0.0, 1.0);
+  vec2 a = physics_row(p.x, umbriel_deformation[0], umbriel_deformation[1], umbriel_deformation[2], umbriel_deformation[3]);
+  vec2 b = physics_row(p.x, umbriel_deformation[4], umbriel_deformation[5], umbriel_deformation[6], umbriel_deformation[7]);
+  vec2 c = physics_row(p.x, umbriel_deformation[8], umbriel_deformation[9], umbriel_deformation[10], umbriel_deformation[11]);
+  vec2 d = physics_row(p.x, umbriel_deformation[12], umbriel_deformation[13], umbriel_deformation[14], umbriel_deformation[15]);
+  return physics_row(p.y, a, b, c, d);
+}
+vec4 animation(vec2 uv) {
+  vec2 inner = (uv - umbriel_expand) / (1.0 - 2.0 * umbriel_expand);
+  vec2 source = inner;
+  for (int i = 0; i < 28; i++) source = inner - physics_offset(source);
+  return umbriel_sample(source * (1.0 - 2.0 * umbriel_expand) + umbriel_expand);
+})";
+
     // Slide keeps per-buffer alpha: its opacity curve differs from the lifecycle progress.
     bool builtinFadeApplies(const Config::Animation& settings, AnimationEvent event) {
       return settings.enabled
@@ -66,6 +89,8 @@ namespace umbriel {
   void EffectRegistry::clear() {
     m_programs.clear();
     m_builtinFade.reset();
+    m_deformation.reset();
+    m_deformationCompiled = false;
     m_persistentReferenced = false;
     m_inPlaceReferenced = false;
     m_cursorActive = false;
@@ -150,6 +175,8 @@ namespace umbriel {
       // Programs belong to one GL context. A new renderer starts from nothing.
       m_programs.clear();
       m_builtinFade.reset();
+      m_deformation.reset();
+      m_deformationCompiled = false;
       m_renderer = renderer;
     }
     const Config& settings = config();
@@ -180,6 +207,12 @@ namespace umbriel {
       fx_effect_shader_set_shape_preserving(m_builtinFade.get(), true);
     } else if (!fadeNeeded) {
       m_builtinFade.reset();
+    }
+    if (settings.animation.enabled && settings.animation.windowsDrag.physics) {
+      (void)deformationShader();
+    } else {
+      m_deformation.reset();
+      m_deformationCompiled = false;
     }
     syncLightLayer();
     applyOutputEffects();
@@ -248,6 +281,24 @@ namespace umbriel {
       return custom;
     }
     return builtinFadeApplies(config().animation, event) ? m_builtinFade.get() : nullptr;
+  }
+
+  fx_effect_shader* EffectRegistry::deformationShader() {
+    const Config::Animation& settings = config().animation;
+    if (!settings.enabled || !settings.windowsDrag.physics || m_renderer == nullptr) {
+      return nullptr;
+    }
+    if (!m_deformationCompiled) {
+      m_deformationCompiled = true;
+      m_deformation = {
+          fx_effect_shader_create(m_renderer, FX_EFFECT_ANIMATION, kDeformation, "animation.windows_drag"),
+          fx_effect_shader_unref
+      };
+      if (m_deformation == nullptr) {
+        kLog.error("the drag physics program failed to compile; dragged windows stay rigid");
+      }
+    }
+    return m_deformation.get();
   }
 
   const EffectPreset* EffectRegistry::animationPreset(AnimationEvent event) const {
