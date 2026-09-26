@@ -3643,7 +3643,8 @@ static void render_animated_range(
             .output = data->output->output,
             .update_history = !data->shadow_capture,
             .geometry = has_geometry ? &geometry : NULL,
-            .light = slot == FX_SLOT_BORDER_EFFECT && animation->light != NULL && !data->shadow_capture
+            .light = slot == FX_SLOT_BORDER_EFFECT && animation->light != NULL && animation->light->rect->node.enabled
+                    && !data->shadow_capture
                 ? animation->light->cache
                 : NULL,
         };
