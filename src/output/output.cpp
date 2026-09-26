@@ -1058,9 +1058,14 @@ namespace umbriel {
     if (effectFrame) {
       m_lastEffectFrameMsec = nowMsec;
     }
-    // Effect time moves only on due effect frames, which is what caps them at max_fps. While nothing here needs frames
-    // of its own it follows the clock, so a new instance starts from the current time.
-    if (effectFrame || (effectEligible() == 0 && !config().effects.presets.empty())) {
+    // Effect time moves only on due effect frames, which caps them at max_fps. It follows the clock while nothing here
+    // needs frames of its own, so a new instance starts from now, and while the clock is frozen, so the first frozen
+    // frame draws the frozen instant.
+    bool stampEffectTime = effectFrame || (effectEligible() == 0 && !config().effects.presets.empty());
+#ifdef UMBRIEL_TEST_IPC
+    stampEffectTime = stampEffectTime || m_server->animationClockFrozen();
+#endif
+    if (stampEffectTime) {
       m_effectSeconds = m_server->effects().clockSeconds();
     }
     m_server->tickAnimations(m_server->animationClockMsec());

@@ -68,7 +68,8 @@ namespace umbriel {
     void scheduleEffectFrame();
     // Frames drawn because a persistent effect asked for them.
     [[nodiscard]] uint64_t effectFrames() const { return m_effectFrames; }
-    // Seconds persistent effects on this output draw at; advances only on their own frames.
+    // Seconds persistent effects on this output draw at. Advances on their own frames, follows the clock while
+    // nothing here needs them, and holds the frozen instant while the clock is frozen.
     [[nodiscard]] float effectSeconds() const { return m_effectSeconds; }
     // Effect instances on this output that need frames of their own.
     [[nodiscard]] unsigned effectEligible() const;

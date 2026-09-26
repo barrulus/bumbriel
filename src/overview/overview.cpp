@@ -1776,7 +1776,8 @@ namespace umbriel {
       applyProgress();
     }
     m_cardPresentationDirty = false;
-    // Card layout runs only while the overview moves; effect time advances every tick.
+    // Card layout runs only while the overview moves; effects sync every tick and their time moves only on the card
+    // output's effect frames.
     if (m_active && effectRegistry().active()) {
       syncCardEffects();
     }
