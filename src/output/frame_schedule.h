@@ -37,7 +37,8 @@ namespace umbriel {
       return 0;
     }
     const auto fps = static_cast<uint64_t>(maxFps);
-    const uint64_t interval = (1000 + fps - 1) / fps; // rounded up so the rate never exceeds max_fps
+    // Rounded up so the timer path never exceeds max_fps; a frame another source schedules may land up to 1 ms early.
+    const uint64_t interval = (1000 + fps - 1) / fps;
     const uint64_t elapsed = nowMsec > lastEffectFrameMsec ? nowMsec - lastEffectFrameMsec : 0;
     return elapsed >= interval ? 1 : std::max<uint64_t>(1, interval - elapsed);
   }
