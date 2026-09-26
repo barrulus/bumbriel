@@ -4,7 +4,7 @@
 # revokes approval, and the explicit configuration bypass skips the prompt.
 set -euo pipefail
 
-readonly POINTER="${UMBRIEL_POINTER_CLIENT:-./build-debug/tests/pointer-client}"
+readonly POINTER="$UMBRIEL_POINTER_CLIENT"
 readonly BTN_LEFT=272
 
 python3 - "$UMBRIEL_SOCKET" "$UMBRIEL" "$POINTER" "$BTN_LEFT" <<'PY'
