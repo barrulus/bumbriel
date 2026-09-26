@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# A border preset paints the focused window's ring and its padding, leaves the client hole alone, follows focus, can be
+# switched off per window, freezes with the animation clock, spills light onto a neighbour, and asks for frames only
+# while its clock advances.
+set -euo pipefail
+
+readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-border.png"
+cat > "$UMBRIEL_RUNTIME_DIR/ring.glsl" <<'GLSL'
+// Solid red over the whole drawn rectangle; the hole is cut out by the compositor. The green term is invisible at
+// 8 bits but keeps umbriel_time an active uniform, so the program counts as time-reading.
+vec4 border(vec2 uv) { return vec4(1.0, 0.001 * sin(umbriel_time), 0.0, 1.0); }
+GLSL
+cat > "$UMBRIEL_RUNTIME_DIR/still.glsl" <<'GLSL'
+vec4 border(vec2 uv) { return vec4(1.0, 0.0, 0.0, 1.0); }
+GLSL
+readonly BASE="$UMBRIEL_RUNTIME_DIR/effect-border-base.toml"
+cp "$UMBRIEL_CONFIG" "$BASE"
+cat >> "$UMBRIEL_CONFIG" <<'EOF'
+
+[animation]
+enabled = false
+[appearance]
+border_width = 4
+outer_border_width = 0
+corner_radius = 0
+[appearance.shadow]
+enabled = false
+[colors]
+backdrop = "#000000FF"
+[effects]
+border = "ring"
+[effects.preset.ring]
+kind = "border"
+shader = "ring.glsl"
+padding = 20
+[[window_rule]]
+match.title = "^effect-one$"
+default_floating = true
+default_position = { x = 100, y = 100, anchor = "top_left" }
+[[window_rule]]
+match.title = "^effect-two$"
+default_floating = true
+default_position = { x = 700, y = 100, anchor = "top_left" }
+[[window_rule]]
+match.title = "^effect-plain$"
+default_floating = true
+default_position = { x = 100, y = 400, anchor = "top_left" }
+border_effect = "off"
+EOF
+"$UMBRIEL" msg config-reload > /dev/null
+
+spawn() {
+  FILL_COLOR=0xFF0000FF "$UMBRIEL_UNMAP_CLIENT" "$1" 300 200 > "$UMBRIEL_RUNTIME_DIR/$1.log" 2>&1 &
+  for _ in $(seq 80); do
+    window=$("$UMBRIEL" windows --json | jq -c --arg title "$1" '.[] | select(.title == $title)')
+    [[ -n $window ]] && break
+    sleep 0.025
+  done
+  [[ -n $window ]]
+}
+red_at() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r > 0.9 && g < 0.1 && b < 0.1' "$1"; }
+
+spawn effect-one
+"$UMBRIEL" settle > /dev/null
+read -r x y w h id < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
+grim "$IMAGE"
+# The ring (4 px) plus padding (20 px) paints red; sample a 2x2 patch inside the padding, 12 px above the client.
+if (( $(red_at "2x2+$((x + w / 2))+$((y - 12))") < 4 )); then
+  echo "border effect did not paint the padding above the focused window"
+  exit 1
+fi
+# The client hole shows the blue client, not the effect.
+if (( $("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'b > 0.9 && r < 0.1' "2x2+$((x + w / 2))+$((y + h / 2))") < 4 )); then
+  echo "border effect leaked into the client hole"
+  exit 1
+fi
+
+# Focus moves the effect: the first window loses it, the second gains it.
+spawn effect-two
+"$UMBRIEL" settle > /dev/null
+read -r x2 y2 w2 _ id2 < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
+grim "$IMAGE"
+if (( $(red_at "2x2+$((x2 + w2 / 2))+$((y2 - 12))") < 4 )); then
+  echo "border effect did not follow focus to the second window"
+  exit 1
+fi
+if (( $(red_at "2x2+$((x + w / 2))+$((y - 12))") > 0 )); then
+  echo "border effect stayed on the unfocused window"
+  exit 1
+fi
+
+# border_effect = "off" on a rule keeps the plain ring.
+spawn effect-plain
+"$UMBRIEL" settle > /dev/null
+read -r x3 y3 w3 _ _ < <(jq -r '"\(.x) \(.y) \(.w) \(.h) \(.id)"' <<< "$window")
+grim "$IMAGE"
+if (( $(red_at "2x2+$((x3 + w3 / 2))+$((y3 - 12))") > 0 )); then
+  echo "border_effect = off did not disable the default on the plain window"
+  exit 1
+fi
+"$UMBRIEL" msg "window-focus:$id2" > /dev/null
+"$UMBRIEL" settle > /dev/null
+
+# Frames: a time-reading program requests effect-only frames while the clock advances, none once frozen.
+frames() { "$UMBRIEL" effect-frames --json | jq -r '.outputs[0].effect_frames'; }
+before=$(frames)
+sleep 0.3 # real time: effect-only frames arrive on the output's own timer
+if (( $(frames) <= before )); then
+  echo "an advancing time-reading border effect requested no effect-only frames"
+  exit 1
+fi
+"$UMBRIEL" clock-freeze
+"$UMBRIEL" settle > /dev/null
+before=$(frames)
+sleep 0.3 # real time: a frozen clock must produce no effect-only frames
+if (( $(frames) != before )); then
+  echo "a frozen clock still produced effect-only frames: $before -> $(frames)"
+  exit 1
+fi
+"$UMBRIEL" clock-resume
+before=$(frames)
+sleep 0.3 # real time: resuming the clock restarts effect-only frames
+if (( $(frames) <= before )); then
+  echo "resuming the clock did not restart effect-only frames"
+  exit 1
+fi
+
+# animated = false and speed = 0 each stop frames while the clock runs.
+for variant in 'animated = false' 'speed = 0'; do
+  cat "$BASE" > "$UMBRIEL_CONFIG"
+  cat >> "$UMBRIEL_CONFIG" <<EOF
+
+[animation]
+enabled = false
+[appearance]
+border_width = 4
+outer_border_width = 0
+corner_radius = 0
+[appearance.shadow]
+enabled = false
+[effects]
+border = "ring"
+[effects.preset.ring]
+kind = "border"
+shader = "ring.glsl"
+$variant
+EOF
+  "$UMBRIEL" msg config-reload > /dev/null
+  "$UMBRIEL" settle > /dev/null
+  before=$(frames)
+  sleep 0.3 # real time: a stopped clock must produce no effect-only frames
+  if (( $(frames) != before )); then
+    echo "$variant still produced effect-only frames"
+    exit 1
+  fi
+done
+
+# Light: a preset with light spills red past its padding over a neighbouring window.
+cat "$BASE" > "$UMBRIEL_CONFIG"
+cat >> "$UMBRIEL_CONFIG" <<'EOF'
+
+[animation]
+enabled = false
+[appearance]
+border_width = 4
+outer_border_width = 0
+corner_radius = 0
+[appearance.shadow]
+enabled = false
+[colors]
+backdrop = "#000000FF"
+[effects]
+border = "lit"
+[effects.preset.lit]
+kind = "border"
+shader = "still.glsl"
+padding = 0
+[effects.preset.lit.light]
+spread = 40
+intensity = 4
+threshold = 0.2
+[[window_rule]]
+match.title = "^effect-(one|two|plain)$"
+default_floating = true
+EOF
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" msg "window-focus:$id" > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+read -r r _ _ < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y - 20))")
+if (( r < 15 )); then
+  echo "border light did not spill above the focused window: red=$r"
+  exit 1
+fi
+echo "border effect padding, hole, focus, off override, frame gating, and light verified"
