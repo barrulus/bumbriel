@@ -63,8 +63,9 @@ enabled = false
 | `duration_ms` | `250` | Default duration for non-spring curves. |
 | `curve` | `"easeout"` | Default easing curve. |
 
-Each event also accepts `enabled`, `duration_ms`, and `curve`. A spring curve
-chooses its own duration, so `duration_ms` has no effect on that event.
+Each event other than `windows_drag` also accepts `enabled`, `duration_ms`,
+and `curve`. A spring curve chooses its own duration, so `duration_ms` has no
+effect on that event.
 
 ## Event tables
 
@@ -79,7 +80,7 @@ chooses its own duration, so `duration_ms` has no effect on that event.
 | `[animation.border]` | none | Focus-border color |
 | `[animation.dim_unfocused]` | `dim` | Unfocused-window opacity |
 | `[animation.layers]` | none | Layer-shell map and unmap |
-| `[animation.windows_drag]` | `physics` (default `false`) | Drag physics |
+| `[animation.windows_drag]` | `physics` (default `false`), its only key | Drag physics |
 
 `windows_in` accepts `popin`, `zoom`, `slide`, `fade`, or `none`.
 `windows_out` accepts `fade`, `slide`, `popin`, or `zoom`. `scale` applies to
@@ -126,9 +127,10 @@ Then set `curve = "myBezier"` or `curve = "myBounce"`.
 
 ## Custom effects
 
-Every animation event can run a custom program. Define an `animation` preset
-and select it with `effect`; the event's enabled state, duration, and curve
-still control its timeline. Umbriel ships `reveal` and `squash`:
+Every animation event other than `windows_drag` can run a custom program.
+Define an `animation` preset and select it with `effect`; the event's enabled
+state, duration, and curve still control its timeline. Umbriel ships `reveal`
+and `squash`:
 
 ```toml
 [include]
@@ -152,9 +154,10 @@ effect = "squash"
 ```
 
 Adjust `/usr` for the package prefix. Defining your own preset, the shader
-interface, and reload behaviour are in [Effects](effects.md). `windows_in`
-and `windows_out` without an effect keep the built-in fade. A running event
-keeps its program; a reload affects the next event.
+interface, and reload behavior are in [Effects](effects.md). `windows_in` and
+`windows_out` without an effect keep their built-in fade and `style`; with an
+effect selected, `style` and `scale` are ignored. A running event keeps its
+program; a reload affects the next event.
 
 ### Animation uniforms
 
@@ -168,12 +171,12 @@ keeps its program; a reload affects the next event.
 
 ### Targets
 
-`windows_in`, `windows_out`, `windows_move`, `dim_unfocused`, and `border`
-process the window, its subsurfaces, and its border as one target; `border`
-processes the ring alone. `scratchpad` covers the window's show and hide fade
-and the dim and blur backdrops. `workspaces` and `overview` process whole
-workspace or overview trees, so they see the results of inner effects. Effects
-composite descendants before ancestors.
+`windows_in`, `windows_out`, `windows_move`, and `dim_unfocused` process the
+window and its subsurfaces as one target; `border` processes the ring alone.
+`scratchpad` covers the window's show and hide fade and the dim and blur
+backdrops. `layers` covers a layer-shell surface's own tree. `workspaces` and
+`overview` process whole workspace or overview trees, so they see the results
+of inner effects. Effects composite descendants before ancestors.
 
 ## Drag physics
 
@@ -185,10 +188,12 @@ physics = true
 With drag physics on, a window dragged with the pointer bends like an elastic
 sheet pinned under the pointer, trails its motion, and settles when released
 or held still. It needs the animation master switch. Border, window, and
-overlay effects keep rendering on the deformed window, and a window closed
-mid-drag keeps its shape while it fades: only the window's own content
-deforms, so its drop shadow stays outside the deformation and renders as a
-rigid rectangle, and, under the default `popin` style, the closing snapshot's
-clip grows by the deformation margin, so a client-side decoration extending
-past the window's geometry can remain visible within that margin. Re-grabbing
-a window while it settles continues its motion.
+overlay effects keep rendering on the deformed window. A window closed
+mid-drag keeps its shape while it fades.
+
+Only the window's own content deforms; its drop shadow follows that
+deformation within the window's shadow bounds. Re-grabbing a window while it
+settles continues its motion. Under the default `popin` style, or under
+`zoom`, the closing snapshot's clip grows by the deformation margin, so a
+client-side decoration extending past the window's geometry can remain
+visible within that margin while the snapshot fades.
