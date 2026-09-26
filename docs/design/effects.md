@@ -334,9 +334,10 @@ A drawn box is the node's bounds grown by its `expand`, plus the light proxy
 (`persistent_effect_box`, `:5069-5099`); a screen or cursor box is the output
 or the cursor square. The render-list walk tests leaves against the output box
 grown by the scene's largest `expand` (`scene_effects_max_expand`), so a node
-whose drawn box reaches an output only through its margin is listed there. A
-border effect draws its padding in full; a drag sheet draws only what that
-output captured ([Attachment](#attachment)).
+whose drawn box reaches an output only through its margin is listed there and
+its program runs over that margin. What the program samples is still that
+output's capture, so a drag sheet shows only what that output captured
+([Attachment](#attachment)).
 Changing a slot (`wlr_scene_node_set_animation`,
 `:1637-1734`) updates the whole scene for a transient slot. For a persistent
 slot it damages the drawn box before and after the change
