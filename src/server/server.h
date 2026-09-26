@@ -174,8 +174,8 @@ namespace umbriel {
     [[nodiscard]] wlr_scene_tree* dragTree() const { return m_dragTree; }
     // Parent for wl_data_device drag icons; moved to the cursor while a drag is active.
     [[nodiscard]] wlr_scene_tree* dragIconTree() const { return m_dragIconTree; }
-    // The border light layer, created on first use once the scene exists; null before that.
-    wlr_scene_tree* ensureEffectLightLayer();
+    // Creates the border light layer once the scene exists, or destroys it and unregisters it from the scene.
+    void setEffectLightLayer(bool present);
     // Above top panels, below overlay/lock (fullscreen xdg views).
     [[nodiscard]] wlr_scene_tree* fullscreenTree() const { return m_fullscreenTree; }
     [[nodiscard]] wlr_scene_tree* pinnedTree() const { return m_pinnedTree; }

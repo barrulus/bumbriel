@@ -156,7 +156,7 @@ namespace umbriel {
     } else if (!fadeNeeded) {
       m_builtinFade.reset();
     }
-    ensureLightLayer();
+    syncLightLayer();
   }
 
   void EffectRegistry::updateInstance(const void* owner, const EffectInstanceState& state) {
@@ -173,13 +173,11 @@ namespace umbriel {
 
   void EffectRegistry::removeInstance(const void* owner) { m_ledger.remove(owner); }
 
-  void EffectRegistry::ensureLightLayer() {
-    for (const EffectPreset& preset : config().effects.presets) {
-      if (preset.kind == EffectKind::Border && preset.light && m_programs.contains(preset.name)) {
-        m_server->ensureEffectLightLayer();
-        return;
-      }
-    }
+  void EffectRegistry::syncLightLayer() {
+    const bool lit = std::ranges::any_of(config().effects.presets, [this](const EffectPreset& entry) {
+      return entry.light && preset(entry.name, EffectKind::Border) != nullptr;
+    });
+    m_server->setEffectLightLayer(lit);
   }
 
   fx_effect_shader* EffectRegistry::preset(std::string_view name, EffectKind kind) const {

@@ -62,8 +62,8 @@ namespace umbriel {
     void updateInstance(const void* owner, const EffectInstanceState& state);
     void removeInstance(const void* owner);
     void removeOutput(const void* output) { m_ledger.removeOutput(output); }
-    // Creates the scene's light layer once a compiled border preset has `light`.
-    void ensureLightLayer();
+    // Keeps the scene's light layer while a compiled border preset has `light`, and removes it otherwise.
+    void syncLightLayer();
 
   private:
     struct Entry {

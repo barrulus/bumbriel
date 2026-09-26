@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears; unknown and
 # mismatched names are reported and leave the setting off; a [colors] change reaches a palette shader without a
-# recompile.
+# recompile; the light layer goes away with the last lit preset and comes back with a new one.
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-reload.png"
 readonly LOG_MARK=$(($(wc -l < "$UMBRIEL_LOG") + 1))
@@ -98,4 +98,29 @@ if (( $(tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -c "Compiling border shader" 
   echo "a colour change recompiled the preset"
   exit 1
 fi
-echo "inert preset recovery, reference diagnostics, and palette updates without recompilation verified"
+# Light spills blue above the ring while the preset has a light table, and stops once a reload removes it; a further
+# reload that adds it back restores the light.
+glow() { "$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y - 20))"; }
+add_light() {
+  printf '\n[effects.preset.later.light]\nspread = 40\nintensity = 4\nthreshold = 0.2\n' >> "$UMBRIEL_CONFIG"
+  "$UMBRIEL" msg config-reload > /dev/null
+  "$UMBRIEL" settle > /dev/null
+  grim "$IMAGE"
+  read -r _ _ b < <(glow)
+  if (( b < 15 )); then
+    echo "$1: the lit preset spilled no light above the ring: blue=$b"
+    exit 1
+  fi
+}
+add_light "first light"
+sed -i '/^\[effects\.preset\.later\.light\]$/,$d' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+read -r _ _ b < <(glow)
+if (( b > 4 )); then
+  echo "light stayed after the reload removed the last lit preset: blue=$b"
+  exit 1
+fi
+add_light "light added back"
+echo "inert preset recovery, reference diagnostics, palette updates without recompilation, and light layer reloads verified"
