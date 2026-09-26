@@ -327,4 +327,55 @@ fi
 "$UMBRIEL" msg overview-close > /dev/null
 "$UMBRIEL" settle > /dev/null
 
+# A card's window effect covers every mirrored client surface, as it covers the live view's surface tree. With
+# OFFSET_GEOMETRY the red root sits above a blue child that the surface walk visits first; by default the blue child
+# covers the red root from above. Either card turns green with none of its root's red or its child's blue left.
+card_surfaces() {
+  local title=$1 client
+  OFFSET_GEOMETRY=$2 "$UMBRIEL_SUBSURFACE_CLIENT" "$title" > "$UMBRIEL_RUNTIME_DIR/$title.log" 2>&1 &
+  client=$!
+  for _ in $(seq 60); do
+    grep -q '^mapped$' "$UMBRIEL_RUNTIME_DIR/$title.log" && break
+    sleep 0.05
+  done
+  grep -q '^mapped$' "$UMBRIEL_RUNTIME_DIR/$title.log" || {
+    echo "$title never mapped: $(cat "$UMBRIEL_RUNTIME_DIR/$title.log")"
+    exit 1
+  }
+  "$UMBRIEL" settle > /dev/null
+  "$UMBRIEL" msg overview-open > /dev/null
+  "$UMBRIEL" settle > /dev/null
+  grim "$IMAGE"
+  card_green=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'g > 0.7 && r < 0.2 && b < 0.2')
+  card_red=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r > 0.7 && g < 0.2 && b < 0.2')
+  card_blue=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'b > 0.7 && r < 0.2 && g < 0.2')
+  "$UMBRIEL" msg overview-close > /dev/null
+  "$UMBRIEL" settle > /dev/null
+  "$UMBRIEL" clock-freeze
+  kill "$client"
+  for _ in $(seq 100); do
+    [[ -z $("$UMBRIEL" windows --json | jq -c --arg title "$title" '.[] | select(.title == $title)') ]] && break
+    sleep 0.02
+  done
+  [[ -z $("$UMBRIEL" windows --json | jq -c --arg title "$title" '.[] | select(.title == $title)') ]] || {
+    echo "$title never left the window list after its client exited"
+    exit 1
+  }
+  "$UMBRIEL" clock-advance 5000
+  "$UMBRIEL" clock-resume
+  "$UMBRIEL" settle > /dev/null
+}
+card_surfaces card-below 40
+if (( card_green < 10000 || card_red > 20 || card_blue > 20 )); then
+  echo "a card whose first surface lies below its root missed the window effect: green $card_green," \
+    "red $card_red, blue $card_blue"
+  exit 1
+fi
+card_surfaces card-above 0
+if (( card_green < 10000 || card_red > 20 || card_blue > 20 )); then
+  echo "a card whose child covers its root missed the window effect: green $card_green, red $card_red," \
+    "blue $card_blue"
+  exit 1
+fi
+
 echo "in-place window effect at rest, inside a capture, per rule, on overlay focus, and on overview cards verified"

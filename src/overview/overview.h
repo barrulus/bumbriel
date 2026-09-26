@@ -169,6 +169,9 @@ namespace umbriel {
       View* view = nullptr;
       size_t workspaceIndex = 0; // workspace index inside the output's group
       wlr_scene_tree* tree = nullptr;
+      // Parent of every `surfaces` buffer, at the card origin: the card's window and overlay slots live here, as they
+      // live on the view's surface tree.
+      wlr_scene_tree* surfaceTree = nullptr;
       wlr_scene_border* border = nullptr;
       int borderPadding = 0; // effect padding the ring was last laid out with, scaled
       SurfaceBlur blur;
