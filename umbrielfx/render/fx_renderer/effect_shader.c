@@ -12,6 +12,13 @@
 // Shared by every kind. Its names are the shared preamble contract.
 static const char kPreamble[] =
     "precision highp float;\n"
+    // Native GPU sin/cos can give discontinuous or degenerate results for large
+    // angles even at highp (reproduced on Intel with hours-old umbriel_time).
+    // Reduce each argument, not time itself: resetting time would break effects
+    // with different speeds and periods. A macro expands its own name only once,
+    // retaining the built-in's vector overloads and constant-expression support.
+    "#define sin(x) sin(mod((x), 6.283185307179586))\n"
+    "#define cos(x) cos(mod((x), 6.283185307179586))\n"
     "varying vec2 v_texcoord;\n"
     "uniform sampler2D umbriel_texture;\n"
     "uniform mat3 umbriel_sample_matrix;\n"
