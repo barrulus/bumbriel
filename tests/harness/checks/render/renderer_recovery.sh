@@ -70,6 +70,7 @@ if [[ $recovered_again != true ]]; then
   exit 1
 fi
 
+"$UMBRIEL" settle > /dev/null
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/recovery.png"
 "$UMBRIEL" clock-freeze
 "$UMBRIEL_UNMAP_CLIENT" recovery-fade 600 400 > "$UMBRIEL_RUNTIME_DIR/recovery-fade.log" 2>&1 &
