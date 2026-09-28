@@ -572,7 +572,7 @@ namespace umbriel {
     };
     view->syncAnimationEffects(
         card.tree, card.border != nullptr ? &card.border->node : nullptr, &card.surfaceTree->node, &cardGate,
-        card.owner->output
+        card.owner->output, static_cast<float>(zoom())
     );
   }
 

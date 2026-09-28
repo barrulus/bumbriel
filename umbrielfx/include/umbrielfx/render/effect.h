@@ -102,6 +102,9 @@ struct fx_animation_parameters {
   // Logical pixels the drawn rectangle grows past the node bounds. Honoured
   // by FX_SLOT_BORDER_EFFECT and FX_SLOT_DRAG only.
   int expand;
+  // Scene logical pixels per effect logical pixel; zero means 1.
+  // Scales shader coordinates, leaving raster and sampling bounds unchanged.
+  float scale;
   unsigned uniform_count;
   struct fx_uniform uniforms[FX_UNIFORMS_MAX];
   // Emission settings for FX_SLOT_BORDER_EFFECT.

@@ -1633,6 +1633,7 @@ static bool parameters_equal(const struct fx_animation_parameters* a, const stru
       && a->transition_id == b->transition_id
       && memcmp(a->random_seed, b->random_seed, sizeof(a->random_seed)) == 0
       && a->expand == b->expand
+      && a->scale == b->scale
       && a->light.enabled == b->light.enabled
       && a->light.spread == b->light.spread
       && a->light.intensity == b->light.intensity

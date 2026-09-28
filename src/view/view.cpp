@@ -1414,7 +1414,7 @@ namespace umbriel {
 
   void View::syncAnimationEffects(
       wlr_scene_tree* target, wlr_scene_node* border, wlr_scene_node* surface, const BorderEffectGate* gate,
-      Output* cardOutput
+      Output* cardOutput, float scale
   ) {
     const bool ownTrees = target == nullptr;
     if (ownTrees) {
@@ -1499,6 +1499,7 @@ namespace umbriel {
           .border = border,
           .captureSurface = captureSurface,
           .gate = gate != nullptr ? *gate : ownGate,
+          .scale = scale,
           .seconds = m_effects.configured() && output != nullptr ? output->effectSeconds() : 0.0F,
 #ifdef UMBRIEL_TEST_IPC
           .clockAdvancing = !m_server->animationClockFrozen(),

@@ -65,7 +65,7 @@ namespace umbriel {
     // `border`, and `surface`, gated by `gate` and driven by `cardOutput`.
     void syncAnimationEffects(
         wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr, wlr_scene_node* surface = nullptr,
-        const BorderEffectGate* gate = nullptr, Output* cardOutput = nullptr
+        const BorderEffectGate* gate = nullptr, Output* cardOutput = nullptr, float scale = 1.0F
     );
     [[nodiscard]] ViewEffects& effects() { return m_effects; }
     [[nodiscard]] wlr_scene_tree* captureTree() const;
