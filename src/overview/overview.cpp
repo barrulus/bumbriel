@@ -576,6 +576,12 @@ namespace umbriel {
     );
   }
 
+  void Overview::refreshEffectBindings() {
+    if (m_active) {
+      syncCardEffects();
+    }
+  }
+
   void Overview::syncCardEffects() {
     for (const auto& state : m_outputs) {
       for (const auto& card : state->cards) {
@@ -3237,6 +3243,8 @@ namespace umbriel {
       } else {
         m_dragSourceWorkspace->layout().insertView(view, m_dragSourceColumn);
       }
+      // Notify membership rules before arranging the restored layout.
+      m_dragSourceWorkspace->markArrange(false);
       m_dragSourceWorkspace->arrange(false);
     }
 

@@ -1,5 +1,6 @@
 #include "view/effects.h"
 
+#include "config/config.h"
 #include "scene/effect_registry.h"
 
 #include <algorithm>
@@ -21,10 +22,17 @@ namespace umbriel {
     }
   }
 
-  void ViewEffects::resolve(const Effects& effects, const ResolvedWindowRule& rule) {
-    const ViewEffectNames names = resolveViewEffectNames(effects, rule);
-    m_border = names.border;
-    m_window = names.window;
+  void ViewEffects::resetSlots() {
+    m_borderSlot = {};
+    m_windowSlot = {};
+    m_border.clear();
+    m_window.clear();
+    m_overlay = false;
+  }
+
+  void ViewEffects::syncNames(const Effects& effects) {
+    m_border = m_borderSlot.effectiveName();
+    m_window = m_windowSlot.effectiveName();
     const EffectPreset* border = m_border.empty() ? nullptr : findEffectPreset(effects, m_border);
     m_overlay = border != nullptr && !border->overlay.empty();
   }

@@ -161,6 +161,15 @@ bool wlr_scene_node_set_animation_output_clip(struct wlr_scene_node* node, const
 // never copies.
 void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destination, struct wlr_scene_node* source);
 
+// Requirements of the exact programs currently bound in a subtree. Read-only;
+// use when retaining a scene copy beyond the registry entries that created it.
+struct fx_effect_requirements {
+  bool persistent;
+  bool in_place;
+  bool light;
+};
+struct fx_effect_requirements wlr_scene_node_effect_requirements(struct wlr_scene_node* node);
+
 // The extents of the enabled leaves under `node` in node-local coordinates: the box a slot on `node` draws over
 // before its expand. False, with an empty box, when nothing under it is drawn.
 bool wlr_scene_node_effect_bounds(struct wlr_scene_node* node, struct wlr_box* box);

@@ -1800,6 +1800,27 @@ void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destinat
   }
 }
 
+struct fx_effect_requirements wlr_scene_node_effect_requirements(struct wlr_scene_node* node) {
+  struct fx_effect_requirements requirements = {0};
+  struct scene_animation* animation = scene_animation_get(node);
+  if (animation != NULL) {
+    requirements.persistent = animation->persistent;
+    requirements.in_place = animation->in_place;
+    requirements.light = animation->shaders[FX_SLOT_BORDER_EFFECT] != NULL
+        && animation->parameters[FX_SLOT_BORDER_EFFECT].light.enabled;
+  }
+  if (node->type == WLR_SCENE_NODE_TREE) {
+    struct wlr_scene_node* child;
+    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+      const struct fx_effect_requirements nested = wlr_scene_node_effect_requirements(child);
+      requirements.persistent |= nested.persistent;
+      requirements.in_place |= nested.in_place;
+      requirements.light |= nested.light;
+    }
+  }
+  return requirements;
+}
+
 void wlr_scene_tree_set_clip(struct wlr_scene_tree* tree, const struct wlr_box* box) {
   struct wlr_box new_clip = box != NULL ? *box : (struct wlr_box){0};
   struct scene_tree_clip* clip = scene_tree_clip_try_get(tree);

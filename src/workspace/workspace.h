@@ -141,6 +141,9 @@ namespace umbriel {
     void markArrange(bool animate = true);
     void flushArrange();
     [[nodiscard]] bool arrangePending() const { return m_arrangePending; }
+    // Arranges a temporary layout for inspection without applying rules,
+    // configuring clients, or changing the live layout/presentation.
+    [[nodiscard]] std::unique_ptr<Layout> previewArrangedLayout() const;
     void refreshAloneRuleStates();
     void syncViewPresentation(View* view);
     [[nodiscard]] View* focusAdjacent(int direction) const;

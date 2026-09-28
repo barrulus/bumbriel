@@ -155,6 +155,15 @@ namespace umbriel {
         warnAt(node.source(), "ignoring {} ({})", path, *invalid);
         return std::nullopt;
       }
+      if (const auto reference = effectActionReference(bind)) {
+        const auto constraint =
+            reference->poolRequired ? EffectReferenceConstraint::PoolRequired : EffectReferenceConstraint::PresetOrPool;
+        if (const auto invalid =
+                effectReferenceError(loaded.effects, reference->name, reference->kind, false, constraint)) {
+          warnAt(node.source(), "ignoring {} ({})", path, *invalid);
+          return std::nullopt;
+        }
+      }
       return bind;
     }
 

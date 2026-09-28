@@ -474,6 +474,8 @@ namespace umbriel {
       throw std::runtime_error("renderer or allocator opened an excluded GPU");
     }
 
+    m_cursorEffectSlot.configuredSelector = config().effects.cursor;
+    resolveEffectSlot(m_cursorEffectSlot, EffectKind::Cursor);
     effectRegistry().prepare(m_renderer);
     m_compositor = wlr_compositor_create(m_display, 5, m_renderer);
     wlr_subcompositor_create(m_display);
@@ -1205,6 +1207,11 @@ namespace umbriel {
         m_captured(box), m_canvasX(tree->node.x), m_canvasY(tree->node.y), m_borders(std::move(borders)),
         m_shadow(shadow) {
     m_event = event;
+    const fx_effect_requirements requirements = wlr_scene_node_effect_requirements(&tree->node);
+    m_retainedPersistent = requirements.persistent;
+    m_retainedInPlace = requirements.in_place;
+    m_retainedLight = requirements.light;
+    server.effects().retainRequirements(requirements);
     if (m_shadow.node != nullptr) {
       m_shadowWidth = m_shadow.node->width;
       m_shadowHeight = m_shadow.node->height;
@@ -1264,6 +1271,11 @@ namespace umbriel {
     }
     if (m_tree != nullptr) {
       wlr_scene_node_destroy(&m_tree->node);
+    }
+    if (m_server != nullptr) {
+      m_server->effects().releaseRequirements(
+          {.persistent = m_retainedPersistent, .in_place = m_retainedInPlace, .light = m_retainedLight}
+      );
     }
   }
 
@@ -1547,6 +1559,9 @@ namespace umbriel {
     // A window whose latest configure is still queued, or not yet acknowledged and committed, has not drawn the state
     // the compositor asked for.
     for (const auto& view : m_registry.all()) {
+      if (view->effectSelectionPending()) {
+        return false;
+      }
       if (!view->mapped() || view->xwayland() || view->toplevel() == nullptr) {
         continue;
       }

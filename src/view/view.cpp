@@ -271,6 +271,10 @@ namespace umbriel {
   }
 
   View::~View() {
+    if (m_effectSelectionIdle != nullptr) {
+      wl_event_source_remove(m_effectSelectionIdle);
+      m_effectSelectionIdle = nullptr;
+    }
     if (m_acceptClientMaximizeIdle != nullptr) {
       wl_event_source_remove(m_acceptClientMaximizeIdle);
       m_acceptClientMaximizeIdle = nullptr;
@@ -2383,7 +2387,8 @@ namespace umbriel {
 
   void View::refreshConfigChrome() {
     m_focusDimInitialized = false;
-    setBorderFocused(false);
+    // Temporary unfocus would consume pool selections during an unrelated reload.
+    setBorderFocused(m_borderFocusedState);
     updateBorderGeometry();
     applyCornerRadius();
     applyDynamicRules();
@@ -2933,6 +2938,7 @@ namespace umbriel {
     // keep its cached double-buffered state authoritative.
     syncContentType(m_toplevel->base->surface);
     m_mapped = true;
+    m_effects.resetSlots();
     m_tiledOpeningDeferred = false;
     m_presentedTiledBox = {};
     m_acceptClientMaximizeRequests = config().general.honorRestoredMaximize;
@@ -3167,6 +3173,10 @@ namespace umbriel {
   }
 
   void View::handleUnmap() {
+    if (m_effectSelectionIdle != nullptr) {
+      wl_event_source_remove(m_effectSelectionIdle);
+      m_effectSelectionIdle = nullptr;
+    }
     m_resizeCrossfade.discard();
     Workspace* closingWorkspace = m_workspace;
     Cursor* cursor = m_server->cursor();
@@ -3266,8 +3276,14 @@ namespace umbriel {
       // Move out of the fullscreen layer back to the normal workspace/xdg tree.
       setSceneParent(m_workspace ? m_workspace->viewLayer(m_tiled) : m_server->xdgTree());
     }
+    const bool hadRuntimeEffects = m_effects.slot(EffectKind::Border).runtimeSelector.has_value()
+        || m_effects.slot(EffectKind::Window).runtimeSelector.has_value();
     m_mapped = false;
     m_effects.detach();
+    m_effects.resetSlots();
+    if (hadRuntimeEffects) {
+      m_server->effects().prepare(m_server->renderer());
+    }
     m_openingParentRequested = false;
     m_acceptClientMaximizeRequests = false;
     m_consumeRestoredMaximizeRequest = false;
@@ -4783,12 +4799,64 @@ namespace umbriel {
     return m_rules;
   }
 
+  void View::refreshEffectSelection() {
+    applyDynamicRules();
+    scheduleFrame();
+    m_server->scheduleIpcWindowsEvent();
+  }
+
+  void View::onEffectSelectionIdle(void* data) {
+    auto* view = static_cast<View*>(data);
+    view->m_effectSelectionIdle = nullptr;
+    if (view->m_mapped) {
+      view->refreshEffectSelection();
+    }
+  }
+
   void View::applyDynamicRules(const ResolvedWindowRule* resolved) {
+    const bool frame = m_server->handlingOutputFrame();
+    if (!frame && m_effectSelectionIdle != nullptr) {
+      wl_event_source_remove(m_effectSelectionIdle);
+      m_effectSelectionIdle = nullptr;
+    }
     const ResolvedWindowRule& rule = resolved != nullptr ? *resolved : resolvedRules();
     m_appliedRuleState = ruleState();
     // Tile spacing stays on the global border width, so a decoration change redraws this window without an arrange.
     const bool ringChanged = m_decoration.applyRule(rule);
-    m_effects.resolve(config().effects, rule);
+    const auto resolve = [&](EffectKind kind, const std::string& fallback, const std::optional<std::string>& selected) {
+      EffectSlot& slot = m_effects.slot(kind);
+      const std::string& selector = selected ? *selected : fallback;
+      const auto source = selected ? EffectSelectorSource::Rule : EffectSelectorSource::Default;
+      if (frame) {
+        if (slot.configuredSelector == selector && slot.configuredSource == source) {
+          return;
+        }
+        if ((!selector.empty() && selector != kEffectOff) || !slot.name.empty() || !slot.pool.empty()) {
+          if (m_effectSelectionIdle == nullptr) {
+            m_effectSelectionIdle =
+                wl_event_loop_add_idle(wl_display_get_event_loop(m_server->display()), onEffectSelectionIdle, this);
+            if (m_effectSelectionIdle == nullptr) {
+              kLog.error("failed to defer effect selection after a frame-time rule change");
+            }
+          }
+          return;
+        }
+        // Empty/off selectors need no allocation policy or idle source.
+      }
+      const auto before = std::tuple(slot.name, slot.pool, slot.source(), slot.suppressed);
+      slot.configuredSelector = selector;
+      slot.configuredSource = source;
+      if (!frame) {
+        m_server->resolveEffectSlot(slot, kind, m_mapped);
+      }
+      if (m_mapped && before != std::tuple(slot.name, slot.pool, slot.source(), slot.suppressed)) {
+        scheduleFrame();
+        m_server->scheduleIpcWindowsEvent();
+      }
+    };
+    resolve(EffectKind::Border, config().effects.border, rule.borderEffect);
+    resolve(EffectKind::Window, config().effects.window, rule.windowEffect);
+    m_effects.syncNames(config().effects);
     const bool paddingChanged = m_decoration.setBorderPadding(m_effects.borderPadding());
     if (ringChanged || paddingChanged) {
       updateBorderGeometry();
@@ -4827,6 +4895,8 @@ namespace umbriel {
       m_workspace->syncViewPresentation(this);
     }
     if (m_mapped) {
+      // Static effects and frozen clocks may never trigger another animation tick.
+      syncAnimationEffects();
       m_server->refreshOutputPolicies();
     }
   }
