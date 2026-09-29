@@ -113,10 +113,9 @@ diagnostic and leaves the preset inert until the file appears, and a preset
 without `shader` is inert as well.
 
 Presets and pools share a namespace. Names must be non-empty, cannot be `off`,
-and cannot contain `/`. **Compatibility change:** rename any existing preset
-containing `/`; it is now the separator between an action selector and target.
-There are no automatic aliases. A colliding pool is rejected while the preset
-remains valid, with diagnostics pointing to both declarations.
+and cannot contain `/`, which separates an action selector from its target. A
+colliding pool is rejected while the preset remains valid, with diagnostics
+pointing to both declarations.
 
 | Key | Kinds | Default | Description |
 | --- | --- | --- | --- |
@@ -205,18 +204,18 @@ The sixteen [effect actions](actions.md) operate independently on window,
 border, screen, and cursor slots:
 
 ```sh
-umbriel msg effect-window-set scanlines
-umbriel msg effect-border-cycle borders
+umbriel msg effect-window-set:scanlines
+umbriel msg effect-border-cycle:borders
 umbriel msg effect-window-toggle
 umbriel msg effect-window-reset
-umbriel msg effect-screen-set vignette/HDMI-A-1
-umbriel msg effect-cursor-set glow
+umbriel msg effect-screen-set:vignette/HDMI-A-1
+umbriel msg effect-cursor-set:glow
 ```
 
 Window/border actions default to the focused window; screen actions use the
 preferred output. Set and cycle accept a target after the first `/`, preserving
 any further slashes in output names. An unnamed targeted cycle is
-`effect-window-cycle /<window-id>`. Toggle/reset take an optional target directly.
+`effect-window-cycle:/<window-id>`. Toggle/reset take an optional target directly.
 Cursor actions have no target. Explicit screen targets can address present
 disabled outputs; their cached selection is visible when they are enabled again.
 
