@@ -273,6 +273,7 @@ if build_tests
     'border-geometry-tree',
     'border-light',
     'border-light-lifecycle',
+    'border-light-motion',
     'visible-in-box',
     'in-place',
     'damage-expansion',

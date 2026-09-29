@@ -1209,6 +1209,72 @@ static bool test_border_light_lifecycle(struct fixture *fixture) {
 	return ok;
 }
 
+// Moving a workspace must repaint unlit siblings outside the border light's damage.
+static bool border_light_motion(struct fixture *fixture, bool horizontal, int direction) {
+	struct wlr_swapchain *swapchain = create_swapchain(fixture);
+	struct fx_effect_shader *program = fx_effect_shader_create(fixture->renderer,
+		FX_EFFECT_BORDER, kLeftEdgeSource, "border-light-motion");
+	if (!check(swapchain != NULL && program != NULL, "swapchain and border program")) {
+		wlr_swapchain_destroy(swapchain);
+		fx_effect_shader_unref(program);
+		return false;
+	}
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
+	const float black[4] = { 0, 0, 0, 1 }, green[4] = { 0, 1, 0, 1 }, white[4] = { 1, 1, 1, 1 };
+	wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+	struct wlr_scene_tree *workspace = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_rect_create(workspace, horizontal ? 12 : 16, horizontal ? 16 : 12, green);
+	struct wlr_scene_tree *frame = wlr_scene_tree_create(workspace);
+	wlr_scene_node_set_position(&frame->node, horizontal ? 0 : 20, horizontal ? 20 : 0);
+	struct wlr_scene_border *border = wlr_scene_border_create(frame, white, white);
+	const struct clipped_region hole = { .area = { 2, 2, 4, 4 } };
+	wlr_scene_border_set_geometry(border, 8, 8, 2, 0, hole, (struct fx_corner_radii){0}, (struct fx_corner_radii){0});
+	struct wlr_scene_tree *layer = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_set_effect_light_layer(scene, layer);
+	struct fx_animation_parameters parameters = {
+		.progress = 1, .linear_progress = 1, .direction = 1,
+		.light = { .enabled = true, .spread = 3, .intensity = 4, .threshold = 0.1f },
+	};
+	wlr_scene_node_set_animation(&frame->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+	bool ok = warm_up(output, swapchain);
+	wlr_scene_node_set_position(&workspace->node, horizontal ? 2 * direction : 0, horizontal ? 0 : 2 * direction);
+	const int vacated = direction < 0 ? 11 : 0;
+	const int x = horizontal ? vacated : 2, y = horizontal ? 2 : vacated;
+	ok &= check(pixman_region32_contains_point(&output->pending_commit_damage, x, y, NULL),
+		"workspace motion damages the unfocused window's old pixels outside the light");
+	struct wlr_output_state state;
+	struct wlr_buffer *buffer = render_frame(output, swapchain, &state);
+	ok &= check(buffer != NULL, "workspace motion frame");
+	if (buffer != NULL) {
+		uint8_t pixel[4];
+		ok &= fixture_read_pixel(fixture, buffer, x, y, pixel)
+			&& check(pixel[1] < 5, "workspace motion leaves no unfocused window trail");
+		ok &= fixture_read_pixel(fixture, buffer, 5, 5, pixel)
+			&& check(pixel[1] > 250, "the moving window remains visible");
+		wlr_buffer_unlock(buffer);
+	}
+	wlr_output_state_finish(&state);
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_swapchain_destroy(swapchain);
+	fx_effect_shader_unref(program);
+	return ok;
+}
+
+static bool test_border_light_motion(struct fixture *fixture) {
+	bool ok = true;
+	for (int axis = 0; axis < 2; axis++) {
+		for (int direction = -1; direction <= 1; direction += 2) {
+			if (!border_light_motion(fixture, axis == 0, direction)) {
+				fprintf(stderr, "FAIL: border light motion axis=%s direction=%d\n",
+					axis == 0 ? "horizontal" : "vertical", direction);
+				ok = false;
+			}
+		}
+	}
+	return ok;
+}
+
 // The visibility query tests a subtree's leaf visible regions against a layout box.
 static bool test_visible_in_box(struct fixture *fixture) {
 	struct wlr_scene *scene = wlr_scene_create();
@@ -2123,6 +2189,8 @@ int main(int argc, char *argv[]) {
 		ok = test_border_light(&fixture);
 	} else if (strcmp(argv[1], "border-light-lifecycle") == 0) {
 		ok = test_border_light_lifecycle(&fixture);
+	} else if (strcmp(argv[1], "border-light-motion") == 0) {
+		ok = test_border_light_motion(&fixture);
 	} else if (strcmp(argv[1], "visible-in-box") == 0) {
 		ok = test_visible_in_box(&fixture);
 	} else if (strcmp(argv[1], "in-place") == 0) {

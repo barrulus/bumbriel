@@ -1515,7 +1515,6 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
     return;
   }
   effects = scene_effects_get(scene, false);
-  scene_lights_sync(effects, node);
 
   pixman_region32_t visible;
   if (!damage) {
@@ -1523,6 +1522,9 @@ static void scene_node_update(struct wlr_scene_node* node, pixman_region32_t* da
     scene_node_visibility(node, &visible);
     damage = &visible;
   }
+
+  // Preserve old visibility before light updates recalculate it for the moving subtree.
+  scene_lights_sync(effects, node);
 
   pixman_region32_t update_region;
   pixman_region32_init(&update_region);
