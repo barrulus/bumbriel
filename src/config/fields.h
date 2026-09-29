@@ -69,6 +69,8 @@ namespace umbriel {
   // that names one.
   [[nodiscard]] std::optional<std::string> scratchpadSelectorError(const Config& loaded, const Keybind& binding);
   [[nodiscard]] std::optional<std::string> scratchpadTargetError(const Config& loaded, std::string_view name);
+  // Why an effect action may not name its preset or pool, or nullopt when it may. Effects are read first.
+  [[nodiscard]] std::optional<std::string> effectActionError(const Config& loaded, const Keybind& binding);
 
   void addEffectReference(
       std::vector<EffectReference>& references, std::string context,

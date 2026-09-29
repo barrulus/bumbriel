@@ -50,12 +50,7 @@ namespace umbriel {
     }
 
     void readKeybinds(Section& section, Config& loaded, registry::ReadContext& context) {
-      struct BindingSource {
-        Keybind bind;
-        toml::source_region source;
-        std::string chord;
-      };
-      std::vector<BindingSource> sources;
+      std::vector<Keybind> configured;
       auto sameChord = [](const Keybind& left, const Keybind& right) {
         return left.submap == right.submap
             && left.modifiers == right.modifiers
@@ -116,34 +111,19 @@ namespace umbriel {
           continue;
         }
 
-        if (const auto invalid = scratchpadSelectorError(loaded, binding)) {
+        if (const auto invalid =
+                scratchpadSelectorError(loaded, binding).or_else([&] { return effectActionError(loaded, binding); })) {
           warnAt(key.source(), "ignoring keybind '{}' ({})", chord, *invalid);
           continue;
         }
 
-        if (std::ranges::any_of(sources, [&](const BindingSource& existing) {
-              return sameChord(existing.bind, binding);
-            })) {
+        if (std::ranges::any_of(configured, [&](const Keybind& existing) { return sameChord(existing, binding); })) {
           warnAt(key.source(), "duplicate keybind {}", chord);
         }
-        std::erase_if(sources, [&](const BindingSource& existing) { return sameChord(existing.bind, binding); });
-        sources.push_back({.bind = binding, .source = key.source(), .chord = chord});
+        std::erase_if(configured, [&](const Keybind& existing) { return sameChord(existing, binding); });
+        configured.push_back(binding);
         std::erase_if(loaded.keybinds, [&](const Keybind& existing) { return sameChord(existing, binding); });
         loaded.keybinds.push_back(std::move(binding));
-      }
-      // Validate only the final chord winners.
-      for (const auto& source : sources) {
-        const auto reference = effectActionReference(source.bind);
-        if (!reference) {
-          continue;
-        }
-        const auto constraint =
-            reference->poolRequired ? EffectReferenceConstraint::PoolRequired : EffectReferenceConstraint::PresetOrPool;
-        if (const auto invalid =
-                effectReferenceError(loaded.effects, reference->name, reference->kind, false, constraint)) {
-          warnAt(source.source, "ignoring keybind '{}' ({})", source.chord, *invalid);
-          std::erase_if(loaded.keybinds, [&](const Keybind& binding) { return sameChord(source.bind, binding); });
-        }
       }
     }
 

@@ -151,18 +151,10 @@ namespace umbriel {
         warnAt(node.source(), R"(invalid {} "{}")", path, *value);
         return std::nullopt;
       }
-      if (const auto invalid = scratchpadSelectorError(loaded, bind)) {
+      if (const auto invalid =
+              scratchpadSelectorError(loaded, bind).or_else([&] { return effectActionError(loaded, bind); })) {
         warnAt(node.source(), "ignoring {} ({})", path, *invalid);
         return std::nullopt;
-      }
-      if (const auto reference = effectActionReference(bind)) {
-        const auto constraint =
-            reference->poolRequired ? EffectReferenceConstraint::PoolRequired : EffectReferenceConstraint::PresetOrPool;
-        if (const auto invalid =
-                effectReferenceError(loaded.effects, reference->name, reference->kind, false, constraint)) {
-          warnAt(node.source(), "ignoring {} ({})", path, *invalid);
-          return std::nullopt;
-        }
       }
       return bind;
     }

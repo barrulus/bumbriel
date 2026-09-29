@@ -111,6 +111,16 @@ namespace umbriel {
     return configured ? std::nullopt : std::optional{std::format("unknown scratchpad '{}'", name)};
   }
 
+  std::optional<std::string> effectActionError(const Config& loaded, const Keybind& binding) {
+    const auto reference = effectActionReference(binding);
+    if (!reference) {
+      return std::nullopt;
+    }
+    const auto constraint =
+        reference->poolRequired ? EffectReferenceConstraint::PoolRequired : EffectReferenceConstraint::PresetOrPool;
+    return effectReferenceError(loaded.effects, reference->name, reference->kind, false, constraint);
+  }
+
   void addEffectReference(
       std::vector<EffectReference>& references, std::string context,
       const std::pair<std::string, toml::source_region>& selector, EffectKind kind, bool allowOff,

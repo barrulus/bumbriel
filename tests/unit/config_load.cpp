@@ -3877,6 +3877,8 @@ choose = ['window']
 'Mod+F7' = 'effect-window-set:off'
 'Mod+F8' = 'effect-window-cycle'
 'submap[effects],F9' = 'effect-window-set:missing'
+'Mod+F10' = 'effect-window-set:window'
+'Mod+f10' = 'effect-window-set:missing'
 [hot_corners.top_left]
 enabled = false
 action = 'effect-screen-set:window'
@@ -3903,7 +3905,9 @@ action = 'effect-window-cycle:windows'
       CHECK(!reference || reference->name == "window" || reference->name == "windows");
     }
   }
-  CHECK_EQ(valid, size_t{5});
+  // Six, not five: a rejected spelling of a chord leaves its valid spelling bound, as every other rejected bind does.
+  CHECK_EQ(valid, size_t{6});
+  CHECK(containsDiagnostic(store, "ignoring keybind 'Mod+f10'"));
   CHECK(std::ranges::any_of(store.diagnostics(), [&](const auto& diagnostic) {
     return diagnostic.file == file.path().string() && diagnostic.message.contains("Mod+F4");
   }));
