@@ -153,17 +153,17 @@ for _ in $(seq 100); do
   sleep 0.02
 done
 "$UMBRIEL" clock-advance 1
-# PR2 capture-runtime-prune: no owner remains; force preparation to prune the
+# capture-runtime-prune: no owner remains; force preparation to prune the
 # runtime-only program while the frozen closing copy still holds its version.
 printf '\n[effects.pool.snapshot_unused]\nkind = "window"\nchoose = []\n' >> "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" effects --json | jq -e '.presets[] | select(.name == "tint") | .state == "unreferenced"' > /dev/null || { echo "PR2 capture-runtime-prune"; exit 1; }
+"$UMBRIEL" effects --json | jq -e '.presets[] | select(.name == "tint") | .state == "unreferenced"' > /dev/null || { echo "capture-runtime-prune"; exit 1; }
 # Remove every effect definition while the copied shader is still visible.
 # Its retained requirements must continue to update output capture policy.
 awk '/^\[effects.preset.tint\]$/ {skip=1; next} /^\[effects.pool.snapshot_unused\]$/ {skip=1; next} /^\[/ {skip=0} !skip {print}' "$UMBRIEL_CONFIG" > "$UMBRIEL_RUNTIME_DIR/snapshot-no-definitions.toml"
 cp "$UMBRIEL_RUNTIME_DIR/snapshot-no-definitions.toml" "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" effects --json | jq -e '(.presets | length) == 0 and (.pools | length) == 0' > /dev/null || { echo "PR2 capture-no-definitions"; exit 1; }
+"$UMBRIEL" effects --json | jq -e '(.presets | length) == 0 and (.pools | length) == 0' > /dev/null || { echo "capture-no-definitions"; exit 1; }
 read -r r g b < <(centre)
 if (( r > 40 )); then
   echo "in_capture = false still showed the effect on a fading close snapshot: $r $g $b"

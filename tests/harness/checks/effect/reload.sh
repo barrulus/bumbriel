@@ -130,7 +130,7 @@ fi
 echo "inert preset recovery, palette updates without recompilation, light layer reloads, and screen palette updates" \
   "verified"
 
-# PR2 reload-runtime: an IPC-only pool keeps its override, cached member and
+# reload-runtime: an IPC-only pool keeps its override, cached member and
 # prepared programs through unrelated and effect-source reloads while suppressed.
 sed -i 's/^screen = "tint"$/screen = ""/' "$UMBRIEL_CONFIG"
 cat > "$UMBRIEL_RUNTIME_DIR/runtime-reload.glsl" <<'GLSL'
@@ -168,44 +168,44 @@ printf '\n// changed source\n' >> "$UMBRIEL_RUNTIME_DIR/runtime-reload.glsl"
 "$UMBRIEL" settle > /dev/null
 slot_after=$("$UMBRIEL" windows --json | jq -c --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect')
 if [[ $slot_before != "$slot_after" ]] || ! jq -e '.name == "runtime_reload_z" and .pool == "runtime_reload" and .source == "runtime" and .suppressed' <<< "$slot_after" > /dev/null; then
-  echo "PR2 reload-runtime-slot: suppressed override changed: $slot_before -> $slot_after"
+  echo "reload-runtime-slot: suppressed override changed: $slot_before -> $slot_after"
   exit 1
 fi
-"$UMBRIEL" effects --json | jq -e '[.presets[] | select(.name | startswith("runtime_reload_")) | .state] == ["compiled", "compiled", "compiled"]' > /dev/null || { echo "PR2 reload-runtime-prepared"; exit 1; }
+"$UMBRIEL" effects --json | jq -e '[.presets[] | select(.name | startswith("runtime_reload_")) | .state] == ["compiled", "compiled", "compiled"]' > /dev/null || { echo "reload-runtime-prepared"; exit 1; }
 "$UMBRIEL" msg "effect-border-toggle:$reload_id" > /dev/null
 "$UMBRIEL" settle > /dev/null
 grim "$IMAGE"
 read -r r g b < <(probe)
 if (( g < 240 || r > 15 || b > 15 )); then
-  echo "PR2 reload-runtime-pixel: restored override did not render: $r $g $b"
+  echo "reload-runtime-pixel: restored override did not render: $r $g $b"
   exit 1
 fi
-"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "runtime_reload_z" and (.suppressed | not)' > /dev/null || { echo "PR2 reload-runtime-no-pick"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "runtime_reload_z" and (.suppressed | not)' > /dev/null || { echo "reload-runtime-no-pick"; exit 1; }
 
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((x + w / 2))" "$((y + 20))")
 if (( r < 240 || g > 15 || b > 15 )); then
-  echo "PR2 reload-runtime-overlay: overlay did not render after suppressed reload: $r $g $b"
+  echo "reload-runtime-overlay: overlay did not render after suppressed reload: $r $g $b"
   exit 1
 fi
 # Removing the held member repairs the assignment, retaining the pool override.
 sed -i 's/^choose = \["runtime_reload_z", "runtime_reload_a"\]$/choose = ["runtime_reload_a"]/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
-"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "runtime_reload_a" and .pool == "runtime_reload" and .source == "runtime" and (.suppressed | not)' > /dev/null || { echo "PR2 reload-removed-member"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "runtime_reload_a" and .pool == "runtime_reload" and .source == "runtime" and (.suppressed | not)' > /dev/null || { echo "reload-removed-member"; exit 1; }
 # Inactive member history is not itself a compilation root.
-"$UMBRIEL" effects --json | jq -e '.presets[] | select(.name == "runtime_reload_z") | .state == "unreferenced"' > /dev/null || { echo "PR2 reload-history-not-root"; exit 1; }
+"$UMBRIEL" effects --json | jq -e '.presets[] | select(.name == "runtime_reload_z") | .state == "unreferenced"' > /dev/null || { echo "reload-history-not-root"; exit 1; }
 sed -i 's/^choose = \["runtime_reload_a"\]$/choose = ["runtime_reload_z", "runtime_reload_a"]/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect.name == "runtime_reload_a"' > /dev/null || { echo "PR2 reload-retains-valid-member"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect.name == "runtime_reload_a"' > /dev/null || { echo "reload-retains-valid-member"; exit 1; }
 # Deleting a pool, or changing a plain preset to the wrong kind, drops only the
 # invalid runtime selector and resolves the configured border default again.
 sed -i 's/^\[effects.pool.runtime_reload\]$/[effects.pool.runtime_reload_removed]/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "later" and .pool == "" and .source == "default"' > /dev/null || { echo "PR2 reload-deleted-override"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "later" and .pool == "" and .source == "default"' > /dev/null || { echo "reload-deleted-override"; exit 1; }
 "$UMBRIEL" msg "effect-border-set:runtime_reload_z/$reload_id" > /dev/null
 sed -i '/^\[effects.preset.runtime_reload_z\]$/,/^\[/s/^kind = "border"$/kind = "window"/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "later" and .pool == "" and .source == "default"' > /dev/null || { echo "PR2 reload-wrong-kind-override"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$reload_id" '.[] | select(.id == $id) | .border_effect | .name == "later" and .pool == "" and .source == "default"' > /dev/null || { echo "reload-wrong-kind-override"; exit 1; }
 
 # An unrelated chrome refresh must preserve focus while repainting. Temporarily
 # unfocusing the current window would consume an otherwise untouched rule pool.
@@ -258,8 +258,8 @@ done
 chrome_id=$(jq -r .id <<< "$chrome_helper")
 "$UMBRIEL" msg "window-focus:$reload_id" > /dev/null
 "$UMBRIEL" settle > /dev/null
-# This changes only effects, so the initially empty RR pool has never made a
-# handout even with the old temporary-unfocus chrome-refresh implementation.
+# This changes only effects, so the initially empty round-robin pool has never
+# made a handout.
 sed -i 's/^choose = \[\] # chrome pool starts inert during rule\/chrome setup$/choose = ["chrome_z", "chrome_a"]/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
@@ -269,18 +269,18 @@ sed -i 's/^accent_primary = "#FFFFFFFF"$/accent_primary = "#808080FF"/' "$UMBRIE
 "$UMBRIEL" settle > /dev/null
 chrome_after=$("$UMBRIEL" windows --json | jq -c --arg id "$reload_id" '.[] | select(.id == $id) | .window_effect')
 if [[ $chrome_before != "$chrome_after" ]] || ! jq -e '.name == "chrome_focused" and .pool == "chrome_focus"' <<< "$chrome_after" > /dev/null; then
-  echo "PR2 reload-chrome-focused-stable: color reload changed the focused owner: $chrome_before -> $chrome_after"
+  echo "reload-chrome-focused-stable: color reload changed the focused owner: $chrome_before -> $chrome_after"
   exit 1
 fi
 # Target an unfocused helper: choosing the untouched pool must not unfocus the
 # first owner, and a fresh round-robin pick must still start at its first member.
 "$UMBRIEL" msg "effect-window-set:chrome_idle/$chrome_id" > /dev/null
 "$UMBRIEL" settle > /dev/null
-"$UMBRIEL" windows --json | jq -e --arg id "$chrome_id" '.[] | select(.id == $id) | .window_effect | .name == "chrome_z" and .pool == "chrome_idle"' > /dev/null || { echo "PR2 reload-chrome-no-policy-pick"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$chrome_id" '.[] | select(.id == $id) | .window_effect | .name == "chrome_z" and .pool == "chrome_idle"' > /dev/null || { echo "reload-chrome-no-policy-pick"; exit 1; }
 read -r cx cy cw ch < <("$UMBRIEL" windows --json | jq -r --arg id "$chrome_id" '.[] | select(.id == $id) | "\(.x) \(.y) \(.w) \(.h)"')
 grim "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$((cx + cw / 2))" "$((cy + ch / 2))")
 if (( r < 240 || g > 15 || b > 15 )); then
-  echo "PR2 reload-chrome-first-member-pixel: fresh owner did not draw the first member: $r $g $b"
+  echo "reload-chrome-first-member-pixel: fresh owner did not draw the first member: $r $g $b"
   exit 1
 fi

@@ -113,7 +113,7 @@ fi
 
 echo "renderer loss unwound, recreated the renderer, drew another frame, and rebound effects"
 
-# PR2 recovery-runtime: suppressed IPC-only preset/pool roots (including the
+# recovery-runtime: suppressed IPC-only preset/pool roots (including the
 # border overlay) survive renderer replacement without changing a cached pick.
 cat > "$UMBRIEL_RUNTIME_DIR/recovery-border.glsl" <<'GLSL'
 vec4 border(vec2 uv) { return vec4(0.0, 1.0, 0.0, 1.0); }
@@ -158,15 +158,15 @@ for _ in $(seq 100); do
 done
 "$UMBRIEL" settle > /dev/null
 if [[ $(tail -n +"$LOG_MARK" "$UMBRIEL_LOG" | grep -c "renderer recreated") -ne 3 ]]; then
-  echo "PR2 recovery-runtime: third recovery did not finish"
+  echo "recovery-runtime: third recovery did not finish"
   exit 1
 fi
 recovered_slot=$("$UMBRIEL" windows --json | jq -c --arg id "$id" '.[] | select(.id == $id) | .border_effect')
 if [[ $recovery_slot != "$recovered_slot" ]] || ! jq -e '.name == "recovery_border_z" and .pool == "recovery_pool" and .source == "runtime" and .suppressed' <<< "$recovered_slot" > /dev/null; then
-  echo "PR2 recovery-runtime-slot: recovery changed a suppressed selection: $recovery_slot -> $recovered_slot"
+  echo "recovery-runtime-slot: recovery changed a suppressed selection: $recovery_slot -> $recovered_slot"
   exit 1
 fi
-"$UMBRIEL" effects --json | jq -e '[.presets[] | select(.name | startswith("recovery_")) | .state] == ["compiled", "compiled", "compiled", "compiled"]' > /dev/null || { echo "PR2 recovery-runtime-prepared"; exit 1; }
+"$UMBRIEL" effects --json | jq -e '[.presets[] | select(.name | startswith("recovery_")) | .state] == ["compiled", "compiled", "compiled", "compiled"]' > /dev/null || { echo "recovery-runtime-prepared"; exit 1; }
 "$UMBRIEL" msg "effect-border-toggle:$id" > /dev/null
 "$UMBRIEL" settle > /dev/null
 recovery_window=$("$UMBRIEL" windows --json | jq -c --arg id "$id" '.[] | select(.id == $id)')
@@ -175,7 +175,7 @@ y=$(jq -r '.y + (.h / 2 | floor)' <<< "$recovery_window")
 grim "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$x" "$y")
 if (( r < 240 || g > 15 || b > 15 )); then
-  echo "PR2 recovery-overlay-pixel: unsuppressed overlay did not render after recovery: $r $g $b"
+  echo "recovery-overlay-pixel: unsuppressed overlay did not render after recovery: $r $g $b"
   exit 1
 fi
 "$UMBRIEL" msg effect-screen-toggle > /dev/null
@@ -183,10 +183,10 @@ fi
 grim "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 20 20)
 if (( b < 240 || r > 15 || g > 15 )); then
-  echo "PR2 recovery-screen-pixel: unsuppressed IPC preset did not render after recovery: $r $g $b"
+  echo "recovery-screen-pixel: unsuppressed IPC preset did not render after recovery: $r $g $b"
   exit 1
 fi
-"$UMBRIEL" windows --json | jq -e --arg id "$id" '.[] | select(.id == $id) | .border_effect | .name == "recovery_border_z" and (.suppressed | not)' > /dev/null || { echo "PR2 recovery-runtime-no-pick"; exit 1; }
+"$UMBRIEL" windows --json | jq -e --arg id "$id" '.[] | select(.id == $id) | .border_effect | .name == "recovery_border_z" and (.suppressed | not)' > /dev/null || { echo "recovery-runtime-no-pick"; exit 1; }
 
 # Active bindings must also recover while animation time is frozen. No action
 # after recovery may be needed to repair either the border overlay or window slot.
@@ -200,7 +200,7 @@ done
 grim "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$x" "$y")
 if (( r < 240 || g > 15 || b > 15 )); then
-  echo "PR2 recovery-active-border: active cached overlay did not rebind with frozen time: $r $g $b"
+  echo "recovery-active-border: active cached overlay did not rebind with frozen time: $r $g $b"
   exit 1
 fi
 "$UMBRIEL" msg "effect-border-reset:$id" > /dev/null
@@ -214,6 +214,6 @@ done
 grim "$IMAGE"
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$x" "$y")
 if (( r < 240 || g > 15 || b > 15 )); then
-  echo "PR2 recovery-active-window: active cached window effect did not rebind with frozen time: $r $g $b"
+  echo "recovery-active-window: active cached window effect did not rebind with frozen time: $r $g $b"
   exit 1
 fi
