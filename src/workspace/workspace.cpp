@@ -564,8 +564,6 @@ namespace umbriel {
     // frame.
     m_arrangeAnimate = animate;
     m_arrangePending = true;
-    // Resolve membership rules before frame or inspection work.
-    refreshAloneRuleStates();
     if (m_group != nullptr && m_group->output() != nullptr) {
       m_group->output()->markDirty(Dirty::Layout);
     }
@@ -627,6 +625,7 @@ namespace umbriel {
     // Clearing here, rather than only in flushArrange, is what makes mixing the two safe: a direct arrange() satisfies
     // whatever was marked earlier in the frame, so the flush does not repeat it.
     m_arrangePending = false;
+    refreshAloneRuleStates();
     // Layout math and client configures must run even for hidden workspaces: clients (games especially) change
     // fullscreen state while another workspace is active, and skipping the configure here leaves them with a stale size
     // (fullscreen at tile size, windowed at output size, ...).

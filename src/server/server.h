@@ -295,6 +295,8 @@ namespace umbriel {
     // Runs a parsed action. Shared by the keybind path and the IPC `msg` command.
     bool executeKeybindAction(const Keybind& bind, std::string* error = nullptr, bool* cooldownBlocked = nullptr);
     bool cooldownAllows(const Keybind& bind);
+    // Re-evaluates alone rules on every workspace whose arrange is still pending.
+    void refreshPendingAloneRules();
     // Record that something server-wide became stale. The work happens once, in a fixed order, at the top of the next
     // frame (see Output::flushDirty). Schedules a frame on every output, so recording is always enough.
     void markDirty(Dirty what);

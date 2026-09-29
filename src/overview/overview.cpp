@@ -3243,8 +3243,6 @@ namespace umbriel {
       } else {
         m_dragSourceWorkspace->layout().insertView(view, m_dragSourceColumn);
       }
-      // Notify membership rules before arranging the restored layout.
-      m_dragSourceWorkspace->markArrange(false);
       m_dragSourceWorkspace->arrange(false);
     }
 
