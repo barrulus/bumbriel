@@ -270,8 +270,8 @@ the lock surface carries no slot.
 
 A persistent effect never finishes, so it stays out of the animation registry.
 `Server::settled()` (`server.cpp`), `Server::animationsActiveFor`,
-and the render lock and tearing veto that follows it (`output.cpp`,
-`:1308-1309`) see only transient animations: a time-reading effect never
+and the render lock and tearing veto that follows it (`output.cpp`) see only
+transient animations: a time-reading effect never
 blocks `settle` or holds `wlr_output_lock_attach_render`. The drag sheet ends,
 so it is an animation. The `effect-frames` IPC
 ([Harness-only IPC](README.md#harness-only-ipc)) reports each output's effect
@@ -288,8 +288,8 @@ animation lock and minus export-dmabuf frames on that output, so
 an export-dmabuf client reads the displayed frame.
 
 With a capture pending and an in-place slot or output effect visible on the
-output, `wlr_scene_output_build_state` composes twice (`wlr_scene.c`,
-`:5643-5660`). The unfiltered composition skips in-place slots, output
+output, `wlr_scene_output_build_state` composes twice (`wlr_scene.c`). The
+unfiltered composition skips in-place slots, output
 effects, and light emission, runs capture composites (the border effect and
 every transient slot) with capture-role histories, and draws the software
 cursor; `fx_render_pass_save_effect_capture` (`fx_pass.c`) then
@@ -356,8 +356,8 @@ whose drawn box reaches an output only through its margin is listed there and
 its program runs over that margin. What the program samples is still that
 output's capture, so a drag sheet shows only what that output captured
 ([Attachment](#attachment)).
-Changing a slot (`wlr_scene_node_set_animation`,
-`:1637-1734`) updates the whole scene for a transient slot. For a persistent
+Changing a slot (`wlr_scene_node_set_animation`) updates the whole scene for a
+transient slot. For a persistent
 slot it damages the drawn box before and after the change
 (`scene_effect_damage`) and re-runs `scene_node_update` on the
 node when a slot appears or disappears. Destroying a node damages its effects'
