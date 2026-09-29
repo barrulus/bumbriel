@@ -74,8 +74,9 @@ radius = 3
 
 # ==============================================================================
 # Effects
-# Every effect is off until a preset is selected; border and window effects scale with overview zoom.
-# Include a bundled preset (adjust /usr for the package prefix), then select it by name.
+# Every effect is off until a preset is selected; border and window effects
+# scale with overview zoom. Include a bundled preset (adjust /usr for the
+# package prefix), then select it by name.
 # https://docs.noctalia.dev/umbriel/effects/
 # [include]
 # files = ["/usr/share/umbriel/effects/border/pulse/effect.toml"]
