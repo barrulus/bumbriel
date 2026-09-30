@@ -5,6 +5,21 @@ interface = "scene-v1"
 scope = "workspace_set"
 vertex_shader = "shader.vert"
 shader = "shader.frag"
+backdrop_shader = "backdrop.glsl"
+
+[effects.preset.carousel.parameters]
+# Maximum mouse-driven tilt above/below centre, in degrees (0 disables; up to 90).
+max_elevation_degrees = 35.0
+# 0 = transparent, 1 = solid colour, 2 = universe (Noctalia-inspired palette).
+backdrop_style = 2.0
+backdrop_opacity = 1.0
+backdrop_brightness = 1.0
+backdrop_color = [0.0667, 0.0667, 0.1059]
+nebula_color = [0.7961, 0.6510, 0.9686]
+nebula_accent = [0.5804, 0.8863, 0.8353]
+star_color = [0.9804, 0.7020, 0.5294]
+nebula_strength = 1.0
+star_density = 1.0
 
 # [workspace_presentation]
 # effect = "carousel"

@@ -23,7 +23,7 @@ namespace {
   bool readsTime = false;
   fx_scene_limits limits{8192, 256, 256, 8};
   fx_scene_profile lastProfile = FX_SCENE_PAIR;
-  std::array<std::string, 4> lastSources;
+  std::array<std::string, kStageCount> lastSources;
   std::vector<fx_scene_parameter> lastParameters;
   int rendererStorage[2]{};
 
@@ -72,7 +72,8 @@ fx_scene_program* __wrap_fx_scene_program_create(
   lastProfile = profile;
   lastSources = {
       sources->common ? sources->common : "", sources->vertex ? sources->vertex : "",
-      sources->fragment ? sources->fragment : "", sources->composite ? sources->composite : ""
+      sources->fragment ? sources->fragment : "", sources->composite ? sources->composite : "",
+      sources->backdrop ? sources->backdrop : ""
   };
   lastParameters.assign(parameters, parameters + count);
   if (fail) {

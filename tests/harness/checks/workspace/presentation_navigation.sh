@@ -25,6 +25,8 @@ interface = "scene-v1"
 scope = "workspace_set"
 vertex_shader = "nav.vert"
 shader = "nav.frag"
+[effects.preset.nav.parameters]
+max_elevation_degrees = 35.0
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL" settle > /dev/null
