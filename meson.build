@@ -508,16 +508,57 @@ ext_workspace_client_c = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# Persistent isolated-toplevel capture fixture protocols.
+capture_client_protocols = []
+foreach protocol : ['ext-foreign-toplevel-list', 'ext-image-capture-source', 'ext-image-copy-capture']
+  protocol_xml = wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'staging' / protocol / (protocol + '-v1.xml')
+  capture_client_protocols += custom_target(
+    protocol + '-v1-client-protocol.h',
+    input: protocol_xml,
+    output: protocol + '-v1-client-protocol.h',
+    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+  )
+  capture_client_protocols += custom_target(
+    protocol + '-v1-client-protocol.c',
+    input: protocol_xml,
+    output: protocol + '-v1-client-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  )
+endforeach
+
+# Audio transport/profile code is shared with standalone helpers without linking
+# Wayland, the compositor or graphics libraries into those processes.
+audio_core = static_library(
+  'umbriel-audio-core',
+  files('src/audio/protocol.cpp', 'src/audio/profile.cpp', 'src/audio/transport.cpp'),
+  include_directories: include_directories('src'),
+)
+audio_core_dep = declare_dependency(
+  link_with: audio_core,
+  include_directories: include_directories('src'),
+)
+
+pipewire_dep = dependency('libpipewire-0.3', version: '>=1.0.5', required: get_option('audio_helper'))
+if pipewire_dep.found()
+  audio_pipewire = executable(
+    'umbriel-audio', 'src/audio/pipewire.cpp',
+    dependencies: [audio_core_dep, pipewire_dep, nlohmann_json_dep],
+    install: true,
+  )
+endif
+
 # Logic with no dependency on the compositor: string parsing and layout geometry. Built once and linked by both the
 # compositor and the tests, so a test never recompiles a translation unit. Keep this list free of anything needing
 # umbrielfx, pango, or a running server.
 pure_sources = files(
+  'src/audio/state.cpp',
   'src/config/change.cpp',
   'src/config/resolve.cpp',
   'src/config/keybind_parse.cpp',
   'src/config/value_parse.cpp',
   'src/config/section.cpp',
   'src/config/effects.cpp',
+  'src/config/scene_effects.cpp',
   'src/input/lid_state.cpp',
   'src/input/modifier_tap.cpp',
   'src/input/swipe_tracker.cpp',
@@ -537,6 +578,7 @@ pure_sources = files(
   'src/server/drm_policy.cpp',
   'src/scene/cheatsheet_rows.cpp',
   'src/scene/effect_selection.cpp',
+  'src/scene/presentation.cpp',
   'src/overview/shortcut_labels.cpp',
   'src/view/border_ring.cpp',
   'src/view/effects_rules.cpp',
@@ -545,6 +587,7 @@ pure_sources = files(
 )
 
 umbriel_pure_deps = [
+  audio_core_dep,
   wlroots_dep,
   xkbcommon_dep,
   umbrielfx_dep,
@@ -570,9 +613,21 @@ umbriel_pure_dep = declare_dependency(
 # The compositor itself. main.cpp is deliberately not here: everything lives in a library so a test can link any of it without re-listing or recompiling sources,
 # and the executable is just an entry point.
 core_sources = files(
+  'src/audio/supervisor.cpp',
+  'src/audio/service.cpp',
+  'src/audio/bindings.cpp',
   'src/core/animation.cpp',
   'src/core/application_scope.cpp',
   'src/scene/effect_registry.cpp',
+  'src/scene/scene_program.cpp',
+  'src/scene/composition.cpp',
+  'src/scene/workspace_presentation.cpp',
+  'src/scene/workspace_transition.cpp',
+  'src/scene/window_presentation.cpp',
+  'src/server/swipe_probe.cpp',
+  'src/scene/participant_probe.cpp',
+  'src/scene/presentation_probe.cpp',
+  'src/scene/workspace_sources.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',
@@ -747,10 +802,41 @@ install_data(
 # Bundled effect presets: each directory holds the preset's shader and an
 # effect.toml that defines it without selecting it. Users include the TOML and
 # select the name.
-foreach effect : ['animation/reveal', 'animation/squash', 'border/pulse', 'window/scanlines', 'screen/vignette', 'cursor/glow']
+foreach effect : ['animation/reveal', 'animation/squash', 'border/pulse', 'border/spectrum', 'border/music-lines', 'window/scanlines', 'window/music-smoke', 'screen/vignette', 'cursor/glow', 'cursor/music-radiance']
   install_data(
     'examples/effects' / effect / 'shader.glsl',
     'examples/effects' / effect / 'effect.toml',
     install_dir: get_option('datadir') / 'umbriel' / 'effects' / effect,
+  )
+endforeach
+
+install_data(
+  'examples/effects/border/music-lines/overlay.glsl',
+  install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'border/music-lines',
+)
+
+# Scene presets keep their editable stage bundle together. Defining a preset
+# never selects it or acquires a source.
+foreach effect : ['wipe', 'melt', 'iris']
+  install_data(
+    'examples/effects/scene' / effect / 'effect.toml',
+    'examples/effects/scene' / effect / 'shader.glsl',
+    install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene' / effect,
+  )
+endforeach
+install_data(
+  'examples/effects/scene/carousel/effect.toml',
+  'examples/effects/scene/carousel/shader.vert',
+  'examples/effects/scene/carousel/shader.frag',
+  install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene/carousel',
+)
+foreach effect : ['water', 'portal']
+  install_data(
+    'examples/effects/scene' / effect / 'effect.toml',
+    'examples/effects/scene' / effect / 'common.glsl',
+    'examples/effects/scene' / effect / 'shader.vert',
+    'examples/effects/scene' / effect / 'shader.frag',
+    'examples/effects/scene' / effect / 'composite.glsl',
+    install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene' / effect,
   )
 endforeach

@@ -718,6 +718,13 @@ namespace umbriel {
     } animation;
     Effects effects;
 
+    struct WorkspacePresentation {
+      enum class Framing : uint8_t { Viewport, FitAll };
+      std::string effect; // Empty disables the mode.
+      Framing framing = Framing::Viewport;
+      bool operator==(const WorkspacePresentation&) const = default;
+    } workspacePresentation;
+
     struct Overview {
       // Workspace scale when fully zoomed out.
       double zoom = 0.5;

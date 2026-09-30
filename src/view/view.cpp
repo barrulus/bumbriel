@@ -13,6 +13,7 @@
 #include "overview/overview.h"
 #include "scene/effect_registry.h"
 #include "scene/surface_blur.h"
+#include "scene/window_presentation.h"
 #include "server/server.h"
 extern "C" {
 #include <umbrielfx/render/effect.h>
@@ -21,13 +22,18 @@ extern "C" {
 #include "view/xdg_size.h"
 // clang-format off
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <ranges>
 #include <utility>
 #include <variant>
 #include "wlr.h"
 // clang-format on
+#include "scene/color.h"
 #include "workspace/scratchpad.h"
+extern "C" {
+#include "../../umbrielfx/internal/types/scene_source.h"
+}
 #include "workspace/workspace.h"
 
 namespace umbriel {
@@ -313,6 +319,7 @@ namespace umbriel {
       m_extForeign = nullptr;
     }
     if (m_captureSource != nullptr) {
+      detachCaptureAudio();
       wl_list_remove(&m_captureSourceDestroy.link);
       m_captureSource = nullptr;
     }
@@ -342,6 +349,18 @@ namespace umbriel {
     }
   }
 
+  void View::addPresentationSourceOccurrence() {
+    ++m_presentationSourceOccurrences;
+    if (m_workspace != nullptr) {
+      m_workspace->markArrange(false);
+    }
+  }
+
+  void View::removePresentationSourceOccurrence() {
+    assert(m_presentationSourceOccurrences > 0);
+    --m_presentationSourceOccurrences;
+  }
+
   void View::setWorkspace(Workspace* workspace, bool attachToLayout) {
     setWorkspace(workspace, attachToLayout, LayoutAttachOrigin::ExistingView);
   }
@@ -357,6 +376,15 @@ namespace umbriel {
     }
     Output* previousOutput =
         m_workspace != nullptr && m_workspace->group() != nullptr ? m_workspace->group()->output() : nullptr;
+    if (m_mapped && previousOutput != nullptr && origin != LayoutAttachOrigin::OpeningView) {
+      previousOutput->notePresentationViewUnmapping(*this);
+      if (previousOutput->windowPresentation()) {
+        previousOutput->windowPresentation()->topologyChanged();
+      }
+#ifdef UMBRIEL_TEST_IPC
+      previousOutput->notePresentationLifecycle();
+#endif
+    }
     if (m_workspace != nullptr) {
       Workspace* previous = m_workspace;
       const bool sameGroup = workspace != nullptr && workspace->group() == previous->group();
@@ -438,6 +466,9 @@ namespace umbriel {
         output->updateVrr();
         output->updateHdr();
       }
+    }
+    if (m_mapped && m_workspace != nullptr && m_workspace->group() != nullptr) {
+      m_workspace->group()->output()->notePresentationViewMapped(*this);
     }
     if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
       overview->onViewWorkspaceChanged(this);
@@ -709,6 +740,89 @@ namespace umbriel {
     return std::clamp(
         fade * ruleOpacity * m_dragOpacity * m_overviewOpacity * static_cast<float>(m_focusDim.current()), 0.0F, 1.0F
     );
+  }
+
+  View::SourceMotion View::sourceMotion() const {
+    SourceMotion result{.source = m_presentedBox, .destination = m_presentedBox};
+    if (m_layoutMotion && m_workspace != nullptr) {
+      if (const auto boxes = m_workspace->layoutMotionBoxes(this)) {
+        result.source = boxes->from;
+        result.destination = boxes->to;
+        result.progress = m_workspace->layoutMotionGeometryProgress();
+        if (const auto* clock = m_workspace->layoutMotionValue()) {
+          result.linearProgress = static_cast<float>(clock->progress());
+        }
+        return result;
+      }
+    }
+    const auto assign = [&](const AnimatedValue& value, int& source, int& destination) {
+      if (!value.animating())
+        return;
+      source = static_cast<int>(std::lround(value.from()));
+      destination = static_cast<int>(std::lround(value.target()));
+      result.linearProgress = static_cast<float>(value.progress());
+      result.progress = static_cast<float>(evaluateCurve(value.curve(), value.progress()));
+    };
+    assign(m_presentation.widthAnimation(), result.source.width, result.destination.width);
+    assign(m_presentation.heightAnimation(), result.source.height, result.destination.height);
+    assign(m_posY, result.source.y, result.destination.y);
+    assign(m_posX, result.source.x, result.destination.x);
+    return result;
+  }
+
+  float View::sourceOpacityWithoutLifecycle() const {
+    const float ruleOpacity =
+        m_toplevel->scheduled.fullscreen && config().appearance.opaqueFullscreen ? 1.0F : m_ruleOpacity;
+    return std::clamp(
+        ruleOpacity * m_dragOpacity * m_overviewOpacity * static_cast<float>(m_focusDim.current()), 0.0F, 1.0F
+    );
+  }
+
+  std::vector<fx_scene_source_node_override> View::sourceOverridesWithoutLifecycle(uint32_t replacedSlots) const {
+    std::vector<fx_scene_source_node_override> result;
+    if (m_contentTree == nullptr) {
+      return result;
+    }
+    auto& root = result.emplace_back();
+    root.node = &m_contentTree->node;
+    root.skip_slots = replacedSlots;
+    root.skip_animation_clip = true;
+    struct Enumeration {
+      float opacity;
+      const ResizeCrossfade& crossfade;
+      std::vector<fx_scene_source_node_override>& result;
+    } enumeration{sourceOpacityWithoutLifecycle(), m_resizeCrossfade, result};
+    wlr_scene_node_for_each_buffer(
+        &m_contentTree->node,
+        [](wlr_scene_buffer* buffer, int, int, void* data) {
+          auto& enumeration = *static_cast<Enumeration*>(data);
+          auto& item = enumeration.result.emplace_back();
+          item.node = &buffer->node;
+          item.has_opacity = true;
+          item.opacity = enumeration.opacity * enumeration.crossfade.opacityFactor(buffer);
+          if (const auto* sceneSurface = wlr_scene_surface_try_from_buffer(buffer)) {
+            if (const auto* clientAlpha = wlr_alpha_modifier_v1_get_surface_state(sceneSurface->surface)) {
+              item.opacity *= static_cast<float>(clientAlpha->multiplier);
+            }
+          }
+        },
+        &enumeration
+    );
+    if (auto* border = m_decoration.borderNode()) {
+      auto& item = result.emplace_back();
+      item.node = &border->node;
+      item.has_colors = true;
+      premultiplied(item.colors[0], m_borderColorAnim.current(), enumeration.opacity);
+      premultiplied(item.colors[1], m_decoration.borderColors().outer, enumeration.opacity);
+    }
+    if (const auto* shadow = m_decoration.shadowNode()) {
+      auto& item = result.emplace_back();
+      item.node = const_cast<wlr_scene_node*>(&shadow->node);
+      item.has_colors = true;
+      std::ranges::copy(config().colors.shadow, item.colors[0]);
+      item.colors[0][3] *= enumeration.opacity;
+    }
+    return result;
   }
 
   bool View::fullscreenOpaque() const {
@@ -1194,7 +1308,7 @@ namespace umbriel {
     const ScratchpadManager* scratchpad = m_server->scratchpadManager();
     const bool presentedInScratchpad = scratchpad != nullptr && scratchpad->contains(this);
     if (!m_mapped
-        || (!m_onActiveWorkspace && !presentedInOverview)
+        || (!m_onActiveWorkspace && !presentedInOverview && !hasPresentationSourceOccurrence())
         || (m_workspace == nullptr && !presentedInScratchpad && !allowFullscreen)
         || (!allowFullscreen && (m_toplevel->scheduled.fullscreen || m_toplevel->current.fullscreen))
         || width <= 0
@@ -1285,20 +1399,23 @@ namespace umbriel {
 
     const auto& animation = config().animation;
     const auto& open = animation.windowsIn;
+    const bool sceneShader = effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsIn) != nullptr;
     m_customFade =
         animation.enabled && open.enabled && effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
     m_openingScale = 1.0;
     m_openingSlide = 0;
     if (!animation.enabled
         || !open.enabled
-        || (open.style == "none" && effectRegistry().animationEffect(AnimationEvent::WindowsIn) == nullptr)) {
+        || (open.style == "none"
+            && !sceneShader
+            && effectRegistry().animationEffect(AnimationEvent::WindowsIn) == nullptr)) {
       m_fade.snap(1.0);
       setFadeAlpha(1.0F);
     } else {
       m_fade.snap(0.0);
       m_fade.retarget(1.0, open.durationMs, open.curve);
       setFadeAlpha(0.0F);
-      if (!m_customFade && (open.style == "popin" || open.style == "zoom")) {
+      if (!m_customFade && !sceneShader && (open.style == "popin" || open.style == "zoom")) {
         m_openingScale = std::clamp(open.style == "zoom" ? 0.5 : open.scale, 0.0, 1.0);
       }
       scheduleFrame();
@@ -1391,7 +1508,9 @@ namespace umbriel {
     // across the layout on open. The fade-in covers the appear instead.
     const Overview* overview = m_server->overview();
     const bool presentedInOverview = overview != nullptr && overview->active() && m_workspace != nullptr;
-    if (!m_mapped || (!m_onActiveWorkspace && !presentedInOverview) || !m_positioned) {
+    if (!m_mapped
+        || (!m_onActiveWorkspace && !presentedInOverview && !hasPresentationSourceOccurrence())
+        || !m_positioned) {
       setPosition(x, y);
       return;
     }
@@ -1502,6 +1621,8 @@ namespace umbriel {
           .surface = surface,
           .border = border,
           .captureSurface = captureSurface,
+          .captureOutput = m_captureSource,
+          .captureActive = m_captureSessions > 0,
           .gate = gate != nullptr ? *gate : ownGate,
           .seconds = m_effects.configured() && output != nullptr ? output->effectSeconds() : 0.0F,
 #ifdef UMBRIEL_TEST_IPC
@@ -3091,8 +3212,10 @@ namespace umbriel {
     if (m_onActiveWorkspace) {
       const auto& animation = config().animation;
       const auto& open = animation.windowsIn;
-      const bool customShader = effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
-      m_customFade = animation.enabled && open.enabled && customShader;
+      const bool legacyShader = effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
+      const bool sceneShader = effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsIn) != nullptr;
+      const bool customShader = legacyShader || sceneShader;
+      m_customFade = animation.enabled && open.enabled && legacyShader;
       const bool animates = animation.enabled && open.enabled && (open.style != "none" || customShader);
       const bool tiledMember =
           m_tiled && !layoutFullscreen() && m_workspace != nullptr && m_workspace->layout().columnOf(this) >= 0;
@@ -3109,7 +3232,7 @@ namespace umbriel {
         m_fade.retarget(1.0, open.durationMs, open.curve);
 
         // Floating and fullscreen windows tween themselves.
-        if (!m_customFade && (open.style == "popin" || open.style == "zoom")) {
+        if (!customShader && (open.style == "popin" || open.style == "zoom")) {
           const double scale = std::clamp(open.style == "zoom" ? 0.5 : open.scale, 0.0, 1.0);
           if (layoutFullscreen()) {
             // The output box this window rests in is assigned by the arrange that follows this map, so the inset is
@@ -3136,7 +3259,7 @@ namespace umbriel {
             m_posX.retarget(targetX, open.durationMs, open.curve);
             m_posY.retarget(targetY, open.durationMs, open.curve);
           }
-        } else if (!m_customFade && open.style == "slide") {
+        } else if (!customShader && open.style == "slide") {
           if (layoutFullscreen()) {
             m_openingSlide = kOpenSlidePx;
             const wlr_box area = fullscreenLayoutBox();
@@ -3161,6 +3284,13 @@ namespace umbriel {
     m_server->updateIdleInhibit();
     if (Output* output = currentOutput()) {
       output->updateHdr();
+#ifdef UMBRIEL_TEST_IPC
+      output->notePresentationLifecycle();
+#endif
+      output->notePresentationViewMapped(*this);
+      if (output->windowPresentation() || effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsIn)) {
+        output->ensureWindowPresentation().opening(*this);
+      }
     }
     if (m_displacedHome) {
       // Snapshot peers retain their member ids while this view is unmapped.
@@ -3173,6 +3303,12 @@ namespace umbriel {
   }
 
   void View::handleUnmap() {
+    if (Output* output = currentOutput()) {
+      output->notePresentationViewUnmapping(*this);
+#ifdef UMBRIEL_TEST_IPC
+      output->notePresentationLifecycle();
+#endif
+    }
     if (m_effectSelectionIdle != nullptr) {
       wl_event_source_remove(m_effectSelectionIdle);
       m_effectSelectionIdle = nullptr;
@@ -3247,6 +3383,10 @@ namespace umbriel {
       }
     }
     const CloseSnapshotId snapshot = beginCloseAnimation();
+    if (Output* output = currentOutput(); output != nullptr
+        && (output->windowPresentation() || effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsOut))) {
+      output->ensureWindowPresentation().closing(*this, snapshot);
+    }
     // The closing snapshot must retain any in-flight opening shader first.
     wlr_scene_node_clear_animations(&m_contentTree->node);
     m_dragSlotBound = false;
@@ -3722,6 +3862,7 @@ namespace umbriel {
       m_extForeign = nullptr;
     }
     if (m_captureSource != nullptr) {
+      detachCaptureAudio();
       wl_list_remove(&m_captureSourceDestroy.link);
       m_captureSourceDestroy.link.next = nullptr;
       m_captureSource = nullptr;
@@ -4397,6 +4538,13 @@ namespace umbriel {
       m_presentation.setSize(presentedWidth, presentedHeight);
     }
     wlr_xdg_toplevel_set_fullscreen(m_toplevel, fullscreen);
+    if (fullscreen) {
+      // A client can map tiled and request fullscreen in the same dispatch,
+      // before the admitting tiled arrange has started its opening. Fullscreen
+      // is excluded from applyTiledMotion, so transfer that deferred reveal now;
+      // otherwise setNodeEnabled keeps the entire window hidden indefinitely.
+      resumeTiledOpening();
+    }
     setFadeAlpha(m_fadeAlpha);
     updateFullscreenPresentation(0, 0);
     if (fullscreen) {

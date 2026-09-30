@@ -1,10 +1,14 @@
 #include "server/ipc_commands.h"
 
 #include "config/config.h"
+#include "input/cursor.h"
 #include "layer/layer_surface.h"
 #include "output/output.h"
 #include "scene/effect_registry.h"
 #include "scene/effect_selection.h"
+#include "scene/window_presentation.h"
+#include "scene/workspace_presentation.h"
+#include "scene/workspace_transition.h"
 #include "server/server.h"
 #include "view/view.h"
 #include "wlr.h"
@@ -13,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <drm_fourcc.h>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -481,6 +486,7 @@ namespace umbriel {
           {"name", preset.name},
           {"kind", effectKindName(preset.kind)},
           {"state", server.effects().programState(preset.name)},
+          {"audio", preset.audio},
       };
       if (preset.kind == EffectKind::Border) {
         entry["overlay"] = preset.overlay;
@@ -522,12 +528,46 @@ namespace umbriel {
       owners.push_back(
           {{"type", "output"},
            {"name", output->wlr()->name},
+           {"workspace_presentation",
+            output->workspacePresentation() != nullptr ? output->workspacePresentation()->status()
+                                                       : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
+           {"workspace_transition",
+            output->workspaceTransition() != nullptr ? output->workspaceTransition()->status()
+                                                     : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
+           {"window_presentation",
+            output->windowPresentation() != nullptr ? output->windowPresentation()->status()
+                                                    : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
            {"slots", {{"screen", effectSlotJson(output->screenEffectSlot())}}}}
+      );
+    }
+    nlohmann::json audio = nlohmann::json::array();
+    const uint64_t nowNs =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    for (const auto& source : config().effects.audioSources) {
+      const auto* receiver = server.effects().inspectAudio(source.name);
+      audio.push_back(
+          {{"name", source.name},
+           {"state", server.effects().audioState(source.name)},
+           {"mode", source.mode == AudioMode::Playback ? "playback" : "microphone"},
+           {"demanded", receiver != nullptr && receiver->epoch() != 0},
+           {"ready", receiver != nullptr && receiver->ready()},
+           {"available", receiver != nullptr && receiver->input().available},
+           {"epoch", receiver != nullptr ? receiver->epoch() : 0},
+           {"generation", receiver != nullptr ? receiver->generation() : 0},
+           {"sequence", receiver != nullptr ? receiver->sequence() : 0},
+           {"observation_ns", receiver != nullptr ? receiver->observationNs() : 0},
+           {"age_ns",
+            receiver != nullptr && receiver->observationNs() != 0 && nowNs >= receiver->observationNs()
+                ? nlohmann::json(nowNs - receiver->observationNs())
+                : nlohmann::json(nullptr)}}
       );
     }
     return nlohmann::json{
         {"ok",
-         {{"presets", std::move(presets)},
+         {{"audio", std::move(audio)},
+          {"audio_demanded_sources", server.effects().audioDemandedSources()},
+          {"presets", std::move(presets)},
           {"pools", std::move(pools)},
           {"cursor", effectSlotJson(server.cursorEffectSlot())},
           {"owners", std::move(owners)}}}
@@ -786,27 +826,169 @@ namespace umbriel {
   nlohmann::json IpcCommands::clockResume([[maybe_unused]] Server& server, std::string_view /*arg*/) {
 #ifdef UMBRIEL_TEST_IPC
     server.resumeAnimationClock();
+    server.effects().resumeAudioClock();
 #endif
     return nlohmann::json{{"ok", nullptr}};
   }
 
 #ifdef UMBRIEL_TEST_IPC
+  nlohmann::json IpcCommands::presentationInputProbe(Server& server, std::string_view arg) {
+    Cursor* cursor = server.cursor();
+    if (arg == "arm" || arg == "cancel") {
+      if (arg == "cancel") {
+        server.cancelPresentationProbes(PresentationFallback::BindingRemoved);
+      }
+      if (!cursor->setPresentationInputProbe(arg == "arm")) {
+        return {{"err", "C0 input probe admission rejected: active grab, dismissal, lock or overview"}};
+      }
+    } else if (arg != "status") {
+      return {{"err", "expected arm, cancel or status"}};
+    }
+    return {
+        {"ok",
+         {{"active", cursor->presentationInputProbeActive()},
+          {"pending", cursor->presentationInputProbePending()},
+          {"restore_pending", cursor->presentationRestorePending()}}}
+    };
+  }
+
+  nlohmann::json IpcCommands::presentationTouchProbe(Server& server, std::string_view arg) {
+    if (!server.presentationTouchProbe(arg)) {
+      return {{"err", "invalid C0 touch event or device state"}};
+    }
+    return {{"ok", nullptr}};
+  }
+
+  nlohmann::json IpcCommands::presentationInventoryProbe(Server& server, std::string_view arg) {
+    if (server.outputs().empty()) {
+      return {{"err", "workspace inventory requires an output"}};
+    }
+    return server.outputs().front()->workspaceInventoryProbe(arg);
+  }
+
+  nlohmann::json IpcCommands::presentationWorkspaceProbe(Server& server, std::string_view arg) {
+    if (server.outputs().empty()) {
+      return {{"err", "workspace source requires an output"}};
+    }
+    Output* selected = nullptr;
+    if (arg.starts_with("open ")) {
+      const auto identity = arg.substr(5);
+      for (const auto& output : server.outputs()) {
+        auto* group = output->workspaceGroup();
+        for (size_t i = 0; i < group->workspaceCount(); ++i) {
+          if (group->workspaceAt(i)->id() == identity) {
+            selected = output.get();
+          }
+        }
+      }
+    } else {
+      for (const auto& output : server.outputs()) {
+        if (output->workspaceSourceActive()) {
+          selected = output.get();
+          break;
+        }
+      }
+    }
+    if (selected == nullptr) {
+      selected = server.outputs().front().get();
+    }
+    return selected->workspaceSourceProbe(arg);
+  }
+
+  nlohmann::json IpcCommands::presentationSceneProbe(Server& server, std::string_view arg) {
+    Output* output = server.outputs().empty() ? nullptr : server.outputs().front().get();
+    if (output == nullptr) {
+      return {{"err", "C0 presentation probe requires an output"}};
+    }
+    if (arg == "arm") {
+      if (!output->armPresentationProbe()) {
+        return {{"err", "C0 presentation probe admission rejected"}, {"state", output->presentationProbeStatus()}};
+      }
+    } else if (arg == "cancel") {
+      output->cancelPresentationProbe(PresentationFallback::BindingRemoved);
+    } else if (arg != "status") {
+      return {{"err", "expected arm, cancel or status"}};
+    }
+    return {{"ok", output->presentationProbeStatus()}};
+  }
+
   nlohmann::json IpcCommands::rendererRecover(Server& server, std::string_view /*arg*/) {
     server.emitRendererLostForTest();
     server.emitRendererLostForTest();
     return nlohmann::json{{"ok", nullptr}};
   }
 
+  nlohmann::json IpcCommands::audioInject(Server& server, std::string_view arg) {
+    const auto value = nlohmann::json::parse(arg, nullptr, false);
+    if (value.is_discarded() || !value.is_object() || !value.contains("source") || !value["source"].is_string()) {
+      return {{"err", "expected JSON with source, rms, peak, envelope and sixteen bands"}};
+    }
+    audio::Features features;
+    for (const char* field : {"rms", "peak", "envelope"}) {
+      if (!value.contains(field) || !value[field].is_number()) {
+        return {{"err", "audio amplitudes must be numbers in [0,1]"}};
+      }
+    }
+    if (!value.contains("bands") || !value["bands"].is_array() || value["bands"].size() != 16) {
+      return {{"err", "expected sixteen audio bands"}};
+    }
+    features.rms = value["rms"].get<float>();
+    features.peak = value["peak"].get<float>();
+    features.envelope = value["envelope"].get<float>();
+    for (size_t i = 0; i < features.bands.size(); ++i) {
+      if (!value["bands"][i].is_number()) {
+        return {{"err", "audio bands must be numbers in [0,1]"}};
+      }
+      features.bands[i] = value["bands"][i].get<float>();
+    }
+    if (!server.effects().injectAudio(value["source"].get<std::string>(), features)) {
+      return {{"err", "invalid audio source or amplitude"}};
+    }
+    return {{"ok", nullptr}};
+  }
+
   nlohmann::json IpcCommands::effectFrames(Server& server, std::string_view /*arg*/) {
     nlohmann::json outputs = nlohmann::json::array();
     for (const auto& output : server.outputs()) {
+      nlohmann::json audio = nlohmann::json::array();
+      for (const auto& source : config().effects.audioSources) {
+        if (const auto* latch = server.effects().inspectAudioLatch(output.get(), source.name)) {
+          audio.push_back({
+              {"source", source.name},
+              {"latched_rms", latch->input().features.rms},
+              {"presented_rms", latch->presented().features.rms},
+              {"pending", latch->pending()},
+              {"revision", latch->revision()},
+              {"consumed_revision", latch->consumedRevision()},
+          });
+        }
+      }
       outputs.push_back({
           {"name", output->wlr()->name},
           {"effect_frames", output->effectFrames()},
+          {"buffer_commits", output->successfulBufferCommits()},
+          {"rejected_buffer_commits", output->rejectedBufferCommits()},
+          {"commit_held", output->testCommitHeld()},
+          {"audio", std::move(audio)},
           {"eligible", output->effectEligible()},
       });
     }
     return nlohmann::json{{"ok", {{"outputs", std::move(outputs)}}}};
+  }
+
+  nlohmann::json IpcCommands::outputCommitHold(Server& server, std::string_view arg) {
+    const auto separator = arg.find(' ');
+    if (separator == std::string_view::npos
+        || (arg.substr(separator + 1) != "on" && arg.substr(separator + 1) != "off")) {
+      return {{"err", "expected output name followed by on or off"}};
+    }
+    for (const auto& output : server.outputs()) {
+      if (arg.substr(0, separator) == output->wlr()->name) {
+        output->setTestCommitHold(arg.substr(separator + 1) == "on");
+        return {{"ok", nullptr}};
+      }
+    }
+    return {{"err", "unknown output"}};
   }
 #endif
 
@@ -832,6 +1014,8 @@ namespace umbriel {
       {"keyboard-layouts", "", "list keyboard layouts", IpcCommandGroup::Inspect, false, &IpcCommands::keyboardLayouts,
        &printKeyboardLayouts},
 #ifdef UMBRIEL_TEST_IPC
+      {"participant-admission-probe", "", "inspect experimental rigid participant admission", IpcCommandGroup::Harness,
+       false, &IpcCommands::participantAdmissionProbe, nullptr},
       {"settle", "", "wait until no layout or animation is pending and every output has drawn a frame",
        IpcCommandGroup::Harness, false, &IpcCommands::settle, nullptr, 35},
       {"clock-freeze", "", "stop animation time", IpcCommandGroup::Harness, false, &IpcCommands::clockFreeze, nullptr},
@@ -841,8 +1025,25 @@ namespace umbriel {
        IpcCommandGroup::Harness, false, &IpcCommands::clockResume, nullptr},
       {"renderer-recover", "", "emit renderer loss and exercise recovery", IpcCommandGroup::Harness, false,
        &IpcCommands::rendererRecover, nullptr},
+      {"audio-inject", "<json>", "inject a deterministic audio snapshot", IpcCommandGroup::Harness, true,
+       &IpcCommands::audioInject, nullptr},
+      {"output-commit-hold", "<output> <on|off>", "hold buffer commits to exercise retry paths",
+       IpcCommandGroup::Harness, true, &IpcCommands::outputCommitHold, nullptr},
       {"effect-frames", "", "count frames drawn for persistent effects per output", IpcCommandGroup::Harness, false,
        &IpcCommands::effectFrames, nullptr},
+      {"swipe-inject", "<begin fingers ms|update dx dy ms|end ms|cancel ms|remove>",
+       "test swipe device through the native cursor signal path", IpcCommandGroup::Harness, true,
+       &IpcCommands::swipeInject, nullptr},
+      {"presentation-touch-probe", "<create|destroy|down id x y|motion id x y|up id|cancel id>",
+       "C0 touch device injection", IpcCommandGroup::Harness, true, &IpcCommands::presentationTouchProbe, nullptr},
+      {"presentation-workspace-probe", "<open ID|select ID|cancel|status>", "C0 complete workspace source preview",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationWorkspaceProbe, nullptr},
+      {"presentation-inventory-probe", "<hold|release|status>", "C0 native workspace inventory ownership probe",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationInventoryProbe, nullptr},
+      {"presentation-scene-probe", "<arm|cancel|status>", "C0 output-local displaced native lifecycle probe",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationSceneProbe, nullptr},
+      {"presentation-input-probe", "<arm|cancel|status>", "C0 pointer dismissal probe without scene rendering",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationInputProbe, nullptr},
 #endif
   };
 

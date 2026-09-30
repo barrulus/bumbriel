@@ -202,6 +202,12 @@ described in [Workspace selectors](workspaces.md#workspace-selectors).
 | `workspace-move-to-output-up` | Move every workspace window to the output above |
 | `workspace-move-up` | Move the focused workspace up the list |
 | `workspace-next` | Switch to the next workspace on this output |
+| `workspace-presentation-accept` | Commit the selected workspace face |
+| `workspace-presentation-cancel` | Return to the original workspace |
+| `workspace-presentation-enter` | Enter the configured workspace presentation |
+| `workspace-presentation-next` | Select the next workspace face |
+| `workspace-presentation-previous` | Select the previous workspace face |
+| `workspace-presentation-select:<workspace>[/<output>]` | Select a workspace face |
 | `workspace-previous` | Switch to the previous workspace on this output |
 | `workspace-set-layout:<scrolling\|dwindle\|master\|toggle>` | Set the active workspace's layout mode |
 | `workspace-swap-active-output-down` | Swap active workspace windows with the output below |

@@ -32,6 +32,8 @@ namespace umbriel {
     // Size animation
     [[nodiscard]] bool animating() const { return m_animW.animating() || m_animH.animating(); }
     [[nodiscard]] const AnimatedValue& animation() const { return m_animW.animating() ? m_animW : m_animH; }
+    [[nodiscard]] const AnimatedValue& widthAnimation() const { return m_animW; }
+    [[nodiscard]] const AnimatedValue& heightAnimation() const { return m_animH; }
     // True when an animation is already heading exactly here, so a repeated
     // layout pass does not restart it from the current interpolated size.
     [[nodiscard]] bool targeting(int width, int height) const;

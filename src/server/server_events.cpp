@@ -764,7 +764,9 @@ namespace umbriel {
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     for (const auto& view : self->m_registry.all()) {
-      if (!view->mapped() || view->onActiveWorkspace()) {
+      // Live source owners pace callbacks after their output successfully
+      // commits; background ticks must not acknowledge an unpresented frame.
+      if (!view->mapped() || view->onActiveWorkspace() || view->hasPresentationSourceOccurrence()) {
         continue;
       }
       wlr_xdg_surface_for_each_surface(
@@ -816,6 +818,10 @@ namespace umbriel {
   }
 
   void Server::recreateRenderer() {
+    cancelScenePresentations(PresentationFallback::RendererLost);
+#ifdef UMBRIEL_TEST_IPC
+    cancelPresentationProbes(PresentationFallback::RendererLost);
+#endif
     kLog.warn("GPU context lost, recreating renderer");
 
     wlr_renderer* oldRenderer = m_renderer;
@@ -1073,6 +1079,9 @@ namespace umbriel {
   void Server::onVirtualPointerDestroy(wl_listener* listener, void* /*data*/) {
     VirtualPointerDevice* device;
     device = wl_container_of(listener, device, destroy);
+    if (device->server->m_cursor != nullptr) {
+      device->server->m_cursor->sceneInputDeviceRemoved(&device->vpointer->pointer.base);
+    }
     // wlr_cursor detaches the device itself when the pointer is destroyed.
     wl_list_remove(&device->destroy.link);
     std::erase_if(device->server->m_virtualPointers, [device](const std::unique_ptr<VirtualPointerDevice>& ptr) {
@@ -1108,8 +1117,16 @@ namespace umbriel {
     auto* session = static_cast<wlr_ext_image_copy_capture_session_v1*>(data);
     auto* watch = new ImageCopySessionWatch();
     watch->server = self;
+    watch->source = session->source;
     watch->destroy.notify = onImageCopySessionDestroy;
     wl_signal_add(&session->events.destroy, &watch->destroy);
+    for (const auto& view : self->views()) {
+      if (view->m_captureSource == session->source) {
+        watch->isolated = true;
+        view->changeCaptureSessions(1);
+        break;
+      }
+    }
   }
 
   // The session's render lock is released after this signal; the frame it schedules runs from an idle, without it.
@@ -1117,8 +1134,18 @@ namespace umbriel {
     ImageCopySessionWatch* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
+    const bool isolated = watch->isolated;
+    for (const auto& view : server->views()) {
+      if (view->m_captureSource == watch->source) {
+        view->changeCaptureSessions(-1);
+        break;
+      }
+    }
     wl_list_remove(&watch->destroy.link);
     delete watch;
+    if (isolated) {
+      return;
+    }
     for (const auto& output : server->m_outputs) {
       output->scheduleEffectCaptureRelease();
     }
@@ -1152,6 +1179,9 @@ namespace umbriel {
     PointerDevice* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
+    if (server->m_cursor != nullptr) {
+      server->m_cursor->sceneInputDeviceRemoved(watch->device);
+    }
     wl_list_remove(&watch->destroy.link);
     std::erase_if(server->m_pointers, [watch](const std::unique_ptr<PointerDevice>& pointer) {
       return pointer.get() == watch;
@@ -1430,6 +1460,7 @@ namespace umbriel {
       }
 
       m_sessionLocked = true;
+      cancelScenePresentations(PresentationFallback::Locked);
       m_effects.setSuspended(true);
       m_effects.applyOutputEffects();
       cancelModifierTap();
@@ -1703,6 +1734,7 @@ namespace umbriel {
     TouchDevice* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
+    server->m_cursor->sceneInputDeviceRemoved(watch->device);
     wl_list_remove(&watch->destroy.link);
     std::erase_if(server->m_touchDevices, [watch](const std::unique_ptr<TouchDevice>& entry) {
       return entry.get() == watch;
@@ -3275,6 +3307,7 @@ namespace umbriel {
       }
       view->m_captureSourceDestroy.notify = View::onCaptureSourceDestroy;
       wl_signal_add(&view->m_captureSource->events.destroy, &view->m_captureSourceDestroy);
+      view->attachCaptureAudio();
     }
 
     wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, view->m_captureSource);

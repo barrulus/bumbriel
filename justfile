@@ -97,9 +97,8 @@ test m=mode: (configure m)
     meson compile -C build-{{m}} unit-tests
     meson test -C build-{{m}} --print-errorlogs
 
-# The umbrielfx renderer ownership check needs a real DRM render node, which a
-# container or a headless runner does not have, so it is a tool rather than a
-# suite entry. This runs it against every render node this machine exposes.
+# Exercise renderer ownership and the complete UmbrielFX suite on every GPU.
+# The default fixture device alone can hide driver-specific shader failures.
 [no-exit-message]
 gpu-test m=mode: (_ensure-configured m)
     #!/usr/bin/env bash
@@ -111,6 +110,10 @@ gpu-test m=mode: (_ensure-configured m)
     fi
     ninja -C build-{{m}} umbrielfx/umbrielfx-renderer-test
     ./build-{{m}}/umbrielfx/umbrielfx-renderer-test "${nodes[@]}"
+    for node in "${nodes[@]}"; do
+        echo "UmbrielFX suite on $node"
+        UMBRIELFX_TEST_DRM_DEVICE="$node" meson test -C build-{{m}} --suite umbrielfx --print-errorlogs
+    done
 
 # Regressions for the GitHub workflow scripts. Pure Python, builds nothing.
 test-workflows:

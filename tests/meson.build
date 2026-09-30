@@ -1,6 +1,42 @@
 # Unit tests. Each entry is [name, test sources, extra dependencies]. Every test gets umbriel_pure_dep; add umbriel_core_dep to the third field for a test that
 # needs compositor code. Either way a test never lists or recompiles a source.
+audio_synthetic = executable('audio-synthetic', '../src/audio/synthetic.cpp', dependencies: audio_core_dep)
+toplevel_capture_client = executable(
+  'toplevel-capture-client',
+  ['harness/clients/toplevel_capture_client.cpp'] + capture_client_protocols,
+  dependencies: wayland_client_dep,
+)
+
+if pipewire_dep.found()
+  audio_pipewire_test = executable(
+    'audio-pipewire-test', 'unit/audio_pipewire.cpp',
+    include_directories: include_directories('unit'),
+    dependencies: audio_core_dep,
+    cpp_args: ['-DUMBRIEL_AUDIO_PIPEWIRE="' + audio_pipewire.full_path() + '"'],
+  )
+  test('audio-pipewire', audio_pipewire_test, depends: audio_pipewire)
+  pipewire_daemon = find_program('pipewire', required: false)
+  pipewire_dump = find_program('pw-dump', required: false)
+  if pipewire_daemon.found() and pipewire_dump.found()
+    test(
+      'audio-pipewire-reconnect', find_program('python3'),
+      args: [files('audio_pipewire_reconnect.py'), audio_pipewire.full_path(),
+        pipewire_daemon.full_path(), pipewire_dump.full_path()],
+      depends: audio_pipewire,
+      timeout: 30,
+    )
+  endif
+endif
+
 unit_tests = [
+  ['audio-protocol', ['unit/audio_protocol.cpp'], []],
+  ['audio-profile', ['unit/audio_profile.cpp'], []],
+  ['audio-state', ['unit/audio_state.cpp'], []],
+  ['audio-transport', ['unit/audio_transport.cpp'], []],
+  ['audio-supervisor', ['unit/audio_supervisor.cpp'], [umbriel_core_dep],
+    ['-DUMBRIEL_AUDIO_SYNTHETIC="' + audio_synthetic.full_path() + '"']],
+  ['audio-bindings', ['unit/audio_bindings.cpp'], [umbriel_core_dep],
+    ['-DUMBRIEL_AUDIO_SYNTHETIC="' + audio_synthetic.full_path() + '"']],
   ['overview-navigation', ['unit/overview_navigation.cpp'], []],
   ['gesture-physics', ['unit/gesture_physics.cpp'], []],
   ['overview-preview-geometry', ['unit/overview_preview_geometry.cpp'], [umbriel_core_dep]],
@@ -11,6 +47,34 @@ unit_tests = [
   ['animation', ['unit/animation.cpp'], [umbriel_core_dep]],
   ['application-scope', ['unit/application_scope.cpp'], [umbriel_core_dep], [], ['-Wl,--wrap=umbrielCloseRange']],
   ['shader-source', ['unit/shader_source.cpp'], []],
+  ['scene-effects', ['unit/scene_effects.cpp'], []],
+  ['scene-program-cache', ['unit/scene_program.cpp'], [umbriel_core_dep], [], [
+    '-Wl,--wrap=fx_scene_program_get_limits',
+    '-Wl,--wrap=fx_scene_program_create',
+    '-Wl,--wrap=fx_scene_program_unref',
+    '-Wl,--wrap=fx_scene_program_reads_audio',
+    '-Wl,--wrap=fx_scene_program_reads_time',
+  ]],
+  ['scene-presentation', ['unit/scene_presentation.cpp'], []],
+  ['scene-composition', ['unit/scene_composition.cpp'], [umbriel_core_dep], [], [
+    '-Wl,--wrap=fx_scene_program_get_limits',
+    '-Wl,--wrap=fx_scene_buffer_create',
+    '-Wl,--wrap=wlr_buffer_drop',
+    '-Wl,--wrap=fx_scene_target_create_with_color',
+    '-Wl,--wrap=fx_scene_target_shadow_bytes',
+    '-Wl,--wrap=fx_scene_target_light_bytes',
+    '-Wl,--wrap=fx_scene_target_prepare_shadow',
+    '-Wl,--wrap=fx_scene_target_prepare_light',
+    '-Wl,--wrap=fx_scene_target_share_scratch',
+    '-Wl,--wrap=fx_scene_target_destroy',
+    '-Wl,--wrap=wlr_texture_from_buffer',
+    '-Wl,--wrap=wlr_texture_destroy',
+    '-Wl,--wrap=fx_scene_program_render',
+    '-Wl,--wrap=fx_scene_program_supports_picking',
+    '-Wl,--wrap=fx_scene_picker_create',
+    '-Wl,--wrap=fx_scene_picker_destroy',
+    '-Wl,--wrap=fx_scene_program_pick',
+  ]],
   ['effects', ['unit/effects.cpp'], []],
   ['effect-selection', ['unit/effect_selection.cpp'], []],
   ['window-opacity-blur', ['unit/window_opacity_blur.cpp'], [umbriel_core_dep]],
@@ -92,7 +156,8 @@ foreach unit_test : unit_tests
   )
   unit_test_targets += test_exe
   # Config-load also validates the packaged example, including out-of-tree builds.
-  test(unit_test[0], test_exe, workdir: meson.project_source_root())
+  test(unit_test[0], test_exe, workdir: meson.project_source_root(),
+    depends: unit_test[0] in ['audio-supervisor', 'audio-bindings'] ? [audio_synthetic] : [])
 endforeach
 
 test(
@@ -350,6 +415,8 @@ pixel_probe = executable(
 )
 
 harness_client_targets = [
+  audio_synthetic,
+  toplevel_capture_client,
   pixel_probe,
   pointer_client,
   pointer_modifiers_client,

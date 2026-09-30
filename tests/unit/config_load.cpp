@@ -3292,6 +3292,209 @@ UMBRIEL_TEST(packagedAnimationDefaultsMatchCompiledDefaults) {
   CHECK(store.config().animation == umbriel::Config{}.animation);
 }
 
+UMBRIEL_TEST(workspacePresentationRequiresTypedSetAndValidatesFraming) {
+  const TempConfigTree tree;
+  tree.write("vertex.glsl", "vec4 transition_vertex(vec2 uv) { return vec4(uv, 0.0, 1.0); }");
+  tree.write("fragment.glsl", "vec4 transition_fragment(vec2 uv, vec2 output_uv) { return vec4(1.0); }");
+  const std::string presets = R"(
+[effects.preset.carousel]
+kind = "animation"
+interface = "scene-v1"
+scope = "workspace_set"
+vertex_shader = "vertex.glsl"
+shader = "fragment.glsl"
+[effects.preset.pair]
+kind = "animation"
+interface = "scene-v1"
+scope = "workspace_pair"
+shader = "fragment.glsl"
+[effects.preset.legacy]
+kind = "animation"
+shader = "fragment.glsl"
+)";
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  for (const std::string name : {"carousel", "pair", "legacy", "missing"}) {
+    tree.write("config.toml", "[workspace_presentation]\neffect = \"" + name + "\"\nframing = \"fit_all\"\n" + presets);
+    CHECK(store.reload().success);
+    CHECK_EQ(store.config().workspacePresentation.effect, name == "carousel" ? name : "");
+    CHECK(store.config().workspacePresentation.framing == umbriel::Config::WorkspacePresentation::Framing::FitAll);
+    CHECK(name == "carousel" ? store.diagnostics().empty() : !store.diagnostics().empty());
+  }
+  tree.write("config.toml", "[workspace_presentation]\neffect = \"carousel\"\nframing = \"stretch\"\n" + presets);
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().workspacePresentation.effect, "carousel");
+  CHECK(store.config().workspacePresentation.framing == umbriel::Config::WorkspacePresentation::Framing::Viewport);
+  CHECK(containsDiagnostic(store, "framing"));
+  tree.write("config.toml", "[workspace_presentation]\neffect = \"\"\n" + presets);
+  CHECK(store.reload().success);
+  CHECK(store.config().workspacePresentation.effect.empty());
+  CHECK(store.diagnostics().empty());
+}
+
+UMBRIEL_TEST(scenePresetLoadsTypedStagesParametersAndCompatibleForwardBindings) {
+  const TempConfigTree tree;
+  tree.write("stages/common.glsl", "float amount() { return gain; }");
+  tree.write("stages/vertex.glsl", "vec4 transition_vertex(vec2 uv) { return vec4(uv, 0.0, 1.0); }");
+  tree.write("stages/fragment.glsl", "vec4 transition_fragment(vec2 uv, vec2 output_uv) { return vec4(1.0); }");
+  tree.write("stages/composite.glsl", "vec4 transition_composite(vec2 uv) { return vec4(1.0); }");
+  tree.write("stages/pair.glsl", "vec4 transition(vec2 uv) { return vec4(1.0); }");
+  tree.write("stages/presets.toml", R"(
+[effects.preset.water]
+kind = "animation"
+interface = "scene-v1"
+scope = "window_scene"
+common_shader = "common.glsl"
+vertex_shader = "vertex.glsl"
+shader = "fragment.glsl"
+composite_shader = "composite.glsl"
+palette = true
+[effects.preset.water.parameters]
+gain = 0.25
+shift = [0.1, 0.2, 0.3]
+[effects.preset.wipe]
+kind = "animation"
+interface = "scene-v1"
+scope = "workspace_pair"
+shader = "pair.glsl"
+)");
+  tree.write("config.toml", R"(
+[include]
+files = ["stages/presets.toml"]
+[animation.windows_in]
+effect = "water"
+[animation.windows_out]
+effect = "water"
+[animation.workspaces]
+effect = "wipe"
+)");
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  CHECK(store.diagnostics().empty());
+  const auto* water = umbriel::findEffectPreset(store.config().effects, "water");
+  CHECK(water != nullptr && water->scene.has_value());
+  if (water != nullptr && water->scene) {
+    CHECK(water->scene->sources.scope == umbriel::scene_experiment::Scope::WindowScene);
+    CHECK(!water->inert());
+    CHECK(water->shader.code.empty());
+    CHECK_EQ(water->scene->parameters.size(), 2U);
+    CHECK_EQ(water->scene->parameters[0].name, "gain");
+    CHECK_EQ(water->scene->parameters[1].components, 3U);
+    CHECK(water->palette);
+    for (size_t i = 0; i < umbriel::scene_experiment::kStageCount; ++i) {
+      CHECK(water->scene->sources.stages[i].has_value());
+      CHECK(water->scene->sources.stages[i]->file.parent_path() == tree.path("stages"));
+    }
+  }
+  CHECK_EQ(store.config().animation.windowsIn.effect, "water");
+  CHECK_EQ(store.config().animation.windowsOut.effect, "water");
+  CHECK_EQ(store.config().animation.workspaces.effect, "wipe");
+}
+
+UMBRIEL_TEST(scenePresetRejectsWrongInterfacesLegacyKeysAndEventScopes) {
+  const TempConfigTree tree;
+  tree.write("stage.glsl", "void scene_stage() {}");
+  tree.write("config.toml", R"(
+[effects.preset.unknown]
+kind = "animation"
+interface = "scene-v2"
+shader = "stage.glsl"
+[effects.preset.legacy]
+kind = "animation"
+shader = "stage.glsl"
+vertex_shader = "stage.glsl"
+[effects.preset.wrongkind]
+kind = "window"
+interface = "scene-v1"
+scope = "window_scene"
+shader = "stage.glsl"
+[effects.preset.wrongscope]
+kind = "animation"
+interface = "scene-v1"
+scope = "typo"
+shader = "stage.glsl"
+[effects.preset.window]
+kind = "animation"
+interface = "scene-v1"
+scope = "window_scene"
+vertex_shader = "stage.glsl"
+shader = "stage.glsl"
+[effects.preset.pair]
+kind = "animation"
+interface = "scene-v1"
+scope = "workspace_pair"
+shader = "stage.glsl"
+[effects.preset.set]
+kind = "animation"
+interface = "scene-v1"
+scope = "workspace_set"
+vertex_shader = "stage.glsl"
+shader = "stage.glsl"
+[animation.windows_in]
+effect = "pair"
+[animation.windows_out]
+effect = "set"
+[animation.workspaces]
+effect = "window"
+[animation.windows_move]
+effect = "window"
+[animation.overview]
+effect = "set"
+)");
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  for (const auto name : {"unknown", "legacy", "wrongkind", "wrongscope"}) {
+    CHECK(umbriel::findEffectPreset(store.config().effects, name) == nullptr);
+  }
+  CHECK(store.config().animation.windowsIn.effect.empty());
+  CHECK(store.config().animation.windowsOut.effect.empty());
+  CHECK(store.config().animation.windowsMove.effect.empty());
+  CHECK(store.config().animation.workspaces.effect.empty());
+  CHECK(store.config().animation.overview.effect.empty());
+  CHECK(containsDiagnostic(store, "interface must be scene-v1"));
+  CHECK(containsDiagnostic(store, "vertex_shader requires interface = scene-v1"));
+  CHECK(containsDiagnostic(store, "scene scope window_scene is incompatible"));
+}
+
+UMBRIEL_TEST(scenePresetMissingStageKeepsEveryWatchAndRepairsAtomically) {
+  const TempConfigTree tree;
+  tree.write("common.glsl", "float common() { return 0.0; }");
+  tree.write("vertex.glsl", "vec4 transition_vertex(vec2 uv) { return vec4(uv, 0.0, 1.0); }");
+  tree.write("fragment.glsl", "vec4 transition_fragment(vec2 uv, vec2 p) { return vec4(1.0); }");
+  const std::string declaration = R"(
+[effects.preset.scene]
+kind = "animation"
+interface = "scene-v1"
+scope = "window_scene"
+common_shader = "common.glsl"
+vertex_shader = "vertex.glsl"
+shader = "fragment.glsl"
+composite_shader = "missing.glsl"
+)";
+  tree.write("config.toml", declaration);
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto* broken = umbriel::findEffectPreset(store.config().effects, "scene");
+  CHECK(broken != nullptr && broken->scene && broken->inert());
+  for (const auto file : {"common.glsl", "vertex.glsl", "fragment.glsl", "missing.glsl"}) {
+    CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path(file)), 1);
+  }
+  tree.write("missing.glsl", "vec4 transition_composite(vec2 uv) { return vec4(1.0); }");
+  CHECK(store.reload().success);
+  const auto repaired = *umbriel::findEffectPreset(store.config().effects, "scene");
+  CHECK(!repaired.inert());
+  tree.write("common.glsl", "float common() { return 1.0; }");
+  CHECK(store.reload().success);
+  CHECK(*umbriel::findEffectPreset(store.config().effects, "scene") != repaired);
+  tree.write("config.toml", declaration + "\n[effects.preset.scene.parameters]\nbad = [1, 2, 3, 4, 5]\n");
+  CHECK(store.reload().success);
+  CHECK(umbriel::findEffectPreset(store.config().effects, "scene")->inert());
+  CHECK_EQ(std::ranges::count(store.watchPaths(), tree.path("missing.glsl")), 1);
+}
+
 UMBRIEL_TEST(effectPresetsClaimOnlyTheirKindsKeys) {
   const TempConfigTree tree;
   tree.write("pulse.glsl", "vec4 border(vec2 uv) { return umbriel_sample(uv); }");
@@ -3621,7 +3824,8 @@ UMBRIEL_TEST(bundledEffectPresetsDefineWithoutSelecting) {
   const TempConfigTree tree;
   std::string includes = "[include]\nfiles = [\n";
   for (const char* effect :
-       {"animation/reveal", "animation/squash", "border/pulse", "window/scanlines", "screen/vignette", "cursor/glow"}) {
+       {"animation/reveal", "animation/squash", "border/pulse", "border/spectrum", "window/scanlines",
+        "screen/vignette", "cursor/glow"}) {
     includes += std::format("  \"{}/examples/effects/{}/effect.toml\",\n", UMBRIEL_SOURCE_ROOT, effect);
   }
   includes += "]\n";
@@ -3632,10 +3836,22 @@ UMBRIEL_TEST(bundledEffectPresetsDefineWithoutSelecting) {
   CHECK(!containsDiagnostic(store, "unknown key"));
   CHECK(!containsDiagnostic(store, "cannot read shader"));
   const auto& effects = store.config().effects;
-  CHECK_EQ(effects.presets.size(), size_t{6});
+  CHECK_EQ(effects.presets.size(), size_t{7});
   CHECK(effects.border.empty() && effects.window.empty() && effects.screen.empty() && effects.cursor.empty());
   const umbriel::EffectPreset* pulse = umbriel::findEffectPreset(effects, "pulse");
   CHECK(pulse != nullptr && pulse->kind == umbriel::EffectKind::Border && pulse->light.has_value());
+  const umbriel::EffectPreset* spectrum = umbriel::findEffectPreset(effects, "spectrum");
+  CHECK(
+      spectrum != nullptr
+      && spectrum->kind == umbriel::EffectKind::Border
+      && spectrum->audio == "spectrum_playback"
+      && !spectrum->animated
+  );
+  CHECK_EQ(effects.audioSources.size(), size_t{1});
+  if (!effects.audioSources.empty()) {
+    CHECK(effects.audioSources[0].mode == umbriel::AudioMode::Playback);
+    CHECK(effects.audioSources[0].followDefault);
+  }
   const umbriel::EffectPreset* glow = umbriel::findEffectPreset(effects, "glow");
   CHECK(glow != nullptr && glow->kind == umbriel::EffectKind::Cursor && glow->radius > 0);
 }
@@ -3932,6 +4148,166 @@ action = 'effect-window-set:window'
   CHECK(!containsDiagnostic(store, "missing"));
   CHECK(store.config().hotCorners.corners[0].action.has_value());
   CHECK(umbriel::effectActionReference(*store.config().hotCorners.corners[0].action)->name == "window");
+}
+
+UMBRIEL_TEST(audioSourcesRequireExplicitModeAndExclusiveTargetSelection) {
+  const TempConfig file;
+  file.write(R"(
+[effects.audio.sources.desktop]
+provider = 'pipewire'
+mode = 'playback'
+follow_default = true
+[effects.audio.sources.voice]
+provider = 'pipewire'
+mode = 'microphone'
+target = 'exact microphone node'
+follow_default = false
+)");
+  auto& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  CHECK(store.reload().success);
+  const auto& sources = store.config().effects.audioSources;
+  CHECK_EQ(sources.size(), size_t{2});
+  if (sources.size() != 2) {
+    return;
+  }
+  CHECK(sources[0].provider == umbriel::AudioProvider::Pipewire);
+  CHECK(sources[0].mode == umbriel::AudioMode::Playback);
+  CHECK(sources[0].target.empty());
+  CHECK(sources[0].followDefault);
+  CHECK(sources[1].mode == umbriel::AudioMode::Microphone);
+  CHECK_EQ(sources[1].target, std::string("exact microphone node"));
+  CHECK(!sources[1].followDefault);
+  CHECK(store.config().effects.presets.empty());
+  CHECK(store.diagnostics().empty());
+}
+
+UMBRIEL_TEST(audioExternalExecutableResolvesBesideItsDeclaringIncludeAndPreservesArgv) {
+  const TempConfigTree tree;
+  tree.write("config.toml", "[include]\nfiles = ['theme/audio.toml']\n");
+  tree.write("theme/audio.toml", R"(
+[effects.audio.sources.external]
+provider = 'external'
+mode = 'playback'
+target = 'literal target'
+executable = '../helpers/audio helper'
+args = ['', 'a b', '$(touch should-not-exist)', '; echo text', '$HOME', '*.wav']
+)");
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  const auto& sources = store.config().effects.audioSources;
+  CHECK_EQ(sources.size(), size_t{1});
+  if (sources.size() != 1) {
+    return;
+  }
+  const auto& source = sources[0];
+  CHECK(source.provider == umbriel::AudioProvider::External);
+  CHECK_EQ(source.executable, tree.path("helpers/audio helper").string());
+  CHECK(
+      source.args == std::vector<std::string>({"", "a b", "$(touch should-not-exist)", "; echo text", "$HOME", "*.wav"})
+  );
+  CHECK(store.diagnostics().empty());
+  // Loading metadata does not require opening or executing the helper.
+  CHECK(!std::filesystem::exists(source.executable));
+}
+
+UMBRIEL_TEST(audioInvalidSourceDeclarationsNeverFallBackToAnImplicitDevice) {
+  const TempConfig file;
+  auto& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  const std::array<std::string_view, 22> invalid = {
+      "mode = 'playback'\nfollow_default = true\n",
+      "provider = 'pipewire'\nfollow_default = true\n",
+      "provider = 'shell'\nmode = 'playback'\nfollow_default = true\n",
+      "provider = 'pipewire'\nmode = 'capture'\nfollow_default = true\n",
+      "provider = 'pipewire'\nmode = 'playback'\n",
+      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = false\n",
+      "provider = 'pipewire'\nmode = 'playback'\ntarget = ''\n",
+      "provider = 'pipewire'\nmode = 'playback'\ntarget = ''\nfollow_default = true\n",
+      "provider = 'pipewire'\nmode = 'playback'\ntarget = 'fixed'\nfollow_default = true\n",
+      "provider = 'pipewire'\nmode = 'playback'\ntarget = 1\n",
+      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = 'true'\n",
+      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = true\ntypo = 1\n",
+      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = true\nexecutable = '/bin/false'\n",
+      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = true\nargs = []\n",
+      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\n",
+      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = ''\n",
+      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = 1\n",
+      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = 'helper'\nargs = 'shell command'\n",
+      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = 'helper'\nargs = [1]\n",
+      "provider = 1\nmode = 'playback'\nfollow_default = true\n",
+      "provider = 'pipewire'\nmode = true\nfollow_default = true\n",
+      "provider = 'external'\nmode = 'playback'\nfollow_default = true\nexecutable = 'helper'\nshell = true\n",
+  };
+  for (const auto declaration : invalid) {
+    file.write("[effects.audio.sources.invalid]\n" + std::string(declaration));
+    CHECK(store.reload().success);
+    CHECK(store.config().effects.audioSources.empty());
+    CHECK(containsDiagnostic(store, "ignoring effects.audio.sources.invalid"));
+  }
+}
+
+UMBRIEL_TEST(audioReferencesResolveAcrossForwardIncludesForEveryExistingPresetKind) {
+  const TempConfigTree tree;
+  tree.write("sources.toml", R"(
+[effects.audio.sources.desktop]
+provider = 'pipewire'
+mode = 'playback'
+follow_default = true
+)");
+  std::string document = "[include]\nfiles = ['sources.toml']\n";
+  for (const auto kind : {"animation", "border", "window", "screen", "cursor"}) {
+    document += "[effects.preset." + std::string(kind) + "]\nkind = '" + kind + "'\naudio = 'desktop'\n";
+  }
+  document += "[effects.preset.unbound]\nkind = 'window'\n";
+  document += "[effects.preset.unknown]\nkind = 'window'\naudio = 'missing'\n";
+  document += "[effects.preset.wrong_type]\nkind = 'window'\naudio = true\n";
+  tree.write("config.toml", document);
+  auto& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  CHECK(store.reload().success);
+  for (const auto kind : {"animation", "border", "window", "screen", "cursor"}) {
+    const auto* preset = umbriel::findEffectPreset(store.config().effects, kind);
+    CHECK(preset != nullptr && preset->audio == "desktop");
+  }
+  for (const auto name : {"unbound", "unknown", "wrong_type"}) {
+    const auto* preset = umbriel::findEffectPreset(store.config().effects, name);
+    CHECK(preset != nullptr && preset->audio.empty());
+  }
+  CHECK(containsDiagnostic(store, "ignoring effects.preset.unknown.audio (unknown audio source 'missing')"));
+  CHECK(containsDiagnostic(store, "effects.preset.wrong_type.audio (expected string)"));
+  CHECK(!containsDiagnostic(store, "unknown key"));
+  CHECK(std::ranges::any_of(store.diagnostics(), [&](const auto& diagnostic) {
+    return diagnostic.file == tree.path("config.toml").string()
+        && diagnostic.message.contains("unknown audio source 'missing'");
+  }));
+  // Definitions and bindings leave global consumers disabled; runtime demand is tested separately.
+  CHECK(store.config().effects.border.empty());
+  CHECK(store.config().effects.window.empty());
+  CHECK(store.config().effects.screen.empty());
+  CHECK(store.config().effects.cursor.empty());
+}
+
+UMBRIEL_TEST(audioDefinitionAndBindingChangesInvalidateEffectsAndResetOnReload) {
+  const TempConfig file;
+  const std::string source = "[effects.audio.sources.desktop]\nprovider = 'pipewire'\nmode = 'playback'\n";
+  file.write(source + "target = 'first'\n[effects.preset.a]\nkind = 'window'\naudio = 'desktop'\n");
+  auto& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  CHECK(store.reload().success);
+  CHECK(!store.reload().effects.any());
+  file.write(source + "target = 'second'\n[effects.preset.a]\nkind = 'window'\naudio = 'desktop'\n");
+  const auto changed = store.reload();
+  CHECK(changed.success);
+  CHECK(changed.effects.effects);
+  file.write(source + "target = 'second'\n[effects.preset.a]\nkind = 'window'\n");
+  const auto unbound = store.reload();
+  CHECK(unbound.success);
+  CHECK(unbound.effects.effects);
+  file.write("");
+  CHECK(store.reload().success);
+  CHECK(store.config().effects.audioSources.empty());
 }
 
 int main() { return RUN_TESTS(); }

@@ -8,7 +8,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
-#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -81,11 +80,8 @@ namespace umbriel {
     }
 
     m_pid = pid;
-    m_pidfd = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
-    if (m_pidfd < 0) {
-      kLog.error("pidfd_open failed for xwayland-satellite; crash respawn disabled");
-    } else {
-      m_exitSource = wl_event_loop_add_fd(m_loop, m_pidfd, WL_EVENT_READABLE, onPidfd, this);
+    if (!watchChildExit(m_loop, pid, onPidfd, this, m_pidfd, m_exitSource)) {
+      kLog.error("exit watch failed for xwayland-satellite; crash respawn disabled");
     }
     kLog.info("xwayland-satellite spawned (pid {}) on DISPLAY={}", pid, m_display);
   }
@@ -100,16 +96,7 @@ namespace umbriel {
     return 0;
   }
 
-  void XwaylandSupervisor::closeWatch() {
-    if (m_exitSource != nullptr) {
-      wl_event_source_remove(m_exitSource);
-      m_exitSource = nullptr;
-    }
-    if (m_pidfd >= 0) {
-      close(m_pidfd);
-      m_pidfd = -1;
-    }
-  }
+  void XwaylandSupervisor::closeWatch() { closeChildExitWatch(m_pidfd, m_exitSource); }
 
   void XwaylandSupervisor::handleExit() {
     int exitStatus = -1;

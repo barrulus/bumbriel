@@ -30,6 +30,7 @@ namespace umbriel {
     EffectKind kind;
     bool allowOff;
     EffectReferenceConstraint constraint;
+    scene_experiment::Binding sceneBinding = scene_experiment::Binding::Other;
     toml::source_region source;
     std::function<void()> clear;
   };
@@ -41,7 +42,14 @@ namespace umbriel {
     std::vector<EffectReference>& effectReferences;
     const std::vector<configmerge::EffectDeclaration>& presetDeclarations;
     const std::vector<configmerge::EffectDeclaration>& poolDeclarations;
+    struct AudioReference {
+      std::size_t preset;
+      toml::source_region source;
+    };
+    std::vector<AudioReference> audioReferences = {}; // NOLINT(readability-redundant-member-init)
   };
+
+  void validateAudioReferences(Config& loaded, const registry::ReadContext& context);
 
   // Record a diagnostic in the store and log it.
   void emitDiag(ConfigDiagnostic::Severity severity, const toml::source_region* src, std::string msg);
@@ -73,7 +81,8 @@ namespace umbriel {
   void addEffectReference(
       std::vector<EffectReference>& references, std::string context,
       const std::pair<std::string, toml::source_region>& selector, EffectKind kind, bool allowOff,
-      std::function<void()> clear, EffectReferenceConstraint constraint = EffectReferenceConstraint::PresetOnly
+      std::function<void()> clear, EffectReferenceConstraint constraint = EffectReferenceConstraint::PresetOnly,
+      scene_experiment::Binding sceneBinding = scene_experiment::Binding::Other
   );
 
   // Record the effect selector a rule holds under `key`, once the rule is kept.
@@ -82,10 +91,15 @@ namespace umbriel {
   );
 
   // An effect selector, validated after all definitions are loaded.
-  template <typename T> registry::Field<T> effectField(std::string_view key, std::string T::* member, EffectKind kind) {
+  template <typename T>
+  registry::Field<T> effectField(
+      std::string_view key, std::string T::* member, EffectKind kind,
+      scene_experiment::Binding sceneBinding = scene_experiment::Binding::Other
+  ) {
     return registry::custom<T>(
         key, registry::KeyDescription("string").withFormat("effect"),
-        [member, kind](const toml::node& node, const std::string& path, T& target, registry::ReadContext& context) {
+        [member, kind,
+         sceneBinding](const toml::node& node, const std::string& path, T& target, registry::ReadContext& context) {
           const auto value = node.value<std::string>();
           if (!node.is_string() || !value) {
             warnAt(node.source(), "ignoring {} (expected string)", path);
@@ -96,7 +110,8 @@ namespace umbriel {
           addEffectReference(
               context.effectReferences, path, {*value, node.source()}, kind, false, [&selected] { selected.clear(); },
               kind == EffectKind::Animation ? EffectReferenceConstraint::PresetOnly
-                                            : EffectReferenceConstraint::PresetOrPool
+                                            : EffectReferenceConstraint::PresetOrPool,
+              sceneBinding
           );
         },
         [member](const T& defaults) { return nlohmann::ordered_json(defaults.*member); }
@@ -129,6 +144,7 @@ namespace umbriel {
   [[nodiscard]] registry::Field<Config> workspaceSettingsTable(); // [workspaces]
   [[nodiscard]] registry::Field<Config> screencastTable();
   [[nodiscard]] registry::Field<Config> effectsTable();
+  [[nodiscard]] registry::Field<Config> workspacePresentationTable();
   [[nodiscard]] registry::Field<Config> animationTable();
   [[nodiscard]] registry::Field<Config> layoutTable();
   [[nodiscard]] registry::Field<Config> workspaceRulesTable(); // [[workspace]]

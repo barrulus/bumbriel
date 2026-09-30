@@ -178,6 +178,12 @@ namespace umbriel {
     EffectCursorCycle,
     EffectCursorToggle,
     EffectCursorReset,
+    WorkspacePresentationEnter,
+    WorkspacePresentationNext,
+    WorkspacePresentationPrevious,
+    WorkspacePresentationSelect,
+    WorkspacePresentationAccept,
+    WorkspacePresentationCancel,
     Count,
   };
 

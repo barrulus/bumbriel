@@ -74,11 +74,15 @@ namespace umbriel {
     }
 
     bool sameAnimationEffects(const Config::Animation& before, const Config::Animation& after) {
+      if (before.enabled != after.enabled) {
+        return false;
+      }
       // Overview is the last event.
       for (unsigned slot = 0; slot <= static_cast<unsigned>(AnimationEvent::Overview); ++slot) {
         const auto event = static_cast<AnimationEvent>(slot);
-        const std::string* lhs = before.eventEffect(event).effect;
-        if (lhs != nullptr && *lhs != *after.eventEffect(event).effect) {
+        const auto lhs = before.eventEffect(event);
+        const auto rhs = after.eventEffect(event);
+        if (lhs.effect != nullptr && (*lhs.effect != *rhs.effect || lhs.enabled != rhs.enabled)) {
           return false;
         }
       }
@@ -213,6 +217,7 @@ namespace umbriel {
     const bool focusDim = before.animation.enabled != after.animation.enabled
         || before.animation.dimUnfocused != after.animation.dimUnfocused;
     const bool effectsChanged = before.effects != after.effects
+        || before.workspacePresentation != after.workspacePresentation
         || configuredEffectActionRoots(before) != configuredEffectActionRoots(after)
         || (outputNamesChanged && (selectsScreenEffect(before) || selectsScreenEffect(after)))
         || outputProjectionChanged(before, after, sameOutputScreenEffect)
@@ -309,7 +314,7 @@ namespace umbriel {
         .securityContextRules = before.securityContextRules != after.securityContextRules,
         .scratchpads = before.scratchpads != after.scratchpads,
         .workspaceRules = before.workspaceRules != after.workspaceRules,
-        .effects = before.effects != after.effects,
+        .effects = before.effects != after.effects || before.workspacePresentation != after.workspacePresentation,
     };
   }
 

@@ -114,7 +114,7 @@ namespace umbriel {
   void addEffectReference(
       std::vector<EffectReference>& references, std::string context,
       const std::pair<std::string, toml::source_region>& selector, EffectKind kind, bool allowOff,
-      std::function<void()> clear, EffectReferenceConstraint constraint
+      std::function<void()> clear, EffectReferenceConstraint constraint, scene_experiment::Binding sceneBinding
   ) {
     references.push_back({
         .context = std::move(context),
@@ -122,6 +122,7 @@ namespace umbriel {
         .kind = kind,
         .allowOff = allowOff,
         .constraint = constraint,
+        .sceneBinding = sceneBinding,
         .source = selector.second,
         .clear = std::move(clear),
     });

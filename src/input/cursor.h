@@ -1,10 +1,13 @@
 #pragma once
 #include "layout/drop_target.h"
+#include "scene/presentation.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 #include <wayland-server-core.h>
@@ -205,7 +208,28 @@ namespace umbriel {
     // focus, and an empty focus falls back to the default cursor.
     void notePointerFocusChange(wlr_surface* newSurface);
 
+    bool beginSceneInput(Output& output, std::function<void()> dismiss);
+    void endSceneInput(Output& output, bool requireRestore);
+    // Resolved only after native restoration and the swallowed sequence finish.
+    void setSceneRestoreFocus(Output& output, std::string_view viewId, std::string_view workspaceId);
+    void sceneRestoreCommitted(Output& output);
+    void forgetSceneInput(Output& output);
+    void sceneInputDeviceRemoved(const wlr_input_device* device);
+    [[nodiscard]] bool sceneRestorationPending() const;
+    [[nodiscard]] bool sceneInputBlocked() const;
+#ifdef UMBRIEL_TEST_IPC
+    bool setPresentationInputProbe(bool enabled);
+    [[nodiscard]] bool presentationInputProbeActive() const;
+    [[nodiscard]] bool presentationInputProbePending() const { return m_presentationInputGuard.pending(); }
+    [[nodiscard]] bool presentationRestorePending() const { return sceneRestorationPending(); }
+    void setPresentationRestorePending(bool pending);
+#endif
+
   private:
+    [[nodiscard]] bool sceneInputAt(double x, double y) const;
+    void dismissSceneInputAt(double x, double y);
+    bool activateSceneInputAt(double x, double y);
+    void refreshSceneInputHover();
     static void onMotion(wl_listener* listener, void* data);
     static void onMotionAbsolute(wl_listener* listener, void* data);
     static void onButton(wl_listener* listener, void* data);
@@ -242,7 +266,9 @@ namespace umbriel {
 
     void warpTo(double lx, double ly, bool allowFocusChange);
     void processMotion(uint32_t timeMsec, double oldX, double oldY, bool allowFocusChange = true);
-    void processButton(uint32_t timeMsec, uint32_t button, wl_pointer_button_state state);
+    void processButton(
+        uint32_t timeMsec, uint32_t button, wl_pointer_button_state state, const wlr_input_device* device = nullptr
+    );
     void updatePointerOutput(bool allowFocusChange = true);
     View* hoverFocus(
         View* view, wlr_surface** surface, double* sx, double* sy, LayerSurface** layer, double oldX, double oldY
@@ -320,6 +346,19 @@ namespace umbriel {
     // Presses consumed by config binds or ignored during an interactive move;
     // their release is swallowed too, even if the grab ended first.
     std::vector<uint32_t> m_swallowedButtons;
+    PresentationInputGuard m_presentationInputGuard;
+    struct SceneInput {
+      Output* output;
+      bool active;
+      bool restoring;
+      std::function<void()> dismiss;
+      std::string restoreFocus;
+      std::string restoreWorkspace;
+    };
+    std::vector<SceneInput> m_sceneInputs;
+#ifdef UMBRIEL_TEST_IPC
+    Output* m_probeInputOutput = nullptr;
+#endif
     std::vector<std::unique_ptr<TabletToolState>> m_tools;
     bool m_hoverFocusInvalidated = false;
     bool m_compositorOwnsCursor = false;

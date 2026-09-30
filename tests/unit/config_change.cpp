@@ -1012,3 +1012,35 @@ UMBRIEL_TEST(effectActionRootsAreUniqueAcrossKeybindsAndCorners) {
 }
 
 int main() { return RUN_TESTS(); }
+
+UMBRIEL_TEST(workspacePresentationBindingAndFramingRaiseEffectsChange) {
+  const Config before;
+  Config after = before;
+  CHECK(!ConfigEffects::between(before, after).effects);
+  after.workspacePresentation.effect = "carousel";
+  CHECK(ConfigEffects::between(before, after).effects);
+  CHECK(ConfigChange::between(before, after).effects);
+  const Config selected = after;
+  after.workspacePresentation.framing = Config::WorkspacePresentation::Framing::FitAll;
+  CHECK(ConfigEffects::between(selected, after).effects);
+  CHECK(ConfigChange::between(selected, after).effects);
+  after = selected;
+  after.workspacePresentation.effect.clear();
+  CHECK(ConfigEffects::between(selected, after).effects);
+  CHECK(ConfigChange::between(selected, after).effects);
+}
+
+UMBRIEL_TEST(animationEnableChangesRefreshReferencedSceneRoots) {
+  Config before;
+  before.animation.enabled = true;
+  before.animation.workspaces.effect = "wipe";
+  Config after = before;
+  after.animation.enabled = false;
+  CHECK(ConfigEffects::between(before, after).effects);
+  after = before;
+  after.animation.workspaces.enabled = false;
+  CHECK(ConfigEffects::between(before, after).effects);
+  after = before;
+  after.animation.workspaces.durationMs += 1;
+  CHECK(!ConfigEffects::between(before, after).effects);
+}

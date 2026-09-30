@@ -28,6 +28,7 @@ namespace umbriel {
           colorsTable(),
           effectsTable(),
           animationTable(),
+          workspacePresentationTable(),
           appearanceTable(),
           overviewTable(),
           scratchpadTable(),
@@ -106,6 +107,7 @@ namespace umbriel {
         registry::readFields(root, configFields(), loaded, context);
         warnScrollButtonBinds(loaded);
         validateEffectReferences(loaded, effectReferences);
+        validateAudioReferences(loaded, context);
       }
 
       // Reject config if any error-level diagnostics were emitted.

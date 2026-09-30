@@ -5,6 +5,9 @@ window's border, on windows, on whole outputs, and around the pointer. Every
 effect is off until you select one. Umbriel ships a small set; each is a
 preset you include and then name where it should apply.
 
+For whole-workspace transitions, workspace presentation and window-scene
+opening/closing programs, see [scene effects](scene-effects.md).
+
 ## Use a bundled effect
 
 Bundled presets install under `share/umbriel/effects/<kind>/<name>/`. Include a
@@ -37,9 +40,17 @@ Bundled presets:
 | `reveal` | animation | `[animation.windows_in] effect = "reveal"` (also `windows_out`) |
 | `squash` | animation | `[animation.windows_move] effect = "squash"` |
 | `pulse` | border | `[effects] border = "pulse"` |
+| `spectrum` | border | `[effects] border = "spectrum"`; requires the optional audio helper |
+| `border.music-lines` | border + overlay | Fixed cyan/blue/magenta spectrum bars and mirrored contours whose heights follow the live audio bands; include `border/music-lines/effect.toml` |
 | `scanlines` | window | `[effects] window = "scanlines"` |
 | `vignette` | screen | `[effects] screen = "vignette"` |
 | `glow` | cursor | `[effects] cursor = "glow"` |
+| `cursor.music-radiance` | cursor | Expanding rainbow rings driven by playback; include `cursor/music-radiance/effect.toml` |
+| `window.music-smoke` | window | Translucent rising smoke driven by playback; include `window/music-smoke/effect.toml` |
+
+The `spectrum` preset explicitly follows system playback and responds without a
+shader clock. Including its file does not start acquisition; selecting it does.
+See [audio inputs](audio-effects.md) for source selection and helper setup.
 
 ## Turn a default off for one window or output
 

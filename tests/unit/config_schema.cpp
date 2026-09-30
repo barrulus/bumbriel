@@ -7,6 +7,7 @@
 #include "config/schema.h"
 #include "core/log.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -209,7 +210,16 @@ UMBRIEL_TEST(listedValuesAreAccepted) {
   for (const KeyDescription& key : umbriel::registry::describeConfig(umbriel::Config{})) {
     for (const std::string_view value : key.values) {
       std::string concrete;
-      const toml::table document = documentSetting(key.path, nlohmann::ordered_json(value), concrete);
+      toml::table document = documentSetting(key.path, nlohmann::ordered_json(value), concrete);
+      if (key.path.starts_with("effects.audio.sources.<name>.")) {
+        auto* source = document["effects"]["audio"]["sources"]["sample"].as_table();
+        source->insert("provider", "pipewire");
+        source->insert("mode", "playback");
+        source->insert("follow_default", true);
+        if (source->get("provider")->value<std::string>() == "external") {
+          source->insert("executable", "/nonexistent/audio-helper");
+        }
+      }
       const Loaded loaded = load(document);
       ++tried;
       for (const std::string& message : loaded.messages) {
@@ -247,8 +257,67 @@ UMBRIEL_TEST(effectPoolSchemaReportsMembersPoliciesAndRequiredKind) {
   CHECK(kind && choose && selection);
 }
 
+UMBRIEL_TEST(audioSchemaExposesExplicitSourceSelectionAndOptionalPresetBinding) {
+  const auto descriptions = umbriel::registry::describeConfig(umbriel::Config{});
+  const std::vector<std::pair<std::string_view, std::string_view>> expected = {
+      {"effects.audio", "table"},
+      {"effects.audio.sources", "map"},
+      {"effects.audio.sources.<name>", "table"},
+      {"effects.audio.sources.<name>.provider", "enum"},
+      {"effects.audio.sources.<name>.mode", "enum"},
+      {"effects.audio.sources.<name>.target", "string"},
+      {"effects.audio.sources.<name>.follow_default", "bool"},
+      {"effects.audio.sources.<name>.executable", "string"},
+      {"effects.audio.sources.<name>.args", "string_array"},
+      {"effects.preset.<name>.audio", "string"},
+  };
+  for (const auto& [path, type] : expected) {
+    const auto found = std::ranges::find(descriptions, path, &KeyDescription::path);
+    CHECK(found != descriptions.end());
+    if (found == descriptions.end()) {
+      continue;
+    }
+    CHECK_EQ(found->type, type);
+    CHECK(found->defaultValue.is_null());
+    if (path.ends_with(".provider")) {
+      CHECK(found->values == std::vector<std::string_view>({"pipewire", "external"}));
+    } else if (path.ends_with(".mode")) {
+      CHECK(found->values == std::vector<std::string_view>({"playback", "microphone"}));
+    }
+  }
+}
+
 int main() {
   // The documents are partial configs; their unrelated complaints are filtered, not worth printing.
   setConsoleLogging(false);
   return RUN_TESTS();
+}
+
+UMBRIEL_TEST(sceneSchemaReportsExplicitInterfaceScopesStagesAndPresentationDefaults) {
+  const auto descriptions = umbriel::registry::describeConfig(umbriel::Config{});
+  const std::vector<std::pair<std::string_view, std::string_view>> expected = {
+      {"effects.preset.<name>.interface", "enum"},          {"effects.preset.<name>.scope", "enum"},
+      {"effects.preset.<name>.common_shader", "string"},    {"effects.preset.<name>.vertex_shader", "string"},
+      {"effects.preset.<name>.composite_shader", "string"}, {"effects.preset.<name>.parameters", "table"},
+      {"workspace_presentation.effect", "string"},          {"workspace_presentation.framing", "enum"},
+  };
+  for (const auto& [path, type] : expected) {
+    const auto found = std::ranges::find(descriptions, path, &KeyDescription::path);
+    CHECK(found != descriptions.end());
+    if (found == descriptions.end()) {
+      continue;
+    }
+    CHECK_EQ(found->type, type);
+    if (path == "effects.preset.<name>.interface") {
+      CHECK(found->values == std::vector<std::string_view>({"scene-v1"}));
+      CHECK(found->defaultValue.is_null());
+    } else if (path == "effects.preset.<name>.scope") {
+      CHECK(found->values == std::vector<std::string_view>({"workspace_pair", "workspace_set", "window_scene"}));
+    } else if (path == "workspace_presentation.effect") {
+      CHECK(found->defaultValue.get<std::string>().empty());
+    } else if (path == "workspace_presentation.framing") {
+      CHECK(found->values == std::vector<std::string_view>({"viewport", "fit_all"}));
+      CHECK(found->defaultValue == "viewport");
+    }
+  }
 }
