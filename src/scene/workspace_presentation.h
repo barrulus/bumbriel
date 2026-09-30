@@ -24,6 +24,8 @@ namespace umbriel {
     bool begin(std::string_view preset);
     bool select(std::string_view identity);
     bool step(int direction);
+    void pointerMoved(double layoutX, double layoutY);
+    void zoomBy(double notches);
     bool beginNavigation(wlr_pointer* pointer, NavigationSource source);
     void updateNavigation(double dx, double dy, uint32_t timeMsec);
     void endNavigation(bool cancelled, uint32_t timeMsec);

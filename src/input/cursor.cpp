@@ -1173,7 +1173,15 @@ namespace umbriel {
       auto* mode = output != nullptr ? output->workspacePresentation() : nullptr;
       if (!sceneRestorationPending() && !m_presentationInputGuard.pending() && mode != nullptr && mode->active()) {
         const bool vertical = event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL;
-        if (event->source == WL_POINTER_AXIS_SOURCE_FINGER) {
+        if ((m_server->keyboardModifiers() & WLR_MODIFIER_CTRL) != 0) {
+          resetWheelAccumulation();
+          mode->endNavigation(true, event->time_msec);
+          if (vertical) {
+            mode->zoomBy(
+                event->delta_discrete != 0 ? static_cast<double>(event->delta_discrete) / 120.0 : event->delta / 15.0
+            );
+          }
+        } else if (event->source == WL_POINTER_AXIS_SOURCE_FINGER) {
           resetWheelAccumulation();
           mode->handleTouchpadAxis(event->pointer, vertical, event->delta, event->time_msec);
         } else {
@@ -1466,6 +1474,11 @@ namespace umbriel {
 
   void Cursor::processMotion(uint32_t timeMsec, double oldX, double oldY, bool allowFocusChange) {
     forwardEffectPointer();
+    for (const auto& input : m_sceneInputs) {
+      if (auto* mode = input.output->workspacePresentation(); input.active && mode != nullptr) {
+        mode->pointerMoved(m_cursor->x, m_cursor->y);
+      }
+    }
     if (m_presentationInputGuard.suppressHover(!pointerFocusPinned() && sceneInputAt(m_cursor->x, m_cursor->y))) {
       clearPointerFocus();
       return;

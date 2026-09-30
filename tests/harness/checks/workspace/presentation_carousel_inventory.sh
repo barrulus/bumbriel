@@ -29,6 +29,8 @@ interface = "scene-v1"
 scope = "workspace_set"
 vertex_shader = "carousel.vert"
 shader = "carousel.frag"
+[effects.preset.carousel.parameters]
+max_elevation_degrees = 35.0
 CONFIG
     "$UMBRIEL" msg config-reload > /dev/null
     "$UMBRIEL" settle

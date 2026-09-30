@@ -12,7 +12,7 @@ namespace umbriel::scene_experiment {
   // Typed scene contracts remain internal until their runtime composition and
   // lifecycle gates pass. Parsing them does not announce a stable author ABI.
   enum class Scope : std::uint8_t { WorkspacePair, WorkspaceSet, WindowScene };
-  enum class Stage : std::uint8_t { Common, Vertex, Fragment, Composite, Count };
+  enum class Stage : std::uint8_t { Common, Vertex, Fragment, Composite, Backdrop, Count };
   enum class Binding : std::uint8_t { WorkspaceSwitch, WindowOpen, WindowClose, Presentation, Other };
   inline constexpr std::size_t kStageCount = static_cast<std::size_t>(Stage::Count);
   inline constexpr std::size_t kAggregateSourceLimit = 512 * 1024;

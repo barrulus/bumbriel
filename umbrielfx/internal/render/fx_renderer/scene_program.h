@@ -30,8 +30,8 @@ enum fx_scene_item_kind {
 };
 
 #define FX_SCENE_PARAMETERS 32
-#define FX_SCENE_VERTEX_VECTORS 41u
-#define FX_SCENE_FRAGMENT_VECTORS 52u
+#define FX_SCENE_VERTEX_VECTORS 43u
+#define FX_SCENE_FRAGMENT_VECTORS 54u
 struct fx_scene_limits {
 	unsigned texture_size, vertex_vectors, fragment_vectors, fragment_texture_units;
 };
@@ -48,6 +48,8 @@ struct fx_scene_frame {
 	unsigned output_transform; // wl_output_transform, logical output to physical target
 	float progress, linear_progress, direction, random_seed[4];
 	float navigation_position, navigation_velocity;
+	float pointer[2]; // workspace_set: output-local normalized position, top-left origin
+	float zoom; // workspace_set: interactive magnification, 1 at entry
 	float axis[2], viewport[4];
 	int framing; // 0 viewport, 1 fit_all; capture extent belongs to each item
 	int scene_count, role;
@@ -70,7 +72,7 @@ struct fx_scene_item {
 };
 
 struct fx_scene_sources {
-	const char *common, *vertex, *fragment, *composite;
+	const char *common, *vertex, *fragment, *composite, *backdrop;
 };
 
 // The registry is the only compilation/cache owner. These functions perform
@@ -82,6 +84,8 @@ struct fx_scene_program *fx_scene_program_ref(struct fx_scene_program *program);
 void fx_scene_program_unref(struct fx_scene_program *program);
 bool fx_scene_program_reads_audio(const struct fx_scene_program *program);
 bool fx_scene_program_reads_time(const struct fx_scene_program *program);
+bool fx_scene_program_reads_pointer(const struct fx_scene_program *program);
+bool fx_scene_program_reads_zoom(const struct fx_scene_program *program);
 
 // Registry-precompiled picking uses the authored vertex and fragment stages.
 // Final composites have no inverse mapping contract and are unsupported.

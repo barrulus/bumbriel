@@ -129,7 +129,7 @@ oracle checks perspective-correct UV; all eight transforms use a non-square
 128×64 target. A deformed 8×8 mesh differs from a quad negative control; independent
 window motion and trigger clocks are tested. Set drawing uses depth and opaque
 alpha, while window drawing preserves premultiplied order and screen-blended
-emission. Queried limits are checked conservatively with 41 vertex and 50
+emission. Queried limits are checked conservatively with 43 vertex and 54
 fragment vectors reserved before user parameters; no public ABI is frozen.
 
 `scene-resources` checks complete-inventory planning, overflow, native landing

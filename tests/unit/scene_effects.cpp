@@ -64,15 +64,17 @@ common_shader = 'common.glsl'
 vertex_shader = 'vertex.glsl'
 shader = 'fragment.glsl'
 composite_shader = 'composite.glsl'
+backdrop_shader = 'backdrop.glsl'
 )";
   const auto broken = fixture.read(declaration, Scope::WindowScene);
   CHECK(!broken.sources);
-  CHECK_EQ(broken.watchPaths.size(), 4U);
+  CHECK_EQ(broken.watchPaths.size(), 5U);
   for (const auto& path : broken.watchPaths) {
     CHECK(path.parent_path() == fixture.directory / "included");
   }
   fixture.write("vertex.glsl", "vertex version one");
   fixture.write("composite.glsl", "composite version one");
+  fixture.write("backdrop.glsl", "backdrop version one");
   const auto repaired = fixture.read(declaration, Scope::WindowScene);
   CHECK(repaired.sources.has_value());
   CHECK(fixture.diagnostics.empty());
@@ -94,6 +96,7 @@ UMBRIEL_TEST(sceneSourcesEnforceRequiredStagesAndAggregateBudget) {
   CHECK(!fixture.read("vertex_shader = 'source.glsl'", Scope::WorkspaceSet).sources);
   CHECK(!fixture.read("shader = 'source.glsl'\nvertex_shader = 'source.glsl'", Scope::WorkspacePair).sources);
   CHECK(!fixture.read("shader = 'source.glsl'\ncomposite_shader = 'source.glsl'", Scope::WorkspacePair).sources);
+  CHECK(!fixture.read("shader = 'source.glsl'\nbackdrop_shader = 'source.glsl'", Scope::WorkspacePair).sources);
   fixture.write("source.glsl", std::string(umbriel::kShaderSourceLimit, 'x'));
   const auto boundary = fixture.read("shader = 'source.glsl'\nvertex_shader = 'source.glsl'", Scope::WorkspaceSet);
   CHECK(boundary.sources.has_value());

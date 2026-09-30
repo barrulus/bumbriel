@@ -45,7 +45,7 @@ namespace umbriel::scene_experiment {
 
   SourceReadResult readSources(Section& section, Scope scope, std::vector<ConfigDiagnostic>& diagnostics) {
     constexpr std::array<std::string_view, kStageCount> keys{
-        "common_shader", "vertex_shader", "shader", "composite_shader"
+        "common_shader", "vertex_shader", "shader", "composite_shader", "backdrop_shader"
     };
     SourceReadResult result;
     Sources sources{.scope = scope, .stages = {}};
@@ -58,7 +58,8 @@ namespace umbriel::scene_experiment {
     for (std::size_t i = 0; i < keys.size(); ++i) {
       const auto stage = static_cast<Stage>(i);
       const bool required = stage == Stage::Fragment || (stage == Stage::Vertex && scope != Scope::WorkspacePair);
-      const bool allowed = scope != Scope::WorkspacePair || (stage != Stage::Vertex && stage != Stage::Composite);
+      const bool allowed = scope != Scope::WorkspacePair
+          || (stage != Stage::Vertex && stage != Stage::Composite && stage != Stage::Backdrop);
       const toml::node* node = section.node(keys[i]);
       // Read every declared stage even when another fails: all dependencies must
       // remain watched, and no prefix of a changed bundle may be installed.
@@ -78,7 +79,7 @@ namespace umbriel::scene_experiment {
         valid = false;
       }
       if (read.source) {
-        total += read.source->code.size(); // Four individually bounded sources.
+        total += read.source->code.size(); // Individually bounded sources.
         sources.stages[i] = std::move(read.source);
       }
     }
@@ -117,7 +118,8 @@ namespace umbriel::scene_experiment {
           " packed goto switch default inline noinline volatile public static extern external interface long short "
           " double half fixed unsigned superp input output hvec2 hvec3 hvec4 dvec2 dvec3 dvec4 fvec2 fvec3 fvec4 "
           " sampler1D sampler3D sampler1DShadow sampler2DShadow sampler2DRect sampler3DRect sampler2DRectShadow "
-          " sizeof cast namespace using main transition transition_vertex transition_fragment transition_composite ";
+          " sizeof cast namespace using main transition transition_vertex transition_fragment transition_composite "
+          "transition_backdrop ";
       if (reserved.contains(" " + name + " ")) {
         return "reserved scene parameter identifier";
       }

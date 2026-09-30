@@ -299,7 +299,8 @@ UMBRIEL_TEST(sceneSchemaReportsExplicitInterfaceScopesStagesAndPresentationDefau
       {"effects.preset.<name>.interface", "enum"},          {"effects.preset.<name>.scope", "enum"},
       {"effects.preset.<name>.common_shader", "string"},    {"effects.preset.<name>.vertex_shader", "string"},
       {"effects.preset.<name>.composite_shader", "string"}, {"effects.preset.<name>.parameters", "table"},
-      {"workspace_presentation.effect", "string"},          {"workspace_presentation.framing", "enum"},
+      {"effects.preset.<name>.backdrop_shader", "string"},  {"workspace_presentation.effect", "string"},
+      {"workspace_presentation.framing", "enum"},
   };
   for (const auto& [path, type] : expected) {
     const auto found = std::ranges::find(descriptions, path, &KeyDescription::path);

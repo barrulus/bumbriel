@@ -113,7 +113,8 @@ namespace umbriel {
           }
         } else {
           bool sceneKey = false;
-          for (const auto key : {"scope", "common_shader", "vertex_shader", "composite_shader", "parameters"}) {
+          for (const auto key :
+               {"scope", "common_shader", "vertex_shader", "composite_shader", "backdrop_shader", "parameters"}) {
             if (const auto* value = keys.take(key)) {
               warnAt(value->source(), "ignoring {} ({} requires interface = scene-v1)", path, key);
               sceneKey = true;
@@ -415,6 +416,7 @@ namespace umbriel {
                 add("common_shader", KeyDescription("string").withFormat("path"));
                 add("vertex_shader", KeyDescription("string").withFormat("path"));
                 add("composite_shader", KeyDescription("string").withFormat("path"));
+                add("backdrop_shader", KeyDescription("string").withFormat("path"));
                 add("parameters", KeyDescription("table"));
                 add("shader", KeyDescription("string").withFormat("path"));
                 add("palette", KeyDescription("bool"));
