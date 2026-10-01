@@ -28,6 +28,7 @@ namespace umbriel {
           colorsTable(),
           effectsTable(),
           animationTable(),
+          workspacePresentationTable(),
           appearanceTable(),
           overviewTable(),
           scratchpadTable(),

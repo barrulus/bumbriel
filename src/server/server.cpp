@@ -24,6 +24,7 @@
 #include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
+#include "scene/window_sources.h"
 #include "server/backend_manager.h"
 #include "server/ipc.h"
 #include "server/wine_color_manager.h"
@@ -718,6 +719,9 @@ namespace umbriel {
 
   Server::~Server() {
     m_stopping = true;
+#ifdef UMBRIEL_TEST_IPC
+    presentationTouchProbe("destroy");
+#endif
     if (m_lidStateReconcileIdle != nullptr) {
       wl_event_source_remove(m_lidStateReconcileIdle);
       m_lidStateReconcileIdle = nullptr;
@@ -1278,7 +1282,7 @@ namespace umbriel {
     m_alpha.snap(1.0);
     m_alpha.retarget(0.0, durationMs, curve);
 
-    if (effectRegistry().animationEffect(event) == nullptr) {
+    if (effectRegistry().animationEffect(event) == nullptr && effectRegistry().sceneAnimationEffect(event) == nullptr) {
       if (style == "slide") {
         m_slide.snap(0.0);
         m_slide.retarget(80.0, durationMs, curve);
@@ -1494,6 +1498,33 @@ namespace umbriel {
     return active;
   }
 
+  std::vector<PresentationNativeLifecycle> Server::nativePresentationLifecycles(const Output* output) const {
+    std::vector<PresentationNativeLifecycle> result;
+    const auto append = [&](const AnimatedValue& value, uint64_t snapshot) {
+      if (value.animating()) {
+        result.push_back(
+            {.identity = value.transitionId(),
+             .startMsec = value.startMsec(),
+             .deadlineMsec = value.startMsec() + value.durationMs(),
+             .snapshot = snapshot}
+        );
+      }
+    };
+    for (const auto& view : m_registry.all()) {
+      if (view->mapped()
+          && view->animatesOn(output)
+          && (view->workspace() == nullptr || view->workspace()->active() || view->pinned())) {
+        append(view->m_fade, 0);
+      }
+    }
+    for (const auto& snapshot : m_closeSnapshots) {
+      if (snapshot->animatesOn(output) && snapshot->visible()) {
+        append(snapshot->nativeAlpha(), snapshot->id());
+      }
+    }
+    return result;
+  }
+
   void Server::flushPendingViewOpacities() {
     for (const auto& view : m_registry.all()) {
       view->flushPendingEffectiveOpacity();
@@ -1656,7 +1687,60 @@ namespace umbriel {
     );
     registerAnimatable(snapshot.get());
     m_closeSnapshots.push_back(std::move(snapshot));
+#ifdef UMBRIEL_TEST_IPC
+    if (output != nullptr) {
+      output->notePresentationLifecycle();
+    }
+#endif
     return id;
+  }
+
+  WindowCloseSource Server::CloseSnapshot::sceneSource() const {
+    WindowCloseSource result;
+    result.tree = m_tree;
+    result.content = m_content;
+    result.shadow = m_shadow.node;
+    result.box = m_captured;
+    result.box.x = m_canvasX;
+    result.box.y = m_canvasY;
+    result.lifecycle = m_alpha;
+    if (!m_borders.empty()) {
+      result.borderWidth = m_borders.front().innerWidth + m_borders.front().outerWidth;
+      result.cornerRadius = m_borders.front().cornerRadius;
+    }
+    auto& root = result.overrides.emplace_back();
+    root.node = &m_tree->node;
+    root.skip_slots = 1U << static_cast<unsigned>(m_event);
+    root.skip_animation_clip = true;
+    for (const auto& buffer : m_buffers) {
+      auto& item = result.overrides.emplace_back();
+      item.node = &buffer.node->node;
+      item.has_opacity = true;
+      item.opacity = buffer.baseOpacity;
+    }
+    for (const auto& border : m_borders) {
+      auto& item = result.overrides.emplace_back();
+      item.node = &border.node->node;
+      item.has_colors = true;
+      premultiplied(item.colors[0], border.innerColor, 1);
+      premultiplied(item.colors[1], border.outerColor, 1);
+    }
+    if (m_shadow.node != nullptr) {
+      auto& item = result.overrides.emplace_back();
+      item.node = &m_shadow.node->node;
+      item.has_colors = true;
+      std::ranges::copy(m_shadow.color, item.colors[0]);
+    }
+    return result;
+  }
+
+  std::optional<WindowCloseSource> Server::closeSceneSource(CloseSnapshotId id) const {
+    for (const auto& snapshot : m_closeSnapshots) {
+      if (snapshot->id() == id && snapshot->visible()) {
+        return snapshot->sceneSource();
+      }
+    }
+    return std::nullopt;
   }
 
   void Server::presentCloseSnapshot(CloseSnapshotId id, int canvasX, int canvasY, bool visible) {

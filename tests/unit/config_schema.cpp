@@ -292,3 +292,32 @@ int main() {
   setConsoleLogging(false);
   return RUN_TESTS();
 }
+
+UMBRIEL_TEST(sceneSchemaReportsExplicitInterfaceScopesStagesAndPresentationDefaults) {
+  const auto descriptions = umbriel::registry::describeConfig(umbriel::Config{});
+  const std::vector<std::pair<std::string_view, std::string_view>> expected = {
+      {"effects.preset.<name>.interface", "enum"},          {"effects.preset.<name>.scope", "enum"},
+      {"effects.preset.<name>.common_shader", "string"},    {"effects.preset.<name>.vertex_shader", "string"},
+      {"effects.preset.<name>.composite_shader", "string"}, {"effects.preset.<name>.parameters", "table"},
+      {"workspace_presentation.effect", "string"},          {"workspace_presentation.framing", "enum"},
+  };
+  for (const auto& [path, type] : expected) {
+    const auto found = std::ranges::find(descriptions, path, &KeyDescription::path);
+    CHECK(found != descriptions.end());
+    if (found == descriptions.end()) {
+      continue;
+    }
+    CHECK_EQ(found->type, type);
+    if (path == "effects.preset.<name>.interface") {
+      CHECK(found->values == std::vector<std::string_view>({"scene-v1"}));
+      CHECK(found->defaultValue.is_null());
+    } else if (path == "effects.preset.<name>.scope") {
+      CHECK(found->values == std::vector<std::string_view>({"workspace_pair", "workspace_set", "window_scene"}));
+    } else if (path == "workspace_presentation.effect") {
+      CHECK(found->defaultValue.get<std::string>().empty());
+    } else if (path == "workspace_presentation.framing") {
+      CHECK(found->values == std::vector<std::string_view>({"viewport", "fit_all"}));
+      CHECK(found->defaultValue == "viewport");
+    }
+  }
+}

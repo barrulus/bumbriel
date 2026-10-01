@@ -803,7 +803,9 @@ namespace umbriel {
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     for (const auto& view : self->m_registry.all()) {
-      if (!view->mapped() || view->onActiveWorkspace()) {
+      // Live source owners pace callbacks after their output successfully
+      // commits; background ticks must not acknowledge an unpresented frame.
+      if (!view->mapped() || view->onActiveWorkspace() || view->hasPresentationSourceOccurrence()) {
         continue;
       }
       view->forEachSurface(
@@ -854,6 +856,10 @@ namespace umbriel {
   }
 
   void Server::recreateRenderer() {
+    cancelScenePresentations(PresentationFallback::RendererLost);
+#ifdef UMBRIEL_TEST_IPC
+    cancelPresentationProbes(PresentationFallback::RendererLost);
+#endif
     kLog.warn("GPU context lost, recreating renderer");
 
     wlr_renderer* oldRenderer = m_renderer;
@@ -1117,6 +1123,9 @@ namespace umbriel {
   void Server::onVirtualPointerDestroy(wl_listener* listener, void* /*data*/) {
     VirtualPointerDevice* device;
     device = wl_container_of(listener, device, destroy);
+    if (device->server->m_cursor != nullptr) {
+      device->server->m_cursor->sceneInputDeviceRemoved(&device->vpointer->pointer.base);
+    }
     // wlr_cursor detaches the device itself when the pointer is destroyed.
     wl_list_remove(&device->destroy.link);
     std::erase_if(device->server->m_virtualPointers, [device](const std::unique_ptr<VirtualPointerDevice>& ptr) {
@@ -1214,6 +1223,9 @@ namespace umbriel {
     PointerDevice* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
+    if (server->m_cursor != nullptr) {
+      server->m_cursor->sceneInputDeviceRemoved(watch->device);
+    }
     wl_list_remove(&watch->destroy.link);
     std::erase_if(server->m_pointers, [watch](const std::unique_ptr<PointerDevice>& pointer) {
       return pointer.get() == watch;
@@ -1604,6 +1616,7 @@ namespace umbriel {
       }
 
       m_sessionLocked = true;
+      cancelScenePresentations(PresentationFallback::Locked);
       m_effects.setSuspended(true);
       m_effects.applyOutputEffects();
       cancelModifierTap();
@@ -1877,6 +1890,7 @@ namespace umbriel {
     TouchDevice* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
+    server->m_cursor->sceneInputDeviceRemoved(watch->device);
     wl_list_remove(&watch->destroy.link);
     std::erase_if(server->m_touchDevices, [watch](const std::unique_ptr<TouchDevice>& entry) {
       return entry.get() == watch;

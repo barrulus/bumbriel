@@ -217,6 +217,7 @@ namespace umbriel {
     const bool focusDim = before.animation.enabled != after.animation.enabled
         || before.animation.dimUnfocused != after.animation.dimUnfocused;
     const bool effectsChanged = before.effects != after.effects
+        || before.workspacePresentation != after.workspacePresentation
         || configuredEffectActionRoots(before) != configuredEffectActionRoots(after)
         || (outputNamesChanged && (selectsScreenEffect(before) || selectsScreenEffect(after)))
         || outputProjectionChanged(before, after, sameOutputScreenEffect)
@@ -313,7 +314,7 @@ namespace umbriel {
         .securityContextRules = before.securityContextRules != after.securityContextRules,
         .scratchpads = before.scratchpads != after.scratchpads,
         .workspaceRules = before.workspaceRules != after.workspaceRules,
-        .effects = before.effects != after.effects,
+        .effects = before.effects != after.effects || before.workspacePresentation != after.workspacePresentation,
     };
   }
 

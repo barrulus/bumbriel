@@ -576,6 +576,7 @@ pure_sources = files(
   'src/config/value_parse.cpp',
   'src/config/section.cpp',
   'src/config/effects.cpp',
+  'src/config/scene_effects.cpp',
   'src/input/lid_state.cpp',
   'src/input/modifier_tap.cpp',
   'src/input/swipe_tracker.cpp',
@@ -595,6 +596,7 @@ pure_sources = files(
   'src/server/drm_policy.cpp',
   'src/scene/cheatsheet_rows.cpp',
   'src/scene/effect_selection.cpp',
+  'src/scene/presentation.cpp',
   'src/overview/shortcut_labels.cpp',
   'src/view/border_ring.cpp',
   'src/view/effects_rules.cpp',
@@ -635,6 +637,15 @@ core_sources = files(
   'src/core/animation.cpp',
   'src/core/application_scope.cpp',
   'src/scene/effect_registry.cpp',
+  'src/scene/scene_program.cpp',
+  'src/scene/composition.cpp',
+  'src/scene/workspace_presentation.cpp',
+  'src/scene/workspace_transition.cpp',
+  'src/scene/window_presentation.cpp',
+  'src/server/swipe_probe.cpp',
+  'src/scene/participant_probe.cpp',
+  'src/scene/presentation_probe.cpp',
+  'src/scene/workspace_sources.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',
@@ -836,3 +847,29 @@ install_data(
   'examples/effects/border/music-lines/overlay.glsl',
   install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'border/music-lines',
 )
+
+# Scene presets keep their editable stage bundle together. Defining a preset
+# never selects it or acquires a source.
+foreach effect : ['wipe', 'melt', 'iris']
+  install_data(
+    'examples/effects/scene' / effect / 'effect.toml',
+    'examples/effects/scene' / effect / 'shader.glsl',
+    install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene' / effect,
+  )
+endforeach
+install_data(
+  'examples/effects/scene/carousel/effect.toml',
+  'examples/effects/scene/carousel/shader.vert',
+  'examples/effects/scene/carousel/shader.frag',
+  install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene/carousel',
+)
+foreach effect : ['water', 'portal']
+  install_data(
+    'examples/effects/scene' / effect / 'effect.toml',
+    'examples/effects/scene' / effect / 'common.glsl',
+    'examples/effects/scene' / effect / 'shader.vert',
+    'examples/effects/scene' / effect / 'shader.frag',
+    'examples/effects/scene' / effect / 'composite.glsl',
+    install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene' / effect,
+  )
+endforeach
