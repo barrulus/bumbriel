@@ -38,11 +38,12 @@ it does not restore the obsolete shader collection/configuration format.
 - Audio: all eight audio compositor checks passed; the additional per-output TIME check passed.
 - Scene before carousel controls: 131 Meson tests passed.
 - Combined rebased feature tree: all 310 headless compositor checks passed.
-- Combined tree initially exposed the stale optional-stage fixture; its corrected config-load and native-reaper supervisor tests passed.
+- Final combined source tree: all 131 Meson tests passed, including the corrected config fixture and native-reaper supervisor coverage.
+- Staged installation under `/tmp`: carousel preset and referenced backdrop are both installed.
 
 The tests use isolated headless compositors and private PipeWire fixtures. They do
 not claim fresh interactive native-session or physical microphone/device validation.
-The original checkout acquired unrelated, uncommitted `workspace-ripple` edits
+The original checkout acquired unrelated, uncommitted `workspace-ripple` and `dust-cloud` edits
 during this work; those were left untouched and are outside this split.
 
 ## Shader audit
