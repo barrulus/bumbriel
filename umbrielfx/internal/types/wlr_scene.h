@@ -23,15 +23,6 @@ bool wlr_scene_node_set_animation_uniforms_for_output(struct wlr_scene_node *nod
 	unsigned slot, struct fx_effect_shader *shader,
 	const struct fx_animation_parameters *parameters, struct wlr_scene_output *output, bool damage);
 
-// C0 experiment, not a public capture API. Capture an inclusive range of root
-// siblings using source-local coverage (including pixels hidden by excluded
-// overlay nodes). The caller supplies the full output-sized target. Output
-// effects, software cursors and output_sample callbacks are excluded.
-// Current experiment is SDR and does not establish frozen history ownership.
-bool fx_scene_capture_range_for_test(struct wlr_scene_output *output,
-	struct wlr_scene_node *first, struct wlr_scene_node *last,
-	struct wlr_buffer *target, bool unfiltered);
-
 // Experimental persistent source owner. Acquisition snapshots both native role
 // histories atomically; later source frames cannot observe native promotion.
 // begin_frame drops cached role images. finish_frame promotes only after the

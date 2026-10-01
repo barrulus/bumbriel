@@ -2,7 +2,11 @@
 # Whole-scene authored pair, independent frozen source and live destination.
 set -euo pipefail
 trap 'echo "pair assertion at line $LINENO"; "$UMBRIEL" effects --json' ERR
-cp "$UMBRIEL_REPO/examples/effects/scene/melt/shader.glsl" "$UMBRIEL_RUNTIME_DIR/melt.glsl"
+cat > "$UMBRIEL_RUNTIME_DIR/melt.glsl" <<'SHADER'
+vec4 transition(vec2 uv) {
+  return mix(umbriel_sample_from(uv), umbriel_sample_to(uv), umbriel_progress);
+}
+SHADER
 cat >> "$UMBRIEL_CONFIG" <<'CONFIG'
 [output.HEADLESS-1]
 mode = "640x360"
@@ -43,7 +47,6 @@ match.title = "^pair-to$"
 default_workspace = 3
 default_focused = false
 CONFIG
-sed -i '/mode = "640x360"/a workspace_axis = "'"${UMBRIEL_PAIR_AXIS:-vertical}"'"' "$UMBRIEL_CONFIG"
 "$UMBRIEL" msg config-reload > /dev/null
 mkfifo "$UMBRIEL_RUNTIME_DIR/from-input" "$UMBRIEL_RUNTIME_DIR/to-input"
 exec 7<> "$UMBRIEL_RUNTIME_DIR/from-input"
@@ -56,11 +59,6 @@ for _ in $(seq 100); do
   [[ $("$UMBRIEL" windows --json | jq length) == 2 ]] && break
   sleep .02
 done
-if [[ ${UMBRIEL_PAIR_FULLSCREEN:-0} == 1 ]]; then
-  id=$("$UMBRIEL" windows --json | jq -r '.[] | select(.title=="pair-from") | .id')
-  "$UMBRIEL" msg "window-focus:$id"
-  "$UMBRIEL" msg window-toggle-fullscreen
-fi
 "$UMBRIEL" settle
 "$UMBRIEL" clock-freeze
 state() {
@@ -90,9 +88,14 @@ printf 'n\n' >&8
 sleep .08
 "$UMBRIEL" clock-advance 500
 grim "$UMBRIEL_RUNTIME_DIR/mid.png"
-if cmp -s "$UMBRIEL_RUNTIME_DIR/start.png" "$UMBRIEL_RUNTIME_DIR/mid.png"; then
-  echo 'authored displacement did not change whole scene'; exit 1
-fi
+# Both samples must blend full images at resting positions, without native slide offsets.
+for point in '240 90' '400 270'; do
+  read -r x y <<< "$point"
+  read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$UMBRIEL_RUNTIME_DIR/mid.png" pixel "$x" "$y")
+  (( r >= 23 && r <= 28 && g >= 168 && g <= 172 && b >= 125 && b <= 130 )) || {
+    echo "incorrect resting-position blend: $x $y: $r $g $b"; exit 1;
+  }
+done
 state | jq -e '.active and .progress > .4 and .progress < .6' > /dev/null
 "$UMBRIEL" clock-advance 1500
 "$UMBRIEL" settle
@@ -119,4 +122,4 @@ ready
 "$UMBRIEL" settle
 state | jq -e '(.active | not) and .memory_bytes == 0' > /dev/null
 kill "$from" "$to"
-echo 'Configured whole-workspace melt preserves frozen outgoing pixels, live destination, nonadjacent retarget and empty landing'
+echo 'Workspace pair preserves frozen source, live destination, resting-position blend and native transition cleanup'

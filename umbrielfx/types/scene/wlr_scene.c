@@ -6131,10 +6131,9 @@ static bool scene_capture_range(
       || first->parent == NULL || scene_node_get_root(first) != scene_output->scene || last->parent != first->parent) {
     return false;
   }
-  const struct wlr_box* extent = view != NULL ? &view->extent : NULL;
+  const struct wlr_box* extent = &view->extent;
   struct wlr_output* output = scene_output->output;
-  if (!wlr_renderer_is_fx(output->renderer)
-      || (extent == NULL && (target->width != output->width || target->height != output->height))) {
+  if (!wlr_renderer_is_fx(output->renderer)) {
     return false;
   }
   // Reject reversed/missing boundaries before allocating or rendering.
@@ -6150,37 +6149,31 @@ static bool scene_capture_range(
     return false;
   }
   struct render_data data = {
-      .logical = {.x = scene_output->x, .y = scene_output->y}, .scale = view != NULL ? view->scale : output->scale,
+      .logical = {.x = scene_output->x, .y = scene_output->y}, .scale = view->scale,
       .source_view = view,
       .transform = output->transform, .trans_width = target->width, .trans_height = target->height,
       .output = scene_output, .effects = scene_effects_get(scene_output->scene, false),
   };
   wlr_output_transform_coords(data.transform, &data.trans_width, &data.trans_height);
   wlr_output_effective_resolution(output, &data.logical.width, &data.logical.height);
-  if (extent != NULL) {
-    int width = target->width, height = target->height;
-    wlr_output_transform_coords(output->transform, &width, &height);
-    if (extent->width <= 0 || extent->height <= 0
-        || lround((double)extent->width * data.scale) != width
-        || lround((double)extent->height * data.scale) != height) {
-      return false;
-    }
-    data.logical = *extent;
+  int width = target->width, height = target->height;
+  wlr_output_transform_coords(output->transform, &width, &height);
+  if (extent->width <= 0 || extent->height <= 0
+      || lround((double)extent->width * data.scale) != width
+      || lround((double)extent->height * data.scale) != height) {
+    return false;
   }
+  data.logical = *extent;
   struct source_capture_list list;
   source_capture_list_init(&list, &data);
   data.source_failed = &list.failed;
   for (link = &last->link;; link = link->prev) {
     struct wlr_scene_node* node = wl_container_of(link, node, link);
-    if (view != NULL) {
-      int x, y;
-      source_node_coords(&data, node, &x, &y);
-      struct wlr_box clip;
-      bool clipped = source_ancestor_clip(node, x, y, &clip, &data);
-      list.failed |= !source_view_walk(&list, node, clipped ? &clip : NULL);
-    } else {
-      scene_nodes_in_box(node, &list.box, source_capture_iterator, &list);
-    }
+    int x, y;
+    source_node_coords(&data, node, &x, &y);
+    struct wlr_box clip;
+    bool clipped = source_ancestor_clip(node, x, y, &clip, &data);
+    list.failed |= !source_view_walk(&list, node, clipped ? &clip : NULL);
     if (list.failed || node == first) {
       break;
     }
@@ -6189,21 +6182,6 @@ static bool scene_capture_range(
   bool source_failed = false;
   if (list.failed) {
     goto finish;
-  }
-  // A clean optimized node with no native cached representation currently
-  // uses native live-blur fallback. Until that fallback is an explicit source
-  // readiness contract, decline rather than silently changing its appearance.
-  struct render_list_entry* source_entry;
-  wl_array_for_each(source_entry, &list.entries) {
-    if (source_entry->node->type != WLR_SCENE_NODE_OPTIMIZED_BLUR) {
-      continue;
-    }
-    struct wlr_scene_optimized_blur* optimized = wlr_scene_optimized_blur_from_node(source_entry->node);
-    struct fx_offscreen_buffers* native = fx_offscreen_buffers_try_get(output);
-    if (view == NULL && !optimized->dirty && (native == NULL || native->optimized_blur_buffer == NULL
-        || native->optimized_no_blur_buffer == NULL)) {
-      goto finish;
-    }
   }
   struct wlr_render_pass* pass = wlr_renderer_begin_buffer_pass(output->renderer, target, NULL);
   if (pass == NULL) {
@@ -6215,7 +6193,7 @@ static bool scene_capture_range(
   struct fx_offscreen_buffers scratch = {
       .renderer = fx_get_renderer(output->renderer), .allocator = output->allocator,
   };
-  fx_pass->fx_offscreen_buffers = view != NULL && view->scratch != NULL ? &view->scratch->buffers : &scratch;
+  fx_pass->fx_offscreen_buffers = view->scratch != NULL ? &view->scratch->buffers : &scratch;
   struct scene_effects* effects = scene_effects_get(scene_output->scene, false);
   data = (struct render_data){
       .transform = output->transform,
@@ -6261,13 +6239,6 @@ static bool scene_capture_range(
 finish:
   source_capture_list_finish(&list);
   return ok;
-}
-
-bool fx_scene_capture_range_for_test(
-    struct wlr_scene_output* output, struct wlr_scene_node* first, struct wlr_scene_node* last,
-    struct wlr_buffer* target, bool unfiltered
-) {
-  return scene_capture_range(output, first, last, target, unfiltered, NULL, NULL);
 }
 
 static bool scene_capture_view(struct wlr_scene_output* output,

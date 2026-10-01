@@ -1,4 +1,4 @@
-// C0/G1 source-local composition experiment, not a released capture interface.
+// Frozen workspace capture, role replacement, color precision and ownership.
 #include "render_fixture.h"
 #include "types/wlr_scene.h"
 #include "types/scene_source.h"
@@ -42,176 +42,6 @@ static void sampled(struct wl_listener *listener, void *data) {
 	struct sample_counter *counter = wl_container_of(listener, counter, listener);
 	(void)data;
 	counter->count++;
-}
-
-static bool compare(struct fixture *fixture, struct wlr_buffer *a, struct wlr_buffer *b,
-		const char *message) {
-	uint8_t left[TEST_WIDTH * TEST_HEIGHT * 4], right[sizeof(left)];
-	if (!read_buffer(fixture, a, DRM_FORMAT_ARGB8888, TEST_WIDTH * 4, left) ||
-			!read_buffer(fixture, b, DRM_FORMAT_ARGB8888, TEST_WIDTH * 4, right)) {
-		return check(false, "source comparison readback");
-	}
-	for (size_t i = 0; i < sizeof(left); i++) {
-		if (abs(left[i] - right[i]) > 1) {
-			fprintf(stderr, "%s: byte %zu native=%u capture=%u\n", message, i, left[i], right[i]);
-			return false;
-		}
-	}
-	return true;
-}
-
-static bool test_source(struct fixture *fixture) {
-	struct wlr_scene *scene = wlr_scene_create();
-	struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
-	wlr_scene_output_set_position(output, 40, -20);
-	wlr_scene_node_set_position(&scene->tree.node, 40, -20);
-	const float back[] = {0.15f, 0.25f, 0.45f, 1}, red[] = {0.5f, 0, 0, 0.5f};
-	const float green[] = {0, 0.5f, 0, 0.5f}, white[] = {1, 1, 1, 1};
-	const float dark[] = {0, 0, 0, 0.6f}, pink[] = {1, 0, 1, 1};
-	struct wlr_scene_rect *backdrop = wlr_scene_rect_create(&scene->tree, 16, 16, back);
-	struct wlr_scene_optimized_blur *optimized = wlr_scene_optimized_blur_create(&scene->tree, 16, 16);
-	struct wlr_scene_tree *windows = wlr_scene_tree_create(&scene->tree);
-	struct wlr_buffer *content = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
-	struct wlr_render_pass *content_pass = content ? wlr_renderer_begin_buffer_pass(fixture->renderer, content, NULL) : NULL;
-	if (!content_pass) {
-		wlr_scene_node_destroy(&scene->tree.node);
-		if (content) {
-			wlr_buffer_drop(content);
-		}
-		return false;
-	}
-	wlr_render_pass_add_rect(content_pass, &(struct wlr_render_rect_options){
-		.box = {.width = 16, .height = 16}, .color = {.r = 0.2f, .g = 0.3f, .b = 0.7f, .a = 1},
-	});
-	bool content_ok = wlr_render_pass_submit(content_pass);
-	struct wlr_scene_tree *clipped = wlr_scene_tree_create(windows);
-	struct wlr_box clip = {0, 10, 4, 3};
-	wlr_scene_tree_set_clip(clipped, &clip);
-	struct wlr_scene_buffer *client = wlr_scene_buffer_create(clipped, content);
-	wlr_buffer_drop(content);
-	struct sample_counter counter = {.listener.notify = sampled};
-	wl_signal_add(&client->events.output_sample, &counter.listener);
-	struct wlr_scene_shadow *shadow = wlr_scene_shadow_create(windows, 12, 12, 2, 1, dark);
-	wlr_scene_node_set_position(&shadow->node, 1, 2);
-	struct wlr_scene_rect *first = wlr_scene_rect_create(windows, 9, 8, red);
-	wlr_scene_node_set_position(&first->node, 2, 3);
-	struct wlr_scene_blur *blur = wlr_scene_blur_create(windows, 7, 7);
-	wlr_scene_node_set_position(&blur->node, 6, 6);
-	struct wlr_scene_rect *second = wlr_scene_rect_create(windows, 7, 7, green);
-	wlr_scene_node_set_position(&second->node, 6, 6);
-	struct wlr_scene_border *border = wlr_scene_border_create(windows, white, white);
-	wlr_scene_border_set_geometry(border, 11, 10, 1, 0,
-		(struct clipped_region){.area = {1, 1, 9, 8}},
-		(struct fx_corner_radii){0}, (struct fx_corner_radii){0});
-	wlr_scene_node_set_position(&border->node, 1, 2);
-	wlr_scene_set_effect_light_layer(scene, wlr_scene_tree_create(&scene->tree));
-	// Top panels, then fullscreen, then pinned preserve the native strata order.
-	struct wlr_scene_rect *panel = wlr_scene_rect_create(&scene->tree, 16, 2, white);
-	struct wlr_scene_rect *fullscreen = wlr_scene_rect_create(&scene->tree, 4, 4, pink);
-	wlr_scene_node_set_position(&fullscreen->node, 12, 0);
-	struct wlr_scene_tree *pinned = wlr_scene_tree_create(&scene->tree);
-	struct wlr_scene_rect *pin = wlr_scene_rect_create(pinned, 2, 2, green);
-	wlr_scene_node_set_position(&pin->node, 13, 1);
-	struct wlr_scene_rect *overlay = wlr_scene_rect_create(&scene->tree, 8, 16, white);
-	wlr_scene_node_set_position(&overlay->node, 8, 0);
-	struct fx_effect_shader *window_shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_WINDOW,
-		"vec4 window(vec2 uv) { vec4 c = umbriel_sample(uv); return vec4(c.a - c.rgb, c.a); }", "source-invert");
-	struct fx_effect_shader *border_shader = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
-		"vec4 border(vec2 uv) { return vec4(0.0, 0.0, 1.0, 1.0); }", "source-light");
-	struct fx_animation_parameters parameters = {.progress = 1, .linear_progress = 1, .direction = 1};
-	struct fx_animation_parameters lighting = parameters;
-	lighting.light = (struct fx_effect_light){.enabled = true, .spread = 3, .intensity = 2, .threshold = 0.1f};
-	struct wlr_buffer *display = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
-	struct wlr_buffer *unfiltered = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
-	bool ok = check(content_ok && window_shader && border_shader && display && unfiltered, "source targets and effects");
-	(void)panel;
-	for (unsigned mode = 0; ok && mode < 5; mode++) {
-		fprintf(stderr, "source mode=%u transform=%d scale=%.2f\n", mode, fixture->output->transform, fixture->output->scale);
-		wlr_scene_node_set_enabled(&blur->node, mode >= 2);
-		wlr_scene_node_set_enabled(&optimized->node, mode == 4);
-		wlr_scene_blur_set_should_only_blur_bottom_layer(blur, mode == 4);
-		if (mode == 4) {
-			wlr_scene_optimized_blur_mark_dirty(optimized);
-		}
-		wlr_scene_node_set_animation(&first->node, FX_SLOT_WINDOW, mode >= 1 ? window_shader : NULL, &parameters);
-		wlr_scene_node_set_animation(&border->node, FX_SLOT_BORDER_EFFECT, mode >= 3 ? border_shader : NULL, &lighting);
-		wlr_scene_node_set_enabled(&overlay->node, false);
-		struct wlr_output_state state;
-		struct wlr_buffer *native = fixture_render_scene(fixture, output, &state);
-		ok &= check(native != NULL, "native desktop reference");
-		unsigned samples = counter.count;
-		ok &= check(samples > 0, "ordinary scene reports sampled client buffer");
-		// Overlay visibility must not punch holes in the complete source canvas.
-		wlr_scene_node_set_enabled(&overlay->node, true);
-		pixman_region32_t original_visibility, original_damage;
-		pixman_region32_init(&original_visibility);
-		pixman_region32_init(&original_damage);
-		pixman_region32_copy(&original_visibility, &first->node.visible);
-		pixman_region32_copy(&original_damage, &output->pending_commit_damage);
-		bool optimized_dirty = optimized->dirty;
-		ok &= check(fx_scene_capture_range_for_test(output, &backdrop->node, &pinned->node, display, false), "display source capture");
-		ok &= check(optimized->dirty == optimized_dirty, "source cache never changes native optimized blur dirtiness");
-		ok &= check(counter.count == samples, "source capture does not repeat output_sample");
-		ok &= check(pixman_region32_equal(&original_visibility, &first->node.visible) &&
-			pixman_region32_equal(&original_damage, &output->pending_commit_damage),
-			"source capture preserves native visibility and output damage");
-		pixman_region32_fini(&original_visibility);
-		pixman_region32_fini(&original_damage);
-		ok &= native && compare(fixture, native, display, "identity source including occluded desktop");
-		if (native) {
-			wlr_buffer_unlock(native);
-		}
-		wlr_output_state_finish(&state);
-		ok &= check(fx_scene_capture_range_for_test(output, &backdrop->node, &pinned->node, unfiltered, true), "unfiltered source capture");
-		if (mode <= 1 && fixture->output->transform == WL_OUTPUT_TRANSFORM_NORMAL && fixture->output->scale == 1) {
-			struct fx_scene_source_pair_for_test pair = {0};
-			uint64_t bytes = native_pair_bytes(output, &backdrop->node, &pinned->node);
-			ok &= check(bytes > 0 && !native_pair_capture(output, &backdrop->node,
-				&pinned->node, bytes - 1, &pair) && !pair.display && !pair.unfiltered,
-				"insufficient paired reservation allocates no retained source");
-			ok &= check(!native_pair_capture(output, &pinned->node,
-				&backdrop->node, bytes, &pair) && !pair.display && !pair.unfiltered,
-				"failed paired acquisition rolls back both candidates");
-			ok &= check(native_pair_capture(output, &backdrop->node, &pinned->node, bytes, &pair),
-				"owned paired source acquisition succeeds atomically");
-			ok &= check((pair.display == pair.unfiltered) == (mode == 0), "equivalent roles alias; excluded stages retain separate roles");
-			ok &= pair.display && pair.unfiltered && compare(fixture, display, pair.display, "paired display role") &&
-				compare(fixture, unfiltered, pair.unfiltered, "paired unfiltered role");
-			fx_scene_source_pair_finish_for_test(&pair);
-			ok &= check(!pair.display && !pair.unfiltered && !pair.reserved_bytes,
-				"paired finish releases both roles");
-		}
-		// The ordinary no-window-effect composition is the unfiltered oracle.
-		wlr_scene_node_set_enabled(&overlay->node, false);
-		wlr_scene_node_set_animation(&first->node, FX_SLOT_WINDOW, NULL, NULL);
-		native = fixture_render_scene(fixture, output, &state);
-		ok &= native && compare(fixture, native, unfiltered, "unfiltered source preserves border and light");
-		if (native) {
-			wlr_buffer_unlock(native);
-		}
-		wlr_output_state_finish(&state);
-	}
-	// The pair is retained before the client/source tree disappears. A later
-	// capture reads its own already-retained image, not the display substitute.
-	uint8_t before[4], after[4];
-	if (unfiltered) {
-		ok &= fixture_read_pixel(fixture, unfiltered, 7, 7, before);
-	}
-	wl_list_remove(&counter.listener.link);
-	wlr_scene_node_destroy(&scene->tree.node);
-	if (unfiltered) {
-		ok &= fixture_read_pixel(fixture, unfiltered, 7, 7, after) &&
-			check(memcmp(before, after, 4) == 0, "retained source remains readable after source destruction");
-	}
-	fx_effect_shader_unref(window_shader);
-	fx_effect_shader_unref(border_shader);
-	if (display) {
-		wlr_buffer_drop(display);
-	}
-	if (unfiltered) {
-		wlr_buffer_drop(unfiltered);
-	}
-	return ok;
 }
 
 // FP16 sources are working-space images: ordinary sRGB nodes are decoded,
@@ -356,7 +186,8 @@ static bool test_mirrored_replacement(struct fixture *fixture) {
 	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(fixture->renderer, green, NULL);
 	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {0, 0, 16, 16}, .color = {0, 1, 0, 1}});
 	ok &= wlr_render_pass_submit(pass);
-	ok &= fx_scene_capture_range_for_test(owner, &desktop->node, &desktop->node, clean, false);
+	struct fx_scene_source_view view = native_view(owner, &desktop->node, &desktop->node);
+	ok &= fx_scene_capture_view_for_test(owner, &view, clean, false, fx_scene_source_view_bytes_for_test(owner, &view));
 	pixman_region32_t visible;
 	pixman_region32_init(&visible);
 	pixman_region32_copy(&visible, &client->node.visible);
@@ -388,7 +219,8 @@ static bool test_mirrored_replacement(struct fixture *fixture) {
 	wlr_scene_buffer_set_buffer(picture, clean);
 	wlr_scene_node_set_position(&presentation->node, 1, 0);
 	ok &= check(!pixman_region32_not_empty(&peer->pending_commit_damage), "owned picture buffer and geometry updates do not damage mirrored peer");
-	ok &= check(fx_scene_capture_range_for_test(peer, &desktop->node, &presentation->node, native_source, false),
+	view = native_view(peer, &desktop->node, &presentation->node);
+	ok &= check(fx_scene_capture_view_for_test(peer, &view, native_source, false, fx_scene_source_view_bytes_for_test(peer, &view)),
 		"independent mirrored source excludes presentation subtree");
 	uint8_t source_pixel[4];
 	ok &= fixture_read_pixel(fixture, native_source, 8, 8, source_pixel)
@@ -408,64 +240,6 @@ static bool test_mirrored_replacement(struct fixture *fixture) {
 	return ok;
 }
 
-static bool test_rectangular_source(struct fixture *fixture) {
-	bool ok = true;
-	for (unsigned scale = 0; ok && scale < 2; scale++) {
-		for (enum wl_output_transform transform = WL_OUTPUT_TRANSFORM_NORMAL;
-				ok && transform <= WL_OUTPUT_TRANSFORM_FLIPPED_270; transform++) {
-			struct wlr_output_state state;
-			wlr_output_state_init(&state);
-			wlr_output_state_set_enabled(&state, true);
-			wlr_output_state_set_custom_mode(&state, 32, 16, 60000);
-			wlr_output_state_set_transform(&state, transform);
-			wlr_output_state_set_scale(&state, scale ? 1.25f : 1);
-			ok &= check(wlr_output_commit_state(fixture->output, &state), "rectangular source output mode");
-			wlr_output_state_finish(&state);
-			if (!ok) break;
-			struct wlr_scene *scene = wlr_scene_create();
-			struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
-			wlr_scene_output_set_position(output, -12, 8);
-			wlr_scene_node_set_position(&scene->tree.node, -12, 8);
-			struct wlr_scene_tree *desktop = wlr_scene_tree_create(&scene->tree);
-			const float back[] = {0.2f, 0.3f, 0.4f, 1}, red[] = {1, 0, 0, 1};
-			wlr_scene_rect_create(desktop, 40, 40, back);
-			struct wlr_scene_tree *clipped = wlr_scene_tree_create(desktop);
-			wlr_scene_tree_set_clip(clipped, &(struct wlr_box){1, 2, 7, 9});
-			wlr_scene_rect_create(clipped, 5, 6, red);
-			struct wlr_scene_tree *disabled = wlr_scene_tree_create(desktop);
-			wlr_scene_rect_create(disabled, 40, 40, red);
-			wlr_scene_node_set_enabled(&disabled->node, false);
-			struct wlr_buffer *source = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 32, 16);
-			struct wlr_swapchain *swapchain = wlr_swapchain_create(fixture->allocator, 32, 16,
-				get_render_format(fixture, DRM_FORMAT_ARGB8888));
-			wlr_output_state_init(&state);
-			ok &= check(source && swapchain && wlr_scene_output_build_state(output, &state,
-				&(struct wlr_scene_output_state_options){.swapchain = swapchain}) && state.buffer,
-				"rectangular native reference");
-			ok &= check(fx_scene_capture_range_for_test(output, &desktop->node, &desktop->node, source, false),
-				"rectangular source capture");
-			uint8_t native[32 * 16 * 4], captured[sizeof(native)];
-			if (state.buffer && source) {
-				ok &= check(read_buffer(fixture, state.buffer, DRM_FORMAT_ARGB8888, 32 * 4, native)
-					&& read_buffer(fixture, source, DRM_FORMAT_ARGB8888, 32 * 4, captured), "rectangular source readback");
-				ok &= check(!memcmp(native, captured, sizeof(native)), "rectangular source matches native under transform/scale");
-			}
-			wlr_output_state_finish(&state);
-			if (swapchain) wlr_swapchain_destroy(swapchain);
-			if (source) wlr_buffer_drop(source);
-			wlr_scene_node_destroy(&scene->tree.node);
-		}
-	}
-	struct wlr_output_state state;
-	wlr_output_state_init(&state);
-	wlr_output_state_set_custom_mode(&state, 16, 16, 60000);
-	wlr_output_state_set_transform(&state, WL_OUTPUT_TRANSFORM_NORMAL);
-	wlr_output_state_set_scale(&state, 1);
-	ok &= wlr_output_commit_state(fixture->output, &state);
-	wlr_output_state_finish(&state);
-	return ok;
-}
-
 static bool test_replacement_roles(struct fixture *fixture, bool managed) {
 	struct wlr_scene *scene = wlr_scene_create();
 	struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
@@ -482,7 +256,9 @@ static bool test_replacement_roles(struct fixture *fixture, bool managed) {
 	if (managed) output->combined_color_transform = wlr_color_transform_ref(encoding);
 	struct fx_scene_source_pair_for_test pair = {0};
 	uint64_t bytes = output_pair_bytes(output);
-	bool ok = check(shader && (!managed || encoding) && bytes && native_pair_capture(output,
+	bool ok = check(bytes && !native_pair_capture(output, &desktop->node, &desktop->node, bytes - 1, &pair)
+		&& !pair.display && !pair.unfiltered, "insufficient reservation publishes no frozen images");
+	ok &= check(shader && (!managed || encoding) && bytes && native_pair_capture(output,
 		&desktop->node, &desktop->node, bytes, &pair) && pair.working_space == managed,
 		"capture replacement pair in output color space");
 	if (managed && pair.display && pair.unfiltered) {
@@ -726,22 +502,13 @@ int main(void) {
 		fixture_finish(&fixture);
 		return 77;
 	}
-	bool locality_ok = test_frozen_output_locality(&fixture);
-	bool ok = locality_ok && true;
-	const float scales[] = {1, 1.25f};
-	for (unsigned scale = 0; ok && scale < sizeof(scales) / sizeof(scales[0]); scale++) {
-		for (enum wl_output_transform transform = WL_OUTPUT_TRANSFORM_NORMAL;
-				ok && transform <= WL_OUTPUT_TRANSFORM_FLIPPED_270; transform++) {
-			struct wlr_output_state state;
-			wlr_output_state_init(&state);
-			wlr_output_state_set_transform(&state, transform);
-			wlr_output_state_set_scale(&state, scales[scale]);
-			ok &= check(wlr_output_commit_state(fixture.output, &state), "set source experiment output transform");
-			wlr_output_state_finish(&state);
-			ok &= test_source(&fixture);
-		}
-	}
-	ok &= test_rectangular_source(&fixture);
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	wlr_output_state_set_enabled(&state, true);
+	wlr_output_state_set_custom_mode(&state, 16, 16, 60000);
+	bool ok = check(wlr_output_commit_state(fixture.output, &state), "enable capture fixture output");
+	wlr_output_state_finish(&state);
+	ok &= test_frozen_output_locality(&fixture);
 	ok &= test_unmanaged_ten_bit(&fixture);
 	ok &= test_working_history(&fixture);
 	ok &= test_replacement_roles(&fixture, false);

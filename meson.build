@@ -596,7 +596,6 @@ core_sources = files(
   'src/scene/composition.cpp',
   'src/scene/workspace_sources.cpp',
   'src/scene/workspace_transition.cpp',
-  'src/server/swipe_probe.cpp',
   'src/core/fdlimit.cpp',
   'src/core/log.cpp',
   'src/config/config.cpp',

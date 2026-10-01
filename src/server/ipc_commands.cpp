@@ -874,9 +874,6 @@ namespace umbriel {
       {"keyboard-layouts", "", "list keyboard layouts", IpcCommandGroup::Inspect, false, &IpcCommands::keyboardLayouts,
        &printKeyboardLayouts},
 #ifdef UMBRIEL_TEST_IPC
-      {"swipe-inject", "<begin 3 ms|update dx dy ms|end ms|cancel ms>",
-       "test swipe device through the native cursor signal path", IpcCommandGroup::Harness, true,
-       &IpcCommands::swipeInject, nullptr},
       {"settle", "", "wait until no layout or animation is pending and every output has drawn a frame",
        IpcCommandGroup::Harness, false, &IpcCommands::settle, nullptr, 35},
       {"clock-freeze", "", "stop animation time", IpcCommandGroup::Harness, false, &IpcCommands::clockFreeze, nullptr},

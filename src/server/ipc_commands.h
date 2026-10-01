@@ -30,7 +30,6 @@ namespace umbriel {
     static nlohmann::json clockAdvance(Server& server, std::string_view arg);
     static nlohmann::json clockResume(Server& server, std::string_view arg);
 #ifdef UMBRIEL_TEST_IPC
-    static nlohmann::json swipeInject(Server& server, std::string_view arg);
     static nlohmann::json rendererRecover(Server& server, std::string_view arg);
     static nlohmann::json effectFrames(Server& server, std::string_view arg);
 #endif
