@@ -83,16 +83,9 @@ static bool experiment(struct fixture *fixture) {
 	wlr_scene_node_set_animation(&client_clip->node, FX_SLOT_WINDOWS_MOVE, group_shader, &parameters);
 	// A huge excluded shader must not influence the exact desktop-range budget.
 	wlr_scene_node_set_animation(&overlay->node, FX_SLOT_WINDOW, window_shader, &parameters);
-	struct wlr_buffer *source = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
-	ok &= check(source && light_shader && window_shader && group_shader, "virtual source resources");
+	ok &= check(light_shader && window_shader && group_shader, "virtual source resources");
 	{
 		for (unsigned role = 0; ok && role < 2; role++) {
-			// Native oracle scales the complete output. Enlarge only shared
-			// geometry to keep its final face-coordinate size/position fixed.
-			wlr_scene_rect_set_size(pinned, 2, 2);
-			wlr_scene_node_set_position(&pinned->node, 14, 0);
-			wlr_scene_rect_set_size(stripe, 4, 32);
-			wlr_scene_node_set_position(&stripe->node, 8, 0);
 			wlr_scene_node_set_enabled(&active->node, false);
 			wlr_scene_node_set_enabled(&hidden->node, true);
 			wlr_scene_node_set_position(&hidden->node, 0, 0);
@@ -100,22 +93,9 @@ static bool experiment(struct fixture *fixture) {
 			wlr_scene_tree_set_clip(workspace, &viewport);
 			wlr_scene_node_set_animation(&hidden->node, FX_SLOT_WINDOW, role ? NULL : window_shader, &parameters);
 			struct wlr_output_state state;
-			wlr_output_state_init(&state);
-			wlr_output_state_set_scale(&state, 1);
-			ok &= wlr_output_commit_state(fixture->output, &state);
-			wlr_output_state_finish(&state);
 			struct wlr_buffer *native = fixture_render_scene(fixture, output, &state);
 			ok &= check(native != NULL, "virtual source native oracle");
 			wlr_output_state_finish(&state);
-			wlr_output_state_init(&state);
-			wlr_output_state_set_scale(&state, 1);
-			ok &= wlr_output_commit_state(fixture->output, &state);
-			wlr_output_state_finish(&state);
-			wlr_scene_tree_set_clip(workspace, &viewport);
-			wlr_scene_rect_set_size(pinned, 2, 2);
-			wlr_scene_node_set_position(&pinned->node, 14, 0);
-			wlr_scene_rect_set_size(stripe, 4, 32);
-			wlr_scene_node_set_position(&stripe->node, 8, 0);
 			wlr_scene_node_set_animation(&hidden->node, FX_SLOT_WINDOW, window_shader, &parameters);
 			wlr_scene_node_set_enabled(&hidden->node, false);
 			wlr_scene_node_set_position(&hidden->node, 100, 0);
@@ -141,11 +121,6 @@ static bool experiment(struct fixture *fixture) {
 			pixman_region32_t before_damage;
 			pixman_region32_init(&before_damage);
 			pixman_region32_copy(&before_damage, &output->pending_commit_damage);
-			ok &= check(bytes > 0 && !fx_scene_capture_view_for_test(output, &view, source, role, bytes - 1),
-				"virtual source requires complete reservation");
-			ok &= check(bytes > 0 && fx_scene_capture_view_for_test(output, &view, source, role, bytes),
-				"capture hidden workspace with source-only transforms and cold emission");
-			ok &= native && equal(fixture, native, source);
 			struct fx_scene_source_pair_for_test pair = {0};
 			ok &= check(!fx_scene_source_view_pair_capture_for_test(output, &view, bytes - 1, &pair)
 				&& pair.display == NULL && pair.unfiltered == NULL,
@@ -220,7 +195,6 @@ static bool experiment(struct fixture *fixture) {
 	fx_effect_shader_unref(light_shader);
 	fx_effect_shader_unref(window_shader);
 	fx_effect_shader_unref(group_shader);
-	if (source) wlr_buffer_drop(source);
 	return ok;
 }
 static bool rectangular(struct fixture *fixture) {
@@ -375,6 +349,25 @@ static bool virtual_history(struct fixture *fixture) {
 		view.session=a;
 		ok &= check(fx_scene_source_view_session_matches(output,&view,a)
 			&& fx_scene_source_session_begin_frame_for_test(a), "begin matching occurrence frame");
+		if (!pair.display) {
+			pair.display = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
+			pair.unfiltered = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
+		}
+		ok &= check(pair.display && pair.unfiltered
+			&& fx_scene_capture_view_for_test(output,&view,pair.display,false,plan.total_bytes), "capture display history");
+		uint8_t before[4], replay[4];
+		ok &= fixture_read_pixel(fixture,pair.display,8,8,before)
+			&& fx_scene_capture_view_for_test(output,&view,pair.display,false,plan.total_bytes)
+			&& fixture_read_pixel(fixture,pair.display,8,8,replay);
+		ok &= check(!memcmp(before,replay,4), "same-frame replay does not advance history");
+		// Native promotion between roles must not become the source's feedback.
+		struct wlr_output_state state;
+		wlr_scene_node_set_enabled(&tree->node,true);
+		struct wlr_buffer *native=fixture_render_scene(fixture,output,&state);
+		ok &= check(native!=NULL,"interleave ordinary native feedback");
+		wlr_output_state_finish(&state);
+		if(native) wlr_buffer_unlock(native);
+		wlr_scene_node_set_enabled(&tree->node,false);
 		ok &= check(fx_scene_source_view_pair_capture_for_test(output,&view,plan.total_bytes,&pair), "capture paired virtual histories");
 		uint8_t shown[4], plain[4];
 		ok &= fixture_read_pixel(fixture,pair.display,8,8,shown) && fixture_read_pixel(fixture,pair.unfiltered,8,8,plain);
@@ -386,14 +379,6 @@ static bool virtual_history(struct fixture *fixture) {
 			"failed frame preserves both role histories; success promotes independently");
 		fx_scene_source_session_finish_frame_for_test(a,frame!=0);
 		fx_scene_source_pair_finish_for_test(&pair);
-		// Ordinary native rendering must not become this occurrence's feedback.
-		struct wlr_output_state state;
-		wlr_scene_node_set_enabled(&tree->node,true);
-		struct wlr_buffer *native=fixture_render_scene(fixture,output,&state);
-		ok &= check(native!=NULL,"interleave ordinary native feedback");
-		wlr_output_state_finish(&state);
-		if(native) wlr_buffer_unlock(native);
-		wlr_scene_node_set_enabled(&tree->node,false);
 	}
 	view.session=b;
 	ok &= check(fx_scene_source_session_begin_frame_for_test(b)

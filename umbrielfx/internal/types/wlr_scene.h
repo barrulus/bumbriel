@@ -41,18 +41,6 @@ bool fx_scene_source_session_begin_frame_for_test(struct fx_scene_source_session
 void fx_scene_source_session_finish_frame_for_test(struct fx_scene_source_session *session, bool submitted);
 void fx_scene_source_session_destroy_for_test(struct fx_scene_source_session *session);
 
-enum fx_scene_participant_reason {
-	FX_SCENE_PARTICIPANT_SUPPORTED,
-	FX_SCENE_PARTICIPANT_IN_PLACE,
-	FX_SCENE_PARTICIPANT_BLUR,
-	FX_SCENE_PARTICIPANT_TOPOLOGY,
-};
-
-// C0 rigid-participant extraction only. Companion sources (shadow and light)
-// remain separate ordered items; no grid or fold compatibility is implied.
-enum fx_scene_participant_reason fx_scene_participant_admit_for_test(struct wlr_scene_node *node);
-bool fx_scene_capture_participant_for_test(struct wlr_scene_output *output,
-	struct wlr_scene_node *node, struct wlr_buffer *target);
 struct fx_scene_source_pair_for_test {
 	struct wlr_buffer *display;
 	struct wlr_buffer *unfiltered;

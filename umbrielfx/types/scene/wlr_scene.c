@@ -914,7 +914,6 @@ struct render_data {
   struct fx_scene_source_session* source_session;
   const struct fx_scene_source_view* source_view;
   struct wl_array* source_lights;
-  bool native_light_read_only;
   bool* source_failed;
   bool shadow_capture;
   // Rendering an unfiltered effect capture: in-place slots do not run and
@@ -954,14 +953,6 @@ static struct fx_effect_light_cache* source_light_cache(
     if (entry->animation == animation) {
       return entry->cache;
     }
-  }
-  if (for_draw && data->native_light_read_only) {
-    struct fx_effect_light_cache* cache = animation->light->cache;
-    if (cache == NULL || !cache->valid || cache->failed) {
-      *data->source_failed = true;
-      return NULL;
-    }
-    return cache;
   }
   if (data->source_lights->size / sizeof(*entry) >= SOURCE_HISTORY_LIMIT) {
     *data->source_failed = true;
@@ -6132,7 +6123,7 @@ void fx_scene_source_scratch_destroy(struct fx_scene_scratch *scratch) {
 
 static bool scene_capture_range(
     struct wlr_scene_output* scene_output, struct wlr_scene_node* first, struct wlr_scene_node* last,
-    struct wlr_buffer* target, bool unfiltered, bool transparent, const struct wlr_box* extent,
+    struct wlr_buffer* target, bool unfiltered,
     struct fx_scene_source_session* session, const struct fx_scene_source_view* view
 ) {
   if (scene_output == NULL || first == NULL || last == NULL || target == NULL
@@ -6140,9 +6131,7 @@ static bool scene_capture_range(
       || first->parent == NULL || scene_node_get_root(first) != scene_output->scene || last->parent != first->parent) {
     return false;
   }
-  if (view != NULL) {
-    extent = &view->extent;
-  }
+  const struct wlr_box* extent = view != NULL ? &view->extent : NULL;
   struct wlr_output* output = scene_output->output;
   if (!wlr_renderer_is_fx(output->renderer)
       || (extent == NULL && (target->width != output->width || target->height != output->height))) {
@@ -6222,9 +6211,7 @@ static bool scene_capture_range(
   }
   struct fx_gles_render_pass* fx_pass = fx_get_render_pass(pass);
   fx_pass->deferred_history_updates = session != NULL ? &session->pending : NULL;
-  fx_pass->working_space = source_pair_working_space(scene_output)
-      || (fx_pass->buffer->drm_format == DRM_FORMAT_ABGR16161616F
-          && !source_pair_floating_point(scene_output) && view == NULL);
+  fx_pass->working_space = source_pair_working_space(scene_output);
   struct fx_offscreen_buffers scratch = {
       .renderer = fx_get_renderer(output->renderer), .allocator = output->allocator,
   };
@@ -6245,7 +6232,6 @@ static bool scene_capture_range(
       .source_session = session,
       .source_view = view,
       .source_lights = &list.lights,
-      .native_light_read_only = transparent,
       .source_failed = &source_failed,
       .effect_capture = unfiltered,
       .sampled_earlier = true,
@@ -6260,14 +6246,7 @@ static bool scene_capture_range(
     // This experiment conservatively prepares blur; the production source
     // descriptor must derive requirements from the admitted occurrence set.
     fx_pass->has_blur = true;
-    if (transparent) {
-      wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-          .box = {.width = target->width, .height = target->height},
-          .color = {0}, .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
-      });
-    } else {
-      render_background(pass, scene_output->scene, target, &data.damage, WLR_RENDER_BLEND_MODE_NONE);
-    }
+    render_background(pass, scene_output->scene, target, &data.damage, WLR_RENDER_BLEND_MODE_NONE);
     render_animated_range(data.entries, data.entry_count - 1, 0, NULL, &data);
   }
   pixman_region32_fini(&data.damage);
@@ -6288,7 +6267,7 @@ bool fx_scene_capture_range_for_test(
     struct wlr_scene_output* output, struct wlr_scene_node* first, struct wlr_scene_node* last,
     struct wlr_buffer* target, bool unfiltered
 ) {
-  return scene_capture_range(output, first, last, target, unfiltered, false, NULL, NULL, NULL);
+  return scene_capture_range(output, first, last, target, unfiltered, NULL, NULL);
 }
 
 static bool scene_capture_view(struct wlr_scene_output* output,
@@ -6299,7 +6278,7 @@ static bool scene_capture_view(struct wlr_scene_output* output,
       || !fx_scene_source_view_session_matches(output, view, session))) return false;
   unsigned role = unfiltered ? 1 : 0;
   if (session != NULL && session->cached[role] != NULL) return session->cached[role] == target;
-  bool ok = scene_capture_range(output, view->first, view->last, target, unfiltered, false, NULL, session, view);
+  bool ok = scene_capture_range(output, view->first, view->last, target, unfiltered, session, view);
   if (session != NULL && (!ok || session->failed)) {
     session->failed = true;
     fx_animation_history_finish_updates(&session->pending, false);
@@ -6307,43 +6286,6 @@ static bool scene_capture_view(struct wlr_scene_output* output,
   }
   if (ok && session != NULL) session->cached[role] = wlr_buffer_lock(target);
   return ok;
-}
-
-enum fx_scene_participant_reason fx_scene_participant_admit_for_test(struct wlr_scene_node* node) {
-  if (node == NULL) {
-    return FX_SCENE_PARTICIPANT_TOPOLOGY;
-  }
-  if (!node->enabled) {
-    return FX_SCENE_PARTICIPANT_SUPPORTED;
-  }
-  for (struct wlr_scene_node* ancestor = node; ancestor != NULL;
-       ancestor = ancestor->parent != NULL ? &ancestor->parent->node : NULL) {
-    struct scene_animation* animation = scene_animation_get(ancestor);
-    if (animation != NULL && animation->in_place) {
-      return FX_SCENE_PARTICIPANT_IN_PLACE;
-    }
-  }
-  if (node->type == WLR_SCENE_NODE_BLUR || node->type == WLR_SCENE_NODE_OPTIMIZED_BLUR) {
-    return FX_SCENE_PARTICIPANT_BLUR;
-  }
-  if (node->type == WLR_SCENE_NODE_TREE) {
-    struct wlr_scene_node* child;
-    struct wlr_scene_tree* tree = wlr_scene_tree_from_node(node);
-    wl_list_for_each(child, &tree->children, link) {
-      enum fx_scene_participant_reason reason = fx_scene_participant_admit_for_test(child);
-      if (reason != FX_SCENE_PARTICIPANT_SUPPORTED) {
-        return reason;
-      }
-    }
-  }
-  return FX_SCENE_PARTICIPANT_SUPPORTED;
-}
-
-bool fx_scene_capture_participant_for_test(
-    struct wlr_scene_output* output, struct wlr_scene_node* node, struct wlr_buffer* target
-) {
-  return fx_scene_participant_admit_for_test(node) == FX_SCENE_PARTICIPANT_SUPPORTED
-      && scene_capture_range(output, node, node, target, false, true, NULL, NULL, NULL);
 }
 
 static bool source_pair_working_space(struct wlr_scene_output* output) {
@@ -6785,8 +6727,8 @@ bool fx_scene_source_pair_capture_for_test(
   if (candidate.display != NULL && candidate.unfiltered != NULL) {
     session = source_frozen_session_create(scene_output, view, reserved_bytes);
     captured = session != NULL && fx_scene_source_session_begin_frame_for_test(session)
-        && scene_capture_range(scene_output, view->first, view->last, candidate.display, false, false, NULL, session, view)
-        && (alias || scene_capture_range(scene_output, view->first, view->last, candidate.unfiltered, true, false, NULL, session, view));
+        && scene_capture_range(scene_output, view->first, view->last, candidate.display, false, session, view)
+        && (alias || scene_capture_range(scene_output, view->first, view->last, candidate.unfiltered, true, session, view));
     fx_scene_source_session_finish_frame_for_test(session, false);
     fx_scene_source_session_destroy_for_test(session);
   }
