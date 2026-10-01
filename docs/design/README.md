@@ -10,6 +10,13 @@ boundaries, or regression-sensitive behavior.
 
 - [Configuration reload](configuration-reload.md)
 - [Effects](effects.md)
+- [Fork feature split and porting handoff](feature-porting-2026-10-01.md)
+- [Programmable effects: design specification and implementation plan](effects-implementation-plan.md)
+- [Effects implementation and acceptance status](effects-progress.md)
+- [Effects hardware validation](effects-hardware-validation.md)
+- [Native effects cost review](effects-native-cost-review.md)
+- [Scene transitions (proposal)](scene-transitions.md)
+- [Audio inputs for shaders (proposal)](audio-inputs.md)
 - [Workspace lifecycle](workspace-lifecycle.md)
 - [Overview rendering](overview-rendering.md)
 - [Touchpad gestures](touchpad-gestures.md)
