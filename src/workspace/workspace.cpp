@@ -12,6 +12,7 @@
 #include "output/output.h"
 #include "overview/overview.h"
 #include "scene/effect_registry.h"
+#include "scene/workspace_transition.h"
 #include "server/server.h"
 #include "view/floating.h"
 #include "view/registry.h"
@@ -716,7 +717,9 @@ namespace umbriel {
     // Visual state below (scroll, positions) only applies while visible.
     Overview* overview = m_group->server()->overview();
     const bool overviewActive = overview != nullptr && overview->active();
-    if (!m_active && !m_inSwitchTransition && !overviewActive) {
+    const bool sourceActive =
+        std::ranges::any_of(m_views, [](const View* view) { return view->hasPresentationSourceOccurrence(); });
+    if (!m_active && !m_inSwitchTransition && !overviewActive && !sourceActive) {
       for (const ResizeRequest& request : resizeRequests) {
         request.view->requestTiledSize(request.width, request.height);
       }
@@ -769,7 +772,7 @@ namespace umbriel {
       const wlr_box& geometry = view->geometryBox();
       target = {node.x, node.y, geometry.width, geometry.height};
     } else {
-      if (!normallyVisible && !overviewActive) {
+      if (!normallyVisible && !overviewActive && !view->hasPresentationSourceOccurrence()) {
         return;
       }
 
@@ -796,7 +799,11 @@ namespace umbriel {
   void Workspace::applyPositions(bool animate, std::span<View* const> resized) {
     const Overview* overview = m_group != nullptr ? m_group->server()->overview() : nullptr;
     const bool overviewActive = overview != nullptr && overview->active();
-    if ((!m_active && !m_inSwitchTransition && !overviewActive) || m_group == nullptr || m_group->output() == nullptr) {
+    const bool sourceActive =
+        std::ranges::any_of(m_views, [](const View* view) { return view->hasPresentationSourceOccurrence(); });
+    if ((!m_active && !m_inSwitchTransition && !overviewActive && !sourceActive)
+        || m_group == nullptr
+        || m_group->output() == nullptr) {
       return;
     }
     Output* output = m_group->output();
@@ -890,7 +897,10 @@ namespace umbriel {
       const bool opening = !positioned || view->tiledOpeningDeferred();
       const std::optional<wlr_box> openingLayoutBox = view->openingLayoutBox();
       view->setLayoutTarget(slot.x, slot.y);
-      if ((!view->onActiveWorkspace() && !m_inSwitchTransition && !overviewActive)
+      if ((!view->onActiveWorkspace()
+           && !m_inSwitchTransition
+           && !overviewActive
+           && !view->hasPresentationSourceOccurrence())
           || slot.width <= 0
           || slot.height <= 0) {
         releaseLayoutMotion(view);
@@ -2044,7 +2054,81 @@ namespace umbriel {
     );
   }
 
+  WorkspaceInventoryHold::~WorkspaceInventoryHold() {
+    if (m_state->group != nullptr) {
+      m_state->group->releasePresentationInventory(m_state.get());
+    }
+  }
+
+  bool WorkspaceInventoryHold::activateSelection(std::string_view identity) {
+    auto state = m_state;
+    auto* group = state->group;
+    if (group == nullptr || !std::ranges::contains(state->identities, identity)) {
+      return false;
+    }
+    for (size_t i = 0; i < group->workspaceCount(); ++i) {
+      auto* target = group->workspaceAt(i);
+      if (target->id() == identity) {
+        const bool activating = group->m_inventoryActivating;
+        group->m_inventoryActivating = true;
+        group->activate(target, false);
+        group->m_inventoryActivating = activating;
+        return state->group == group && group->active() == target;
+      }
+    }
+    return false;
+  }
+
+  std::unique_ptr<WorkspaceInventoryHold> WorkspaceGroup::holdPresentationInventory(std::function<void()> invalidated) {
+    if (m_inventoryInvalidating
+        || m_inventoryHold != nullptr
+        || m_active == nullptr
+        || slideActive()
+        || m_workspaces.empty()
+        || m_workspaces.size() > kMaxWorkspaces) {
+      return nullptr;
+    }
+    auto state = std::make_shared<WorkspaceInventoryHold::State>();
+    state->group = this;
+    state->original = m_active->id();
+    state->invalidated = std::move(invalidated);
+    state->identities.reserve(m_workspaces.size());
+    for (const auto& workspace : m_workspaces) {
+      state->identities.push_back(workspace->id());
+    }
+    m_inventoryHold = state;
+    return std::unique_ptr<WorkspaceInventoryHold>(new WorkspaceInventoryHold(std::move(state)));
+  }
+
+  void WorkspaceGroup::releasePresentationInventory(WorkspaceInventoryHold::State* state) {
+    if (m_inventoryHold.get() != state) {
+      return;
+    }
+    state->group = nullptr;
+    m_inventoryHold.reset();
+    if (m_inventoryReconciliationPending) {
+      reconcileDynamic();
+    }
+  }
+
+  void WorkspaceGroup::invalidatePresentationInventory() {
+    if (m_inventoryHold == nullptr || m_inventoryActivating) {
+      return;
+    }
+    m_inventoryInvalidating = true;
+    auto state = std::move(m_inventoryHold);
+    state->group = nullptr;
+    auto notify = std::move(state->invalidated);
+    // The callback may destroy its handle. The local state owns the values and
+    // no longer refers back to this group, so cancellation cannot re-enter prune.
+    if (notify) {
+      notify();
+    }
+    m_inventoryInvalidating = false;
+  }
+
   WorkspaceGroup::~WorkspaceGroup() {
+    invalidatePresentationInventory();
     m_server->unregisterAnimatable(this);
     slideFinish();
     m_active = nullptr;
@@ -2129,6 +2213,7 @@ namespace umbriel {
     if (!m_dynamic || m_output == nullptr || m_output->wlr() == nullptr || m_workspaces.size() >= kMaxWorkspaces) {
       return nullptr;
     }
+    invalidatePresentationInventory();
     index = std::min(index, m_workspaces.size());
     const std::string name = std::to_string(index + 1);
     const OutputIdentity identity = m_output->identity();
@@ -2167,6 +2252,7 @@ namespace umbriel {
         }
       }
     }
+    invalidatePresentationInventory();
     slideFinish();
     std::swap(m_workspaces[index], m_workspaces[static_cast<size_t>(target)]);
     if (m_dynamic) {
@@ -2273,6 +2359,7 @@ namespace umbriel {
   }
 
   void WorkspaceGroup::reconcileInventory() {
+    invalidatePresentationInventory();
     slideFinish();
     const OutputIdentity identity = m_output->identity();
     auto resolvedSet = resolveWorkspacesForOutput(config(), identity);
@@ -2397,10 +2484,18 @@ namespace umbriel {
   }
 
   void WorkspaceGroup::reconcileDynamic() {
-    if (!m_dynamic || slideActive()) {
+    if (!m_dynamic) {
+      return;
+    }
+    if (m_inventoryHold != nullptr || m_inventoryActivating) {
+      m_inventoryReconciliationPending = true;
+      return;
+    }
+    if (slideActive()) {
       return;
     }
 
+    m_inventoryReconciliationPending = false;
     const OutputIdentity identity = m_output->identity();
     ResolvedWorkspaceSet resolved = resolveWorkspacesForOutput(config(), identity);
     // Config is committed before reload side effects run. Overview teardown can therefore reach this method while
@@ -2558,6 +2653,7 @@ namespace umbriel {
     if (extent <= 0) {
       return false;
     }
+    invalidatePresentationInventory();
     // A settle still running between neighbours is heading for a whole step, so where it is on screen minus that step
     // is where it sits relative to the workspace that is now active. A gesture that starts now carries on from there
     // rather than snapping the slide to the end of the animation first. A jump across several workspaces has a
@@ -2685,9 +2781,24 @@ namespace umbriel {
     if (workspace == nullptr || workspace->group() != this) {
       return;
     }
+    if (!m_inventoryActivating && m_output->workspaceTransition() && m_output->workspaceTransition()->active()) {
+      // Releasing the old inventory may otherwise prune the requested empty
+      // destination before the new transaction has acquired its hold.
+      m_inventoryActivating = true;
+      m_output->workspaceTransition()->cancel(PresentationFallback::None);
+      m_inventoryActivating = false;
+    }
     if (m_active == workspace) {
+      reconcileDynamic();
       return;
     }
+    if (!m_inventoryActivating
+        && animate
+        && m_server->effects().sceneAnimationEffect(AnimationEvent::Workspaces)
+        && m_output->beginWorkspaceTransition(workspace->id())) {
+      return;
+    }
+    invalidatePresentationInventory();
     slideFinish();
     Overview* overview = m_server->overview();
     const bool overviewActive = overview != nullptr && overview->active();
@@ -2766,6 +2877,7 @@ namespace umbriel {
       m_server->refocus(m_output);
       return;
     }
+    invalidatePresentationInventory();
     m_active->setActive(false);
     m_active = nullptr;
     m_server->cursor()->clearConstraint();

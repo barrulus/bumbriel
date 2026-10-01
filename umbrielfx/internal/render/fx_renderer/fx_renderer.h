@@ -17,6 +17,11 @@
 
 struct fx_framebuffer;
 struct wlr_allocator;
+struct fx_offscreen_buffers;
+
+// Releases only scratch targets of an unregistered, source-local buffer set.
+// Its caller owns the struct and must not use the output-addon destructor.
+void fx_offscreen_buffers_finish_local(struct fx_offscreen_buffers *buffers);
 
 void fx_renderer_set_allocator(struct wlr_renderer *renderer,
 	struct wlr_allocator *allocator);

@@ -5,6 +5,8 @@ window's border, on windows, on whole outputs, and around the pointer. Every
 effect is off until you select one. Umbriel ships a small set; each is a
 preset you include and then name where it should apply.
 
+Whole-workspace wipe, melt, and iris effects use the [workspace pair interface](workspace-transitions.md), bound to `animation.workspaces.effect`.
+
 ## Use a bundled effect
 
 Bundled presets install under `share/umbriel/effects/<kind>/<name>/`. Include a

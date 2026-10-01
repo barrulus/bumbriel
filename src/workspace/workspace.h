@@ -3,6 +3,7 @@
 #include "core/animation.h"
 #include "layout/layout.h"
 #include "layout/layout_motion.h"
+#include "scene/workspace_inventory.h"
 
 #include <array>
 #include <cstddef>
@@ -358,6 +359,8 @@ namespace umbriel {
     // showing, and that workspace still owes it a configure at the right size.
     void flushArrange();
 
+    [[nodiscard]] std::unique_ptr<WorkspaceInventoryHold> holdPresentationInventory(std::function<void()> invalidated);
+
     [[nodiscard]] bool slideActive() const { return m_slide.base != nullptr; }
     // Where the slide sits between its steps right now. A gesture that starts mid-settle picks the slide up here
     // instead of snapping it to an end first.
@@ -375,6 +378,13 @@ namespace umbriel {
     [[nodiscard]] bool animatesOn(const Output* output) const override { return m_output == output; }
 
   private:
+    friend class WorkspaceInventoryHold;
+    void releasePresentationInventory(WorkspaceInventoryHold::State* state);
+    void invalidatePresentationInventory();
+    std::shared_ptr<WorkspaceInventoryHold::State> m_inventoryHold;
+    bool m_inventoryReconciliationPending = false;
+    bool m_inventoryInvalidating = false;
+    bool m_inventoryActivating = false;
     std::unique_ptr<Workspace> createConfiguredWorkspace(ResolvedWorkspace workspace, size_t index);
     std::string nextWorkspaceId();
     Workspace* appendDynamicWorkspace();

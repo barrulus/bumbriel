@@ -7,6 +7,7 @@
 #include "layout/scrolling.h"
 #include "output/output.h"
 #include "overview/overview.h"
+#include "scene/workspace_transition.h"
 #include "server/server.h"
 #include "view/view.h"
 // clang-format off
@@ -100,6 +101,7 @@ namespace umbriel {
   }
 
   Gestures::~Gestures() {
+    clearSceneSwitchPointer();
     wl_list_remove(&m_swipeBegin.link);
     wl_list_remove(&m_swipeUpdate.link);
     wl_list_remove(&m_swipeEnd.link);
@@ -115,7 +117,9 @@ namespace umbriel {
         && (m_state == State::Pending
             || m_state == State::Scroll
             || m_state == State::Switch
-            || m_state == State::OverviewSelect)) {
+            || m_state == State::OverviewSelect
+            || m_state == State::SceneSwitch)) {
+      clearSceneSwitchPointer();
       // Hard reset: do NOT call into workspace/group objects (they may be mid-destruction).
       m_output = nullptr;
       m_scrollWorkspace = nullptr;
@@ -140,6 +144,13 @@ namespace umbriel {
   }
 
   Gestures::SwitchPick Gestures::pickSwitchForOverview() {
+    if (m_state == State::SceneSwitch) {
+      // Overview replaces the authored lease. Stop device ownership now so the
+      // old gesture cannot retarget a cancelled pair or inherit overview input.
+      cancelActive();
+      m_output = nullptr;
+      return {};
+    }
     if (m_state != State::Switch) {
       return {};
     }
@@ -174,6 +185,11 @@ namespace umbriel {
   }
 
   void Gestures::cancelActive() {
+    if (m_state == State::SceneSwitch) {
+      finishSceneSwitch(true, 0);
+      return;
+    }
+
     switch (m_state) {
     case State::Scroll:
       finishScroll(true, 0);
@@ -196,6 +212,8 @@ namespace umbriel {
       m_state = State::Idle;
       break;
     case State::Pending:
+    case State::SceneSwitch:
+    case State::Blocked:
     case State::Idle:
       m_state = State::Idle;
       break;
@@ -254,6 +272,65 @@ namespace umbriel {
     m_switchGroup->slideApply(position);
   }
 
+  void Gestures::updateSceneSwitch(double travel, uint32_t timeMsec) {
+    auto* mode = m_output != nullptr ? m_output->workspaceTransition() : nullptr;
+    if (m_state != State::SceneSwitch
+        || m_switchGroup == nullptr
+        || mode == nullptr
+        || !mode->active()
+        || !mode->interactive()) {
+      return;
+    }
+    m_switchTracker.push(-travel * m_naturalScrollDirection, timeMsec);
+    const double position = m_switchTracker.pos() / kSwipeWorkspacePx;
+    const int direction = position > 0 ? 1 : position < 0 ? -1 : 0;
+    if (direction != 0
+        && direction != m_sceneSwitchDirection
+        && ((direction > 0 && m_hasNext) || (direction < 0 && m_hasPrev))) {
+      const auto index = static_cast<int>(m_switchGroup->active()->index()) + direction;
+      if (mode->retargetInteractive(
+              m_switchGroup->workspaceAt(static_cast<size_t>(index))->id(), std::clamp(std::abs(position), 0.0, 1.0)
+          )) {
+        m_sceneSwitchDirection = direction;
+      }
+    } else {
+      (void)mode->gestureProgress(std::clamp(position * m_sceneSwitchDirection, 0.0, 1.0));
+    }
+  }
+
+  void Gestures::clearSceneSwitchPointer() {
+    if (m_sceneSwitchPointer != nullptr) {
+      wl_list_remove(&m_sceneSwitchDeviceDestroy.link);
+      m_sceneSwitchPointer = nullptr;
+    }
+  }
+
+  void Gestures::finishSceneSwitch(bool cancelled, uint32_t timeMsec) {
+    clearSceneSwitchPointer();
+    auto* mode = m_output != nullptr ? m_output->workspaceTransition() : nullptr;
+    if (m_switchGroup != nullptr && mode != nullptr && mode->active() && mode->interactive()) {
+      const auto release = switchSettle(timeMsec);
+      const int direction = cancelled ? 0 : release.target;
+      if (direction != 0 && direction != m_sceneSwitchDirection) {
+        const auto index = static_cast<int>(m_switchGroup->active()->index()) + direction;
+        if (mode->retargetInteractive(
+                m_switchGroup->workspaceAt(static_cast<size_t>(index))->id(),
+                std::clamp(release.position * direction, 0.0, 1.0)
+            )) {
+          m_sceneSwitchDirection = direction;
+        }
+      }
+      (void)mode->settle(
+          direction != 0 && direction == m_sceneSwitchDirection,
+          cancelled ? 0 : release.velocity * m_sceneSwitchDirection
+      );
+    }
+    m_switchGroup = nullptr;
+    m_output = nullptr;
+    m_sceneSwitchDirection = 0;
+    m_state = State::Idle;
+  }
+
   GesturePhysics::StepRelease Gestures::switchSettle(uint32_t timeMsec) {
     // Idle time between the last motion event and the release still bleeds speed, so feed a zero-delta sample before
     // reading the tracker. The strip scroll does the same for the same reason.
@@ -310,6 +387,11 @@ namespace umbriel {
   // Restore layout/slide state without sending any protocol events.
   // Used when the session locks mid-gesture.
   void Gestures::silentCancel() {
+    if (m_state == State::SceneSwitch) {
+      finishSceneSwitch(true, 0);
+      return;
+    }
+
     switch (m_state) {
     case State::Scroll:
       finishScroll(true, 0);
@@ -328,6 +410,8 @@ namespace umbriel {
       break;
     case State::Forward:
     case State::Pending:
+    case State::SceneSwitch:
+    case State::Blocked:
     case State::Idle:
       m_state = State::Idle;
       break;
@@ -349,6 +433,10 @@ namespace umbriel {
     }
     if (m_state != State::Idle) {
       cancelActive();
+    }
+    if (m_server->cursor()->sceneInputBlocked()) {
+      m_state = State::Blocked;
+      return;
     }
     Overview* overview = m_server->overview();
     if (event->fingers == 4 && overview != nullptr) {
@@ -392,6 +480,11 @@ namespace umbriel {
       return;
     }
     if (pointerScrollActive()) {
+      return;
+    }
+
+    if (m_state == State::SceneSwitch) {
+      updateSceneSwitch(m_workspaceAxis == WorkspaceAxis::Horizontal ? event->dx : event->dy, event->time_msec);
       return;
     }
 
@@ -448,6 +541,29 @@ namespace umbriel {
         const size_t idx = group->active()->index();
         m_hasPrev = idx > 0;
         m_hasNext = idx + 1 < group->workspaceCount();
+        const double travel = m_workspaceAxis == WorkspaceAxis::Horizontal ? m_accumX : m_accumY;
+        const int direction = -travel * m_naturalScrollDirection > 0 ? 1 : -1;
+        if ((direction > 0 && m_hasNext) || (direction < 0 && m_hasPrev)) {
+          const auto destination = static_cast<size_t>(static_cast<int>(idx) + direction);
+          if (out->beginWorkspaceTransition(group->workspaceAt(destination)->id(), true)) {
+            m_switchGroup = group;
+            m_switchTracker.reset();
+            m_switchStart = 0;
+            m_sceneSwitchDirection = direction;
+            m_state = State::SceneSwitch;
+            m_sceneSwitchPointer = event->pointer;
+            m_sceneSwitchDeviceDestroy.notify = [](wl_listener* listener, void*) {
+              Gestures* self;
+              self = wl_container_of(listener, self, m_sceneSwitchDeviceDestroy);
+              self->finishSceneSwitch(true, 0);
+            };
+            if (m_sceneSwitchPointer != nullptr) {
+              wl_signal_add(&m_sceneSwitchPointer->base.events.destroy, &m_sceneSwitchDeviceDestroy);
+            }
+            updateSceneSwitch(travel, event->time_msec);
+            return;
+          }
+        }
         if (!group->slideBegin(m_hasPrev, m_hasNext)) {
           m_state = State::Idle;
           return;
@@ -516,6 +632,8 @@ namespace umbriel {
       return;
     }
 
+    case State::SceneSwitch:
+    case State::Blocked:
     case State::Idle:
       return;
     }
@@ -533,6 +651,15 @@ namespace umbriel {
       return;
     }
 
+    if (m_state == State::SceneSwitch) {
+      finishSceneSwitch(event->cancelled, event->time_msec);
+      return;
+    }
+
+    if (m_state == State::Blocked) {
+      m_state = State::Idle;
+      return;
+    }
     switch (m_state) {
     case State::Forward:
       wlr_pointer_gestures_v1_send_swipe_end(
@@ -563,6 +690,8 @@ namespace umbriel {
       finishOverview(event->cancelled, event->time_msec);
       return;
 
+    case State::SceneSwitch:
+    case State::Blocked:
     case State::Idle:
       return;
     }
@@ -730,7 +859,8 @@ namespace umbriel {
     auto* event = static_cast<wlr_pointer_pinch_begin_event*>(data);
     m_server->notifyInputActivity();
     m_server->cancelModifierTap();
-    if (m_server->sessionLocked()) {
+    m_pinchForwarded = !m_server->sessionLocked() && !m_server->cursor()->sceneInputBlocked();
+    if (!m_pinchForwarded) {
       return;
     }
     wlr_pointer_gestures_v1_send_pinch_begin(
@@ -741,7 +871,7 @@ namespace umbriel {
   void Gestures::handlePinchUpdate(void* data) {
     auto* event = static_cast<wlr_pointer_pinch_update_event*>(data);
     m_server->notifyInputActivity();
-    if (m_server->sessionLocked()) {
+    if (m_server->sessionLocked() || !m_pinchForwarded) {
       return;
     }
     wlr_pointer_gestures_v1_send_pinch_update(
@@ -753,7 +883,9 @@ namespace umbriel {
   void Gestures::handlePinchEnd(void* data) {
     auto* event = static_cast<wlr_pointer_pinch_end_event*>(data);
     m_server->notifyIdleActivity();
-    if (m_server->sessionLocked()) {
+    const bool forwarded = m_pinchForwarded;
+    m_pinchForwarded = false;
+    if (m_server->sessionLocked() || !forwarded) {
       return;
     }
     wlr_pointer_gestures_v1_send_pinch_end(
@@ -767,7 +899,8 @@ namespace umbriel {
     auto* event = static_cast<wlr_pointer_hold_begin_event*>(data);
     m_server->notifyInputActivity();
     m_server->cancelModifierTap();
-    if (m_server->sessionLocked()) {
+    m_holdForwarded = !m_server->sessionLocked() && !m_server->cursor()->sceneInputBlocked();
+    if (!m_holdForwarded) {
       return;
     }
     wlr_pointer_gestures_v1_send_hold_begin(
@@ -778,7 +911,9 @@ namespace umbriel {
   void Gestures::handleHoldEnd(void* data) {
     auto* event = static_cast<wlr_pointer_hold_end_event*>(data);
     m_server->notifyIdleActivity();
-    if (m_server->sessionLocked()) {
+    const bool forwarded = m_holdForwarded;
+    m_holdForwarded = false;
+    if (m_server->sessionLocked() || !forwarded) {
       return;
     }
     wlr_pointer_gestures_v1_send_hold_end(

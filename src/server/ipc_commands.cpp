@@ -5,6 +5,7 @@
 #include "output/output.h"
 #include "scene/effect_registry.h"
 #include "scene/effect_selection.h"
+#include "scene/workspace_transition.h"
 #include "server/server.h"
 #include "view/view.h"
 #include "wlr.h"
@@ -522,6 +523,9 @@ namespace umbriel {
       owners.push_back(
           {{"type", "output"},
            {"name", output->wlr()->name},
+           {"workspace_transition",
+            output->workspaceTransition() ? output->workspaceTransition()->status()
+                                          : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
            {"slots", {{"screen", effectSlotJson(output->screenEffectSlot())}}}}
       );
     }
@@ -673,6 +677,9 @@ namespace umbriel {
       const bool requested = output->tearingRequested();
       nlohmann::json entry = {
           {"name", output->wlr()->name},
+          {"workspace_transition",
+           output->workspaceTransition() ? output->workspaceTransition()->status()
+                                         : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
           {"allowed", output->configuredTearingAllowed()},
           {"requested", requested},
           {"last_commit_tearing", output->lastCommitTearing()},
@@ -779,6 +786,7 @@ namespace umbriel {
 
   nlohmann::json IpcCommands::clockFreeze([[maybe_unused]] Server& server, std::string_view /*arg*/) {
 #ifdef UMBRIEL_TEST_IPC
+
     server.freezeAnimationClock();
 #endif
     return nlohmann::json{{"ok", nullptr}};
@@ -807,6 +815,9 @@ namespace umbriel {
     for (const auto& output : server.outputs()) {
       outputs.push_back({
           {"name", output->wlr()->name},
+          {"workspace_transition",
+           output->workspaceTransition() ? output->workspaceTransition()->status()
+                                         : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
           {"effect_frames", output->effectFrames()},
           {"eligible", output->effectEligible()},
       });
@@ -869,6 +880,9 @@ namespace umbriel {
       {"keyboard-layouts", "", "list keyboard layouts", IpcCommandGroup::Inspect, false, &IpcCommands::keyboardLayouts,
        &printKeyboardLayouts},
 #ifdef UMBRIEL_TEST_IPC
+      {"swipe-inject", "<begin fingers ms|update dx dy ms|end ms|cancel ms|remove>",
+       "test swipe device through the native cursor signal path", IpcCommandGroup::Harness, true,
+       &IpcCommands::swipeInject, nullptr},
       {"settle", "", "wait until no layout or animation is pending and every output has drawn a frame",
        IpcCommandGroup::Harness, false, &IpcCommands::settle, nullptr, 35},
       {"clock-freeze", "", "stop animation time", IpcCommandGroup::Harness, false, &IpcCommands::clockFreeze, nullptr},

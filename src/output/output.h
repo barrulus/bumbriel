@@ -3,6 +3,7 @@
 #include "core/dirty.h"
 #include "output/frame_schedule.h"
 #include "scene/effect_selection.h"
+#include "scene/workspace_sources.h"
 
 #include <cstdint>
 #include <memory>
@@ -28,6 +29,7 @@ namespace umbriel {
   enum class FormatTier : uint8_t;
   enum class HdrMode;
   class Server;
+  class WorkspaceTransition;
   class View;
   class WorkspaceGroup;
   struct OutputIdentity;
@@ -45,6 +47,16 @@ namespace umbriel {
     [[nodiscard]] wlr_output* wlr() const { return m_output; }
     [[nodiscard]] OutputIdentity identity() const;
     [[nodiscard]] wlr_scene_output* sceneOutput() const { return m_sceneOutput; }
+    bool beginWorkspaceTransition(std::string_view destination, bool interactive = false);
+    [[nodiscard]] WorkspaceTransition* workspaceTransition() const { return m_workspaceTransition.get(); }
+    void notePresentationSourceContent();
+    void notePresentationViewMapped(View& view);
+    void notePresentationViewUnmapping(View& view);
+    bool beginSceneInput(std::function<void()> dismiss);
+    void endSceneInput(bool requireRestore = true);
+    void sceneRestoreCommitted();
+    bool registerWorkspaceSources(WorkspaceSources* sources);
+    void unregisterWorkspaceSources(WorkspaceSources* sources);
     [[nodiscard]] wlr_scene_tree* layerTree(uint32_t layer) const;
     [[nodiscard]] wlr_scene_tree* popupTree() const { return m_popupTree; }
     // Clipped roots for this output's window content. Every descendant is scissored to the output's layout box, which
@@ -179,6 +191,8 @@ namespace umbriel {
     wlr_output* m_output = nullptr;
     float m_defaultScale = 1.0F;
     wlr_scene_output* m_sceneOutput = nullptr;
+    WorkspaceSources* m_activeWorkspaceSources = nullptr;
+    std::unique_ptr<WorkspaceTransition> m_workspaceTransition;
     wlr_scene_tree* m_layerTrees[kLayerCount]{};
     wlr_scene_tree* m_popupTree = nullptr;
     wlr_scene_tree* m_viewRoot = nullptr;
