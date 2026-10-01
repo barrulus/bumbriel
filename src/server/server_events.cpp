@@ -1152,8 +1152,16 @@ namespace umbriel {
     auto* session = static_cast<wlr_ext_image_copy_capture_session_v1*>(data);
     auto* watch = new ImageCopySessionWatch();
     watch->server = self;
+    watch->source = session->source;
     watch->destroy.notify = onImageCopySessionDestroy;
     wl_signal_add(&session->events.destroy, &watch->destroy);
+    for (const auto& view : self->views()) {
+      if (view->m_captureSource == session->source) {
+        watch->isolated = true;
+        view->changeCaptureSessions(1);
+        break;
+      }
+    }
   }
 
   // The session's render lock is released after this signal; the frame it schedules runs from an idle, without it.
@@ -1161,8 +1169,18 @@ namespace umbriel {
     ImageCopySessionWatch* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
+    const bool isolated = watch->isolated;
+    for (const auto& view : server->views()) {
+      if (view->m_captureSource == watch->source) {
+        view->changeCaptureSessions(-1);
+        break;
+      }
+    }
     wl_list_remove(&watch->destroy.link);
     delete watch;
+    if (isolated) {
+      return;
+    }
     for (const auto& output : server->m_outputs) {
       output->scheduleEffectCaptureRelease();
     }
@@ -3439,6 +3457,7 @@ namespace umbriel {
       }
       view->m_captureSourceDestroy.notify = View::onCaptureSourceDestroy;
       wl_signal_add(&view->m_captureSource->events.destroy, &view->m_captureSourceDestroy);
+      view->attachCaptureAudio();
     }
 
     wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, view->m_captureSource);
