@@ -34,6 +34,8 @@ umbrielfx_sources = files(
   'render/fx_renderer/fx_renderer.c',
   'render/fx_renderer/fx_texture.c',
   'render/fx_renderer/effect_shader.c',
+  'render/fx_renderer/scene_resources.c',
+  'render/fx_renderer/scene_program.c',
   'render/fx_renderer/pixel_format.c',
   'render/fx_renderer/shaders.c',
   'render/fx_renderer/tracy.c',
@@ -191,6 +193,137 @@ umbrielfx_dep = declare_dependency(
 )
 
 if build_tests
+  umbrielfx_scene_resources_test = executable(
+    'umbrielfx-scene-resources-test',
+    'tests/scene_resources.c',
+    'render/fx_renderer/scene_resources.c',
+    dependencies: umbrielfx_math_dep,
+    include_directories: umbrielfx_internal_inc,
+    build_by_default: false,
+  )
+  test('scene-resources', umbrielfx_scene_resources_test, suite: 'umbrielfx')
+
+  umbrielfx_scene_projection_test = executable(
+    'umbrielfx-scene-projection-test',
+    'tests/scene_projection.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-projection', umbrielfx_scene_projection_test, suite: 'umbrielfx')
+
+  umbrielfx_scene_source_test = executable(
+    'umbrielfx-scene-source-test',
+    'tests/scene_source.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-source', umbrielfx_scene_source_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_view_test = executable(
+    'umbrielfx-scene-view-test',
+    'tests/scene_view.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-view', umbrielfx_scene_view_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_blend_test = executable(
+    'umbrielfx-scene-blend-test',
+    'tests/scene_blend.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-blend', umbrielfx_scene_blend_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_shadow_test = executable(
+    'umbrielfx-scene-shadow-test',
+    'tests/scene_shadow.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-shadow', umbrielfx_scene_shadow_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_program_test = executable(
+    'umbrielfx-scene-program-test',
+    'tests/scene_program.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-program', umbrielfx_scene_program_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_pair_test = executable(
+    'umbrielfx-scene-pair-test',
+    'tests/scene_pair.c',
+    c_args: umbrielfx_c_args + ['-DSCENE_PAIR_FIXTURE_DIR="' + meson.project_source_root() / 'examples/effects/scene' + '"'],
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-pair', umbrielfx_scene_pair_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_windows_test = executable(
+    'umbrielfx-scene-windows-test',
+    'tests/scene_windows.c',
+    c_args: umbrielfx_c_args + ['-DSCENE_WINDOWS_FIXTURE_DIR="' + meson.project_source_root() / 'examples/effects/scene' + '"'],
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-windows', umbrielfx_scene_windows_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_carousel_test = executable(
+    'umbrielfx-scene-carousel-test',
+    'tests/scene_carousel.c',
+    c_args: umbrielfx_c_args + ['-DSCENE_CAROUSEL_FIXTURE_DIR="' + meson.project_source_root() / 'examples/effects/scene' + '"'],
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-carousel', umbrielfx_scene_carousel_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_light_cache_test = executable(
+    'umbrielfx-light-cache-test',
+    'tests/light_cache.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('light-cache', umbrielfx_light_cache_test, suite: 'umbrielfx', timeout: 120)
+
+  umbrielfx_scene_participant_test = executable(
+    'umbrielfx-scene-participant-test',
+    'tests/scene_participant.c',
+    c_args: umbrielfx_c_args,
+    dependencies: umbrielfx_deps,
+    include_directories: [umbrielfx_inc, umbrielfx_internal_inc],
+    link_with: umbrielfx_lib,
+    build_by_default: false,
+  )
+  test('scene-participant', umbrielfx_scene_participant_test, suite: 'umbrielfx')
+
   umbrielfx_color_test = executable(
     'umbrielfx-color-test',
     'tests/color.c',

@@ -146,9 +146,11 @@ wait_for_line "$WALLPAPER_LOG" ready
 
 # A 64x64 client leaves the rest of the output to the backdrop. Unmapping it without destroying the surface must take
 # the backdrop along, even though the unmap commit follows handleUnmap.
-"$UNMAP_CLIENT" "$UNMAP_TITLE" > "$UNMAP_LOG" 2>&1 &
+# Queue fullscreen in the same flush as map, before tiled opening admission.
+# This deterministically exercises the ownership handoff that a fast fullscreen
+# action can race; a deferred tiled reveal must not leave fullscreen invisible.
+env REQUEST_FULLSCREEN=1 "$UNMAP_CLIENT" "$UNMAP_TITLE" > "$UNMAP_LOG" 2>&1 &
 wait_for_line "$UNMAP_LOG" mapped
-"$UMBRIEL" msg window-toggle-fullscreen > /dev/null
 wait_for_fullscreen "$UNMAP_TITLE" true
 "$UMBRIEL" settle
 read -r red green blue <<< "$(sample_corner "$UMBRIEL_RUNTIME_DIR/fullscreen-backdrop-mapped.png")"

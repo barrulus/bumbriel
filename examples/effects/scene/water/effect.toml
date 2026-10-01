@@ -1,0 +1,14 @@
+# Include this file to define the preset; selectors below are examples only.
+[effects.preset.water]
+kind = "animation"
+interface = "scene-v1"
+scope = "window_scene"
+common_shader = "common.glsl"
+vertex_shader = "shader.vert"
+shader = "shader.frag"
+composite_shader = "composite.glsl"
+
+# [animation.windows_in]
+# effect = "water"
+# [animation.windows_out]
+# effect = "water"

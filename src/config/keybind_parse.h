@@ -198,6 +198,12 @@ namespace umbriel {
     ColumnHideTabBar,
     ScratchpadWindowShowNext,
     ScratchpadWindowShowPrevious,
+    WorkspacePresentationEnter,
+    WorkspacePresentationNext,
+    WorkspacePresentationPrevious,
+    WorkspacePresentationSelect,
+    WorkspacePresentationAccept,
+    WorkspacePresentationCancel,
     Count,
   };
 

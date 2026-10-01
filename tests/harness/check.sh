@@ -675,6 +675,10 @@ run_one() {
   local cursor_theme
   cursor_theme=$(check_xcursor_theme "$name")
 
+  if sed -n '2,12p' "$CHECKS_DIR/$name.sh" | grep -q '^# harness: wlr-debug=true'; then
+    export UMBRIEL_WLR_DEBUG=1
+  fi
+
   BOOT_ERROR=
   if ! start_instance "$(check_outputs "$name")" "$(check_xwayland "$name")" "$cursor_theme"; then
     publish "$prefix" 1 "$check_start" "$BOOT_ERROR"

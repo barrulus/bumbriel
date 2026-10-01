@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# harness: wlr-debug=true
 # Renderer loss is reported from inside the renderer's mutable lost signal. The test command emits it twice in one
 # dispatch: recovery must let both emissions finish, coalesce them, then replace the renderer and draw another frame.
 set -euo pipefail

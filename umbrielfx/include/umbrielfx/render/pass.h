@@ -69,6 +69,9 @@ struct fx_gles_render_pass {
   // Spans the pass's GPU work from begin to the end of submit's commands.
   struct tracy_gpu_zone_context frame_gpu_zone;
 #endif
+  bool working_space;
+  struct wl_list* deferred_history_updates;
+  bool incomplete;
 };
 
 bool fx_render_pass_begin_animation(struct fx_gles_render_pass* pass);

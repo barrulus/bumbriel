@@ -154,6 +154,9 @@ maximized_width=$(sed -n '1s/^configured-size=\([0-9]\{1,\}\)x.*/\1/p' "$MAX_LOG
 "$STATE_CLIENT" max-neighbor > "$UMBRIEL_RUNTIME_DIR/max-neighbor.log" 2>&1 &
 max_neighbor_pid=$!
 wait_mapped max-neighbor
+# Mapping the companion removes maximization before the deferred layout sends
+# its new size. Observe both after the normal configure/arrange/frame barrier.
+"$UMBRIEL" settle
 for _ in $(seq 40); do
   current_configure | grep -q '^configured-maximized$' || break
   sleep 0.1

@@ -25,3 +25,4 @@ result-*
 /TODO.md
 /pr-*.md
 /.github/workflows/scripts/__pycache__
+/tests/**/__pycache__/

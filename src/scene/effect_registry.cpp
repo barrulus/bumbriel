@@ -5,11 +5,15 @@
 #include "core/log.h"
 #include "output/output.h"
 #include "server/server.h"
+#include "view/view.h"
 #include "wlr.h"
 
 #include <algorithm>
 
 extern "C" {
+#include "../../umbrielfx/internal/render/fx_renderer/scene_program.h"
+#include "../../umbrielfx/internal/types/wlr_scene.h"
+
 #include <umbrielfx/render/effect.h>
 }
 
@@ -122,7 +126,15 @@ vec4 animation(vec2 uv) {
   }
 
   void EffectRegistry::clear() {
+    for (const auto& [owner, state] : m_sceneOwners) {
+      (void)state;
+      m_ledger.remove(owner);
+    }
+    m_sceneOwners.clear();
+    m_timeInstances.clear();
+    m_sourceOccurrences.clear();
     m_programs.clear();
+    m_scenePrograms.clear();
     m_builtinFade.reset();
     dropDeformation();
     m_persistentReferenced = false;
@@ -152,6 +164,8 @@ vec4 animation(vec2 uv) {
   }
 
   void EffectRegistry::removeOutput(const Output* output) {
+    std::erase_if(m_sceneOwners, [output](const auto& item) { return item.second.output == output; });
+    std::erase_if(m_sourceOccurrences, [output](const auto& item) { return item.second.output == output; });
     m_ledger.removeOutput(output);
     if (m_pointerWlrOutput == output->wlr()) {
       m_pointerWlrOutput = nullptr;
@@ -169,6 +183,7 @@ vec4 animation(vec2 uv) {
     add(settings.effects.window);
     add(settings.effects.screen);
     add(settings.effects.cursor);
+    add(settings.workspacePresentation.effect);
     for (const WindowRule& rule : settings.windowRules) {
       add(rule.borderEffect.value_or(""));
       add(rule.windowEffect.value_or(""));
@@ -204,6 +219,9 @@ vec4 animation(vec2 uv) {
   }
 
   void EffectRegistry::compile(const EffectPreset& preset) {
+    if (preset.scene) {
+      return;
+    }
     auto [slot, inserted] = m_programs.try_emplace(preset.name);
     Entry& entry = slot->second;
     if (!inserted && entry.kind == preset.kind && entry.code == preset.shader.code) {
@@ -232,6 +250,7 @@ vec4 animation(vec2 uv) {
     if (renderer != m_renderer) {
       // Programs belong to one GL context. A new renderer starts from nothing.
       m_programs.clear();
+      m_scenePrograms.clear();
       m_builtinFade.reset();
       dropDeformation();
       m_renderer = renderer;
@@ -239,7 +258,23 @@ vec4 animation(vec2 uv) {
     const Config& settings = config();
     std::vector<std::string> names;
     referencedNames(names);
-    std::erase_if(m_programs, [&](const auto& item) { return std::ranges::find(names, item.first) == names.end(); });
+    std::erase_if(m_programs, [&](const auto& item) {
+      const auto* preset = findEffectPreset(settings.effects, item.first);
+      return std::ranges::find(names, item.first) == names.end() || preset == nullptr || preset->scene.has_value();
+    });
+    std::vector<scene_experiment::ProgramDefinition> sceneDefinitions;
+    sceneDefinitions.reserve(settings.effects.presets.size());
+    for (const auto& preset : settings.effects.presets) {
+      if (preset.scene) {
+        sceneDefinitions.push_back(
+            {.name = preset.name,
+             .sources = preset.scene->sources,
+             .parameters = preset.scene->parameters,
+             .palette = preset.palette}
+        );
+      }
+    }
+    m_scenePrograms.prepare(renderer, sceneDefinitions, names);
     for (const std::string& name : names) {
       if (const EffectPreset* preset = findEffectPreset(settings.effects, name)) {
         compile(*preset);
@@ -310,19 +345,108 @@ vec4 animation(vec2 uv) {
     }
   }
 
-  void EffectRegistry::updateInstance(const void* owner, const EffectInstanceState& state) {
-    const unsigned before = m_ledger.eligible(state.output);
-    m_ledger.update(owner, state);
-    if (before == 0 && m_ledger.eligible(state.output) > 0) {
-      for (const auto& output : m_server->outputs()) {
-        if (output.get() == state.output) {
-          output->scheduleEffectFrame();
-        }
+  void EffectRegistry::updateInstance(
+      const void* owner, const EffectInstanceState& state, wlr_scene_node* node, bool readsAudio
+  ) {
+    if (node) {
+      m_timeInstances[owner] = {.node = node, .state = state, .readsAudio = readsAudio};
+    } else {
+      m_timeInstances.erase(owner);
+    }
+    updateTimeOccurrence(owner, state, node);
+  }
+  void EffectRegistry::removeInstance(const void* owner) {
+    m_timeInstances.erase(owner);
+    m_ledger.remove(owner);
+  }
+  void EffectRegistry::updateTimeOccurrence(const void* owner, const EffectInstanceState& state, wlr_scene_node* node) {
+    std::vector<const void*> wasIdle;
+    for (const auto& output : m_server->outputs()) {
+      if (m_ledger.eligible(output.get()) == 0) {
+        wasIdle.push_back(output.get());
+      }
+    }
+    if (node != nullptr) {
+      m_ledger.updateOccurrences(owner, state, effectOutputs(node));
+    } else {
+      m_ledger.update(owner, state);
+    }
+    for (const auto& output : m_server->outputs()) {
+      if (std::ranges::find(wasIdle, output.get()) != wasIdle.end() && m_ledger.eligible(output.get()) > 0) {
+        output->scheduleEffectFrame();
       }
     }
   }
 
-  void EffectRegistry::removeInstance(const void* owner) { m_ledger.remove(owner); }
+  void EffectRegistry::refreshTimeOccurrences() {
+    for (const auto& [owner, instance] : m_timeInstances) {
+      updateTimeOccurrence(owner, instance.state, instance.node);
+    }
+  }
+
+  bool EffectRegistry::effectNodeVisible(wlr_scene_node* node, const Output* output) const {
+    if (visibleInSource(node, output)) {
+      return true;
+    }
+    const auto box = output->layoutBox();
+    if (!wlr_scene_node_visible_in_box(node, &box)) {
+      return false;
+    }
+    const bool replaced = std::ranges::any_of(m_sourceOccurrences, [output](const auto& entry) {
+      return entry.second.output == output && entry.second.replacesNativeViews;
+    });
+    if (!replaced) {
+      return true;
+    }
+    for (const auto& view : m_server->views()) {
+      if (view->sceneTree() == nullptr) {
+        continue;
+      }
+      for (auto* ancestor = node; ancestor != nullptr;
+           ancestor = ancestor->parent != nullptr ? &ancestor->parent->node : nullptr) {
+        if (ancestor == &view->sceneTree()->node) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool EffectRegistry::visibleInSource(wlr_scene_node* node, const Output* output) const {
+    for (const auto& [session, occurrence] : m_sourceOccurrences) {
+      (void)session;
+      if (occurrence.output != output) {
+        continue;
+      }
+      // Source inventories retain map-lifetime identities, never View pointers.
+      // Unmap/destruction cannot turn a stale occurrence into a different view.
+      for (const auto& view : m_server->views()) {
+        if (!view->mapped()
+            || view->sceneTree() == nullptr
+            || view->extForeignIdentifier() == nullptr
+            || std::ranges::find(occurrence.views, view->extForeignIdentifier()) == occurrence.views.end()) {
+          continue;
+        }
+        for (auto* ancestor = node; ancestor != nullptr;
+             ancestor = ancestor->parent != nullptr ? &ancestor->parent->node : nullptr) {
+          if (ancestor == &view->sceneTree()->node) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  std::vector<const void*> EffectRegistry::effectOutputs(wlr_scene_node* node) const {
+    std::vector<const void*> outputs;
+    for (const auto& output : m_server->outputs()) {
+      if (output->wlr()->enabled && effectNodeVisible(node, output.get())) {
+        outputs.push_back(output.get());
+      }
+    }
+    return outputs;
+  }
 
   void EffectRegistry::retainRequirements(const fx_effect_requirements& requirements) {
     m_retainedPersistent += requirements.persistent ? 1U : 0U;
@@ -339,6 +463,105 @@ vec4 animation(vec2 uv) {
     m_retainedLight -= requirements.light ? 1U : 0U;
     if (requirements.light) {
       syncLightLayer();
+    }
+  }
+
+  void EffectRegistry::updateSceneInputs(
+      const void* owner, Output* output, const scene_experiment::ProgramBundle* bundle, bool eligible
+  ) {
+    if (!output || !bundle || !eligible) {
+      clearSceneInputs(owner);
+      return;
+    }
+    m_sceneOwners[owner] = {.output = output, .readsAudio = bundle->readsAudio, .readsTime = bundle->readsTime};
+    bool advancing = true;
+#ifdef UMBRIEL_TEST_IPC
+    advancing = !m_server->animationClockFrozen();
+#endif
+    updateInstance(
+        owner,
+        {.output = output, .visible = output->wlr()->enabled, .readsTime = bundle->readsTime, .advancing = advancing}
+    );
+  }
+  void EffectRegistry::refreshSceneClock() {
+    bool advancing = true;
+#ifdef UMBRIEL_TEST_IPC
+    advancing = !m_server->animationClockFrozen();
+#endif
+    for (const auto& [owner, state] : m_sceneOwners) {
+      updateInstance(
+          owner,
+          {.output = state.output,
+           .visible = state.output->wlr()->enabled,
+           .readsTime = state.readsTime,
+           .advancing = advancing}
+      );
+    }
+  }
+  void EffectRegistry::clearSceneInputs(const void* owner) {
+    m_sceneOwners.erase(owner);
+    m_ledger.remove(owner);
+  }
+  bool EffectRegistry::sceneAudioActive(const Output* output) const {
+    if (m_ledger.suspended()) {
+      return false;
+    }
+    return std::ranges::any_of(
+               m_sceneOwners,
+               [output](const auto& entry) { return entry.second.output == output && entry.second.readsAudio; }
+           )
+        || std::ranges::any_of(m_timeInstances, [this, output](const auto& entry) {
+             return entry.second.readsAudio && visibleInSource(entry.second.node, output);
+           });
+  }
+  void EffectRegistry::fillSceneAudio(
+      fx_scene_frame& frame, const scene_experiment::ProgramBundle&, const Output* output
+  ) const {
+    scene_experiment::setFrameAudio(frame, output->effectAudio());
+  }
+  uint64_t EffectRegistry::audioInputRevision(const Output* output) const { return output->effectAudioRevision(); }
+
+  void EffectRegistry::setSourceOccurrences(
+      const void* session, Output* output, std::span<View* const> views, bool replacesNativeViews
+  ) {
+    auto& occurrence = m_sourceOccurrences[session];
+    occurrence.output = output;
+    occurrence.replacesNativeViews = replacesNativeViews;
+    occurrence.views.clear();
+    for (const auto* view : views) {
+      if (view && view->mapped() && view->extForeignIdentifier()) {
+        occurrence.views.emplace_back(view->extForeignIdentifier());
+      }
+    }
+    refreshTimeOccurrences();
+  }
+  void EffectRegistry::clearSourceOccurrences(const void* session) {
+    m_sourceOccurrences.erase(session);
+    refreshTimeOccurrences();
+  }
+  void EffectRegistry::bindSourceEffects(const void* session) {
+    const auto found = m_sourceOccurrences.find(session);
+    if (found == m_sourceOccurrences.end()) {
+      return;
+    }
+    wlr_scene_output_set_effect_audio(found->second.output->sceneOutput(), found->second.output->effectAudio().data());
+    for (const auto& view : m_server->views()) {
+      if (view->mapped()
+          && view->extForeignIdentifier()
+          && std::ranges::contains(found->second.views, view->extForeignIdentifier())) {
+        view->syncAnimationEffects(nullptr, nullptr, nullptr, nullptr, found->second.output);
+      }
+    }
+  }
+  void EffectRegistry::fillScenePalette(fx_scene_frame& frame, const scene_experiment::ProgramBundle& bundle) const {
+    std::ranges::fill(frame.palette, 0.0F);
+    frame.palette_count = 0;
+    if (bundle.definition.palette) {
+      const auto palette = effectPalette(config().colors);
+      for (size_t i = 0; i < palette.size(); ++i) {
+        std::ranges::copy(palette[i], &frame.palette[i * 4]);
+      }
+      frame.palette_count = static_cast<int>(palette.size());
     }
   }
 
@@ -359,6 +582,20 @@ vec4 animation(vec2 uv) {
     if (configured == nullptr || configured->inert()) {
       return "inert";
     }
+    if (configured->scene) {
+      switch (sceneProgramState(name)) {
+      case scene_experiment::ProgramState::Unreferenced:
+        return "unreferenced";
+      case scene_experiment::ProgramState::Invalid:
+        return "inert";
+      case scene_experiment::ProgramState::Unsupported:
+        return "unsupported";
+      case scene_experiment::ProgramState::CompileFailed:
+        return "failed";
+      case scene_experiment::ProgramState::Ready:
+        return "compiled";
+      }
+    }
     const auto entry = m_programs.find(name);
     if (entry == m_programs.end()
         || entry->second.kind != configured->kind
@@ -366,6 +603,52 @@ vec4 animation(vec2 uv) {
       return "unreferenced";
     }
     return entry->second.shader != nullptr ? "compiled" : "failed";
+  }
+
+  scene_experiment::ProgramState EffectRegistry::sceneProgramState(std::string_view name) const {
+    const auto* configured = presetConfig(name);
+    if (configured == nullptr || !configured->scene) {
+      return scene_experiment::ProgramState::Unreferenced;
+    }
+    if (configured->inert()) {
+      return scene_experiment::ProgramState::Invalid;
+    }
+    return m_scenePrograms.state(name);
+  }
+
+  std::shared_ptr<const scene_experiment::ProgramBundle>
+  EffectRegistry::scenePreset(std::string_view name, scene_experiment::Scope scope) const {
+    const auto* configured = presetConfig(name);
+    if (configured == nullptr
+        || !configured->scene
+        || configured->kind != EffectKind::Animation
+        || configured->scene->sources.scope != scope) {
+      return {};
+    }
+    auto bundle = m_scenePrograms.find(name);
+    if (!bundle
+        || bundle->definition.sources != configured->scene->sources
+        || bundle->definition.parameters != configured->scene->parameters
+        || bundle->definition.palette != configured->palette) {
+      return {};
+    }
+    return bundle;
+  }
+
+  std::shared_ptr<const scene_experiment::ProgramBundle>
+  EffectRegistry::sceneAnimationEffect(AnimationEvent event) const {
+    const auto& settings = config().animation;
+    const auto binding = settings.eventEffect(event);
+    if (!settings.enabled || !binding.enabled || binding.effect == nullptr || binding.effect->empty()) {
+      return {};
+    }
+    if (event == AnimationEvent::Workspaces) {
+      return scenePreset(*binding.effect, scene_experiment::Scope::WorkspacePair);
+    }
+    if (event == AnimationEvent::WindowsIn || event == AnimationEvent::WindowsOut) {
+      return scenePreset(*binding.effect, scene_experiment::Scope::WindowScene);
+    }
+    return {};
   }
 
   const EffectPreset* EffectRegistry::presetConfig(std::string_view name) const {

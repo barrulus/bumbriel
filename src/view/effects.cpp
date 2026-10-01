@@ -93,7 +93,8 @@ namespace umbriel {
               .visible = wlr_scene_node_visible_in_box(input.border, &input.outputBox),
               .readsTime = fx_effect_shader_reads(shader, "umbriel_time"),
               .advancing = advancing && input.clockAdvancing,
-          }
+          },
+          input.border, fx_effect_shader_reads(shader, "umbriel_audio")
       );
     }
     applyWindowSlots(input, preset, seconds, advancing);
@@ -155,7 +156,8 @@ namespace umbriel {
               .visible = visible,
               .readsTime = fx_effect_shader_reads(program, "umbriel_time"),
               .advancing = advancing && input.clockAdvancing,
-          }
+          },
+          input.surface, fx_effect_shader_reads(program, "umbriel_audio")
       );
     };
     instance(input.surface, windowShader, true);

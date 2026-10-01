@@ -5,6 +5,9 @@ window's border, on windows, on whole outputs, and around the pointer. Every
 effect is off until you select one. Umbriel ships a small set; each is a
 preset you include and then name where it should apply.
 
+For whole-workspace transitions, workspace presentation and window-scene
+opening/closing programs, see [scene effects](scene-effects.md).
+
 ## Use a bundled effect
 
 Bundled presets install under `share/umbriel/effects/<kind>/<name>/`. Include a

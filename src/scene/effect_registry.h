@@ -3,6 +3,7 @@
 #include "config/effects.h"
 #include "core/animation.h"
 #include "scene/effect_ledger.h"
+#include "scene/scene_program.h"
 
 #include <array>
 #include <cstdint>
@@ -23,6 +24,7 @@ namespace umbriel {
 
   class Output;
   class Server;
+  class View;
 
   // One compiled program per referenced preset for the current renderer, plus
   // the built-in lifecycle fade. Prepares at startup, on reload with the
@@ -39,10 +41,19 @@ namespace umbriel {
     void clear();
     [[nodiscard]] wlr_renderer* renderer() const { return m_renderer; }
 
+    // Internal scene experiment cache. Public bindings remain gated on scene
+    // source/lifecycle evidence; transactions retain bundles returned by find().
+    [[nodiscard]] scene_experiment::ScenePrograms& scenePrograms() { return m_scenePrograms; }
+
     // The program for `name`, or null when the preset is off, inert, of another kind, or failed to compile.
     [[nodiscard]] fx_effect_shader* preset(std::string_view name, EffectKind kind) const;
     [[nodiscard]] const EffectPreset* presetConfig(std::string_view name) const;
     [[nodiscard]] std::string_view programState(std::string_view name) const;
+    [[nodiscard]] std::shared_ptr<const scene_experiment::ProgramBundle>
+    scenePreset(std::string_view name, scene_experiment::Scope scope) const;
+    [[nodiscard]] std::shared_ptr<const scene_experiment::ProgramBundle>
+    sceneAnimationEffect(AnimationEvent event) const;
+    [[nodiscard]] scene_experiment::ProgramState sceneProgramState(std::string_view name) const;
     // The preset bound to an animation event through `effect =`, or null.
     [[nodiscard]] fx_effect_shader* animationEffect(AnimationEvent event) const;
     // The program a lifecycle fade composes through: the event's preset, or for windows_in and windows_out without
@@ -74,7 +85,23 @@ namespace umbriel {
     void setAudio(std::array<float, 2> audio);
     [[nodiscard]] const std::array<float, 2>& audio() const { return m_audio; }
     // Records an instance; schedules its output's effect frame when that output gains its first eligible instance.
-    void updateInstance(const void* owner, const EffectInstanceState& state);
+    void updateInstance(
+        const void* owner, const EffectInstanceState& state, wlr_scene_node* node = nullptr, bool readsAudio = false
+    );
+    void
+    updateSceneInputs(const void* owner, Output* output, const scene_experiment::ProgramBundle* bundle, bool eligible);
+    void refreshSceneClock();
+    void clearSceneInputs(const void* owner);
+    void
+    fillSceneAudio(fx_scene_frame& frame, const scene_experiment::ProgramBundle& bundle, const Output* output) const;
+    void fillScenePalette(fx_scene_frame& frame, const scene_experiment::ProgramBundle& bundle) const;
+    [[nodiscard]] uint64_t audioInputRevision(const Output* output) const;
+    [[nodiscard]] bool sceneAudioActive(const Output* output) const;
+    void setSourceOccurrences(
+        const void* session, Output* output, std::span<View* const> views, bool replacesNativeViews = false
+    );
+    void clearSourceOccurrences(const void* session);
+    void bindSourceEffects(const void* session);
     void removeInstance(const void* owner);
     void removeOutput(const Output* output);
     // Keep the light layer while prepared programs or snapshots require it.
@@ -103,6 +130,7 @@ namespace umbriel {
     Server* m_server = nullptr;
     wlr_renderer* m_renderer = nullptr;
     std::map<std::string, Entry, std::less<>> m_programs;
+    scene_experiment::ScenePrograms m_scenePrograms;
     std::shared_ptr<fx_effect_shader> m_builtinFade;
     std::shared_ptr<fx_effect_shader> m_deformation; // null once compilation failed
     bool m_deformationCompiled = false;
@@ -116,6 +144,29 @@ namespace umbriel {
     bool m_pointerVisible = false;
     EffectLedger m_ledger;
     std::array<float, 2> m_audio{}; // level and availability
+    struct SceneOwner {
+      Output* output;
+      bool readsAudio;
+      bool readsTime;
+    };
+    std::map<const void*, SceneOwner> m_sceneOwners;
+    struct SourceOccurrence {
+      Output* output;
+      std::vector<std::string> views;
+      bool replacesNativeViews = false;
+    };
+    struct TimeInstance {
+      wlr_scene_node* node;
+      EffectInstanceState state;
+      bool readsAudio;
+    };
+    std::map<const void*, TimeInstance> m_timeInstances;
+    bool effectNodeVisible(wlr_scene_node* node, const Output* output) const;
+    bool visibleInSource(wlr_scene_node* node, const Output* output) const;
+    std::vector<const void*> effectOutputs(wlr_scene_node* node) const;
+    void updateTimeOccurrence(const void* owner, const EffectInstanceState& state, wlr_scene_node* node);
+    void refreshTimeOccurrences();
+    std::map<const void*, SourceOccurrence> m_sourceOccurrences;
     mutable uint64_t m_clockEpochMsec = 0;
     mutable bool m_clockEpochSet = false;
   };

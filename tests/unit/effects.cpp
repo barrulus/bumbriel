@@ -196,3 +196,33 @@ UMBRIEL_TEST(effectPoolPoliciesAndReferenceConstraintsAreExplicit) {
 }
 
 int main() { return RUN_TESTS(); }
+
+UMBRIEL_TEST(ledgerSourceOccurrencesShareOriginalOwnerAndRespectClockGates) {
+  umbriel::EffectLedger ledger;
+  int owner = 0;
+  int native = 0;
+  int source = 0;
+  const std::array<const void*, 2> both{&native, &source};
+  auto state = umbriel::EffectInstanceState{.output = &native, .visible = false, .readsTime = true, .advancing = true};
+  ledger.updateOccurrences(&owner, state, both);
+  CHECK_EQ(ledger.active(), 1U);
+  CHECK_EQ(ledger.eligible(&native), 1U);
+  CHECK_EQ(ledger.eligible(&source), 1U);
+  const std::array<const void*, 1> hiddenOnly{&source};
+  ledger.updateOccurrences(&owner, state, hiddenOnly);
+  CHECK_EQ(ledger.eligible(&native), 0U);
+  CHECK_EQ(ledger.eligible(&source), 1U);
+  state.advancing = false;
+  ledger.updateOccurrences(&owner, state, hiddenOnly);
+  CHECK_EQ(ledger.eligible(&source), 0U);
+  state.advancing = true;
+  ledger.updateOccurrences(&owner, state, both);
+  ledger.removeOutput(&native);
+  CHECK_EQ(ledger.active(), 1U);
+  CHECK_EQ(ledger.eligible(&source), 1U);
+  ledger.updateOccurrences(&owner, state, {});
+  CHECK_EQ(ledger.eligible(&source), 0U);
+  CHECK_EQ(ledger.active(), 1U);
+  ledger.remove(&owner);
+  CHECK_EQ(ledger.active(), 0U);
+}

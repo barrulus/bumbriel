@@ -1,6 +1,8 @@
 #pragma once
 
+extern "C" {
 #include <wlr/util/box.h>
+}
 
 namespace umbriel {
 

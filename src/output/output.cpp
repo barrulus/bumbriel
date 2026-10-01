@@ -22,6 +22,9 @@
 #include "scene/config_banner.h"
 #include "scene/node.h"
 #include "scene/quit_confirm.h"
+#include "scene/window_presentation.h"
+#include "scene/workspace_presentation.h"
+#include "scene/workspace_transition.h"
 #include "server/ipc.h"
 #include "server/server.h"
 #include "server/wine_color_manager.h"
@@ -47,10 +50,47 @@ extern "C" {
 #endif
 
 namespace umbriel {
+#ifdef UMBRIEL_TEST_IPC
+  void Output::setTestCommitHold(bool held) {
+    if (m_testCommitHeld == held) {
+      return;
+    }
+    m_testCommitHeld = held;
+    if (!held) {
+      wlr_output_schedule_frame(m_output);
+    }
+  }
+#endif
 
   namespace {
     constexpr Logger kLog("output");
     constexpr int kFrameRetryDelayMs = 16;
+
+#ifdef TRACY_ENABLE
+    void traceOutputEvent(
+        const wlr_output* output, std::string_view phase, uint32_t commitSequence, bool hasBuffer, bool success,
+        const wlr_output_event_present* event = nullptr
+    ) {
+      if (!TracyIsConnected) {
+        return;
+      }
+      timespec now{};
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      const auto observed = static_cast<uint64_t>(now.tv_sec) * 1'000'000'000 + now.tv_nsec;
+      const uint64_t presented = event != nullptr && event->presented
+          ? static_cast<uint64_t>(event->when.tv_sec) * 1'000'000'000 + event->when.tv_nsec
+          : 0;
+      // This frame callback exposes no requested presentation deadline. Zero
+      // explicitly means unknown; refresh prediction is the backend's value.
+      const auto message = std::format(
+          "umbriel.output|phase={}|output={}|commit_seq={}|buffer={}|success={}|observed_monotonic_ns={}"
+          "|presented_ns={}|present_seq={}|refresh_ns={}|flags={}|requested_deadline_ns=0",
+          phase, output->name, commitSequence, hasBuffer, success, observed, presented,
+          event != nullptr ? event->seq : 0, event != nullptr ? event->refresh : 0, event != nullptr ? event->flags : 0
+      );
+      TracyMessage(message.data(), message.size());
+    }
+#endif
 
     struct OutputFrameScope {
       explicit OutputFrameScope(Server& owner) : server(owner) { server.beginOutputFrame(); }
@@ -180,7 +220,7 @@ namespace umbriel {
       wlr_scene_output_set_effect_audio(m_sceneOutput, m_effectAudio.data());
       return;
     }
-    if (!wlr_scene_output_audio_active(m_sceneOutput)) {
+    if (!wlr_scene_output_audio_active(m_sceneOutput) && !m_server->effects().sceneAudioActive(this)) {
       return;
     }
     timespec now{};
@@ -189,7 +229,8 @@ namespace umbriel {
   }
 
   bool Output::audioPending() const {
-    return m_effectAudio != m_server->effects().audio() && wlr_scene_output_audio_active(m_sceneOutput);
+    return m_effectAudio != m_server->effects().audio()
+        && (wlr_scene_output_audio_active(m_sceneOutput) || m_server->effects().sceneAudioActive(this));
   }
 
   void Output::applyOutputEffects() {
@@ -258,7 +299,12 @@ namespace umbriel {
     }
   }
 
-  int Output::externalRenderLocks() const { return m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0); }
+  int Output::externalRenderLocks() const {
+    int locks = m_output->attach_render_locks - (m_animationRenderLocked ? 1 : 0);
+    locks -= m_activeWorkspaceSources && m_activeWorkspaceSources->renderLocked() ? 1 : 0;
+    locks -= m_windowPresentation && m_windowPresentation->renderLocked() ? 1 : 0;
+    return locks;
+  }
 
   int Output::captureRenderLocks(int externalLocks) const {
     if (wlr_export_dmabuf_manager_v1* manager = m_server->exportDmabufManager()) {
@@ -1126,6 +1172,20 @@ namespace umbriel {
   }
 
   Output::~Output() {
+    m_workspacePresentation.reset();
+    m_workspaceTransition.reset();
+    m_windowPresentation.reset();
+    if (m_server->cursor() != nullptr) {
+      m_server->cursor()->forgetSceneInput(*this);
+    }
+    if (m_activeWorkspaceSources) {
+      m_activeWorkspaceSources->cancel(PresentationFallback::OutputRemoved);
+    }
+#ifdef UMBRIEL_TEST_IPC
+    cancelPresentationProbe(PresentationFallback::OutputRemoved);
+    m_presentationProbe.reset();
+    m_workspaceSourceProbe.reset();
+#endif
     if (m_frameRetryTimer != nullptr) {
       wl_event_source_remove(m_frameRetryTimer);
       m_frameRetryTimer = nullptr;
@@ -1485,6 +1545,9 @@ namespace umbriel {
 
   void Output::handleFrame() {
     UMBRIEL_ZONE("Output::handleFrame");
+#ifdef TRACY_ENABLE
+    traceOutputEvent(m_output, "frame_begin", m_output->commit_seq, false, false);
+#endif
     // A failed DRM commit can immediately queue another frame after logind revokes device access. Stop before that
     // retry loop can keep the final event-loop dispatch alive. A null session belongs to a nested or headless backend
     // and remains renderable.
@@ -1508,6 +1571,7 @@ namespace umbriel {
     // A frame is an effect frame when one was asked for, or when an instance here is eligible or an audio change is
     // pending and the max_fps interval has elapsed (a delay of 1 ms is the helper's "due now"), whichever timeline
     // scheduled the frame. The output's own timer supplies the frames nothing else asks for.
+    m_server->effects().refreshSceneClock();
     const bool effectFrame = m_effectFrameDue
         || (!m_server->sessionLocked()
             && (effectEligible() > 0 || audioPending())
@@ -1530,10 +1594,19 @@ namespace umbriel {
       m_effectSeconds = effects.clockSeconds();
     }
     if (effectFrame) {
-      m_effectAudio = effects.audio();
+      if (m_effectAudio != effects.audio()) {
+        ++m_effectAudioRevision;
+        m_effectAudio = effects.audio();
+      }
       wlr_scene_output_set_effect_audio(m_sceneOutput, m_effectAudio.data());
     }
     m_server->tickAnimations(m_server->animationClockMsec());
+#ifdef UMBRIEL_TEST_IPC
+    tickPresentationProbe(m_server->animationClockMsec());
+    if (m_workspaceSourceProbe) {
+      m_workspaceSourceProbe->tick(effectFrame || m_server->animationsActiveFor(this));
+    }
+#endif
     if (stampEffectTime && m_outputEffectsTimed) {
       applyOutputEffects();
     }
@@ -1543,6 +1616,15 @@ namespace umbriel {
     m_server->flushPendingViewOpacities();
     if (m_workspaceGroup != nullptr) {
       m_workspaceGroup->refreshReveal();
+    }
+    if (m_workspacePresentation) {
+      m_workspacePresentation->prepareFrame(effectFrame || m_server->animationsActiveFor(this));
+    }
+    if (m_workspaceTransition) {
+      m_workspaceTransition->prepareFrame(effectFrame || m_server->animationsActiveFor(this));
+    }
+    if (m_windowPresentation) {
+      m_windowPresentation->prepareFrame(effectFrame || m_server->animationsActiveFor(this));
     }
 
     // A direct-scanned fullscreen client may stop submitting as soon as it loses focus. On VRR outputs that can leave
@@ -1571,6 +1653,9 @@ namespace umbriel {
     const bool tearingPolicyRequested = tearingEligible(tearingView);
 
     bool tearingFrameEligible = tearingPolicyRequested;
+#ifdef UMBRIEL_TEST_IPC
+    tearingFrameEligible = tearingFrameEligible && !workspaceSourceActive();
+#endif
     if (!configuredTearingAllowed()) {
       m_tearingFallbackReason.clear();
     } else if (tearingView == nullptr) {
@@ -1619,6 +1704,7 @@ namespace umbriel {
     // video players) block on wl_surface.frame before submitting their next buffer. If we skip frame_done on the
     // "nothing to render" path, they never commit again, damage stays clean, and the output stops producing frames.
     bool commitFailed = false;
+    bool presentationSubmitted = false;
     // Sample the plane before the needs_frame test below: a cursor-only move
     // damages nothing else, so this frame is the only commit that can carry
     // the damage. wlroots clears needs_frame on commit, so every mutation
@@ -1716,9 +1802,22 @@ namespace umbriel {
           }
         }
 
+#ifdef UMBRIEL_TEST_IPC
+        if (hasBuffer && m_testCommitHeld) {
+          ++m_rejectedBufferCommits;
+          commitOk = false;
+        } else
+#endif
         {
           UMBRIEL_ZONE("Output::commitState");
+#ifdef TRACY_ENABLE
+          const uint32_t traceCommitSequence = m_output->commit_seq + 1;
+          traceOutputEvent(m_output, "commit_begin", traceCommitSequence, hasBuffer, false);
+#endif
           commitOk = wlr_output_commit_state(m_output, &state);
+#ifdef TRACY_ENABLE
+          traceOutputEvent(m_output, "commit_end", traceCommitSequence, hasBuffer, commitOk);
+#endif
         }
         if (hasBuffer) {
           m_tearingRecovery.recordCommit(commitTearing, commitOk);
@@ -1727,6 +1826,15 @@ namespace umbriel {
           m_gammaDirty = false;
         }
         if (commitOk && hasBuffer) {
+          presentationSubmitted = true;
+          sceneRestoreCommitted();
+#ifdef UMBRIEL_TEST_IPC
+          ++m_successfulBufferCommits;
+          if (m_workspaceSourceProbe) {
+            m_workspaceSourceProbe->frameCommitted();
+          }
+          completePresentationRestore();
+#endif
           m_lastCommitTearing = commitTearing;
           m_trackingPresentation = true;
           m_trackedPresentationCommitSeq = m_output->commit_seq;
@@ -1752,6 +1860,16 @@ namespace umbriel {
       wlr_output_state_finish(&state);
       m_inFrame = false;
       commitFailed = !commitOk;
+    }
+
+    if (m_workspacePresentation) {
+      m_workspacePresentation->frameSubmitted(presentationSubmitted);
+    }
+    if (m_workspaceTransition) {
+      m_workspaceTransition->frameSubmitted(presentationSubmitted);
+    }
+    if (m_windowPresentation) {
+      m_windowPresentation->frameSubmitted(presentationSubmitted);
     }
 
     // Screencopy drops its lock inside the commit; image-copy sessions ask for the release frame when they end.
@@ -1800,6 +1918,20 @@ namespace umbriel {
 
     // Unconditional: see comment above. Never gate this on commit success.
     wlr_scene_output_send_frame_done(m_sceneOutput, &now);
+    if (m_workspacePresentation) {
+      m_workspacePresentation->sendFrameDone(now);
+    }
+    if (m_workspaceTransition) {
+      m_workspaceTransition->sendFrameDone(now);
+    }
+    if (m_windowPresentation) {
+      m_windowPresentation->sendFrameDone(now);
+    }
+#ifdef UMBRIEL_TEST_IPC
+    if (m_workspaceSourceProbe) {
+      m_workspaceSourceProbe->sendFrameDone(now);
+    }
+#endif
   }
 
   void Output::handleRequestState(void* data) {
@@ -1850,6 +1982,7 @@ namespace umbriel {
       m_tracyLastPresentNs = whenNs;
       m_tracyLastPresentSeq = event->seq;
     }
+    traceOutputEvent(m_output, "present", event->commit_seq, false, event->presented, event);
 #endif
     if (SessionLock* lock = m_server->sessionLock()) {
       lock->handleOutputPresent(*this, event->commit_seq, event->presented);

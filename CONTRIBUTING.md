@@ -171,6 +171,9 @@ A check that needs deterministic Xcursor images declares `# harness: xcursor-the
 isolated theme with distinct nominal sizes 24 and 48, exports its path and name, and writes the matching cursor
 configuration before the compositor starts.
 
+A check that inspects wlroots debug messages declares `# harness: wlr-debug=true`. The harness enables
+`UMBRIEL_WLR_DEBUG` for that instance before it starts.
+
 A headless session starts with no keyboard, so the harness connects a keyboard-only helper to each instance before
 its check runs and keeps it through teardown, the way a real session always has one. Without it the seat's keyboard
 capability would come and go with each pointer-client run, and clients would bind `wl_keyboard` too late for the first
