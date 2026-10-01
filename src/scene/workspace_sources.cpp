@@ -119,10 +119,8 @@ namespace umbriel {
     };
     struct Descriptor {
       std::vector<fx_scene_source_root_override> roots;
-      std::vector<wlr_scene_tree*> clips;
       fx_scene_source_view view{};
       fx_scene_source_view_plan plan{};
-      wlr_box contentBounds{};
       History* history = nullptr;
     };
     WorkspaceSources& owner;
@@ -228,33 +226,23 @@ namespace umbriel {
           .last = &server.pinnedTree()->node,
           .roots = nullptr,
           .root_count = 0,
-          .bypass_clips = nullptr,
-          .bypass_clip_count = 0,
           .extent = box,
           .scale = scale,
-          .viewport = box,
           .transparent = false,
-          .nodes = nullptr,
-          .node_count = 0,
-          .emission_owner = nullptr,
           .session = nullptr
       };
-      const auto add = [&](wlr_scene_node* node, fx_scene_source_visibility visibility,
-                           fx_scene_source_framing framing = FX_SCENE_SOURCE_CONTENT) {
-        result.roots.push_back(
-            {.root = node, .visibility = visibility, .offset_x = 0, .offset_y = 0, .framing = framing}
-        );
+      const auto add = [&](wlr_scene_node* node, fx_scene_source_visibility visibility) {
+        result.roots.push_back({.root = node, .visibility = visibility, .offset_x = 0, .offset_y = 0});
       };
-      // Shared desktop bands stay in face coordinates, including layer-shell
-      // exclusive content; source framing never configures or moves clients.
-      add(first, FX_SCENE_SOURCE_INHERIT, FX_SCENE_SOURCE_VIEWPORT);
+      // Preserve shared desktop layers in native output coordinates.
+      add(first, FX_SCENE_SOURCE_INHERIT);
       for (uint32_t layer = 0; layer < 3; ++layer) {
         auto* node = &server.shellLayerTree(layer)->node;
         if (node != first) {
-          add(node, FX_SCENE_SOURCE_INHERIT, FX_SCENE_SOURCE_VIEWPORT);
+          add(node, FX_SCENE_SOURCE_INHERIT);
         }
       }
-      add(&server.pinnedTree()->node, FX_SCENE_SOURCE_INHERIT, FX_SCENE_SOURCE_VIEWPORT);
+      add(&server.pinnedTree()->node, FX_SCENE_SOURCE_INHERIT);
       for (const auto& other : server.outputs()) {
         if (other.get() != &output) {
           add(&other->viewRoot()->node, FX_SCENE_SOURCE_HIDDEN);
@@ -264,7 +252,6 @@ namespace umbriel {
       }
       add(&output.viewRoot()->node, FX_SCENE_SOURCE_VISIBLE);
       add(&output.fullscreenRoot()->node, FX_SCENE_SOURCE_VISIBLE);
-      result.clips = {output.viewRoot(), output.fullscreenRoot()};
       for (size_t i = 0; i < group.workspaceCount(); ++i) {
         auto* item = group.workspaceAt(i);
         auto* itemTree = item->tileShadowLayer()->node.parent;
@@ -275,10 +262,6 @@ namespace umbriel {
         add(&item->fullscreenTree()->node, visibility);
         result.roots.back().offset_x = -item->fullscreenTree()->node.x;
         result.roots.back().offset_y = -item->fullscreenTree()->node.y;
-        if (item == workspace) {
-          result.clips.push_back(itemTree);
-          result.clips.push_back(item->fullscreenTree());
-        }
       }
       for (View* view : owners) {
         if (!view->pinned()) {
@@ -295,173 +278,142 @@ namespace umbriel {
       uint64_t peak = 0;
       uint64_t newHistoryBytes = 0;
       // Capture both faces at native resolution, charging retained images throughout.
-      for (uint32_t divisor : {1U}) {
 
-        descriptors.clear();
-        const size_t faceCount = captureIdentities.size();
-        const size_t sourceCount = faceCount;
-        descriptors.reserve(sourceCount);
-        retained = peak = newHistoryBytes = 0;
-        bool valid = true;
-        for (size_t i = 0; i < sourceCount; ++i) {
-          if (i == 0 && frozen) {
-            descriptors.emplace_back();
-            continue;
-          }
-          const auto& identity = captureIdentities[i];
-          const auto sourceIndex = static_cast<size_t>(
-              std::ranges::find(inventory->identities(), identity) - inventory->identities().begin()
-          );
-          const auto sourceScale =
-              i < faceCount ? output.wlr()->scale / static_cast<float>(divisor) : output.wlr()->scale;
-          auto& descriptor = descriptors.emplace_back(describe(sourceIndex, sourceScale));
-          descriptor.view.roots = descriptor.roots.data();
-          descriptor.view.root_count = descriptor.roots.size();
-          descriptor.view.bypass_clips = descriptor.clips.data();
-          descriptor.view.bypass_clip_count = descriptor.clips.size();
-          // Query complete visual content with output/scroll clips bypassed,
-          // retaining window clips. This does not configure or move clients.
-          if (!fx_scene_source_view_bounds_for_test(
-                  output.sceneOutput(), &descriptor.view, FX_SCENE_SOURCE_CONTENT, &descriptor.contentBounds
-              )) {
+      const size_t sourceCount = captureIdentities.size();
+      descriptors.reserve(sourceCount);
+      bool valid = true;
+      for (size_t i = 0; i < sourceCount; ++i) {
+        if (i == 0 && frozen) {
+          descriptors.emplace_back();
+          continue;
+        }
+        const auto& identity = captureIdentities[i];
+        const auto sourceIndex =
+            static_cast<size_t>(std::ranges::find(inventory->identities(), identity) - inventory->identities().begin());
+        auto& descriptor = descriptors.emplace_back(describe(sourceIndex, output.wlr()->scale));
+        descriptor.view.roots = descriptor.roots.data();
+        descriptor.view.root_count = descriptor.roots.size();
+        if (!fx_scene_source_view_plan_for_test(output.sceneOutput(), &descriptor.view, &descriptor.plan)
+            || descriptor.plan.retained_bytes > std::numeric_limits<uint64_t>::max() - retained) {
+          valid = false;
+          break;
+        }
+        retained += descriptor.plan.retained_bytes;
+
+        peak = std::max(peak, descriptor.plan.capture_bytes);
+        auto existing =
+            std::ranges::find_if(histories, [&](const auto& history) { return history->identity == identity; });
+        if (existing != histories.end()
+            && (descriptor.plan.history_bytes == 0
+                || !fx_scene_source_view_session_matches(
+                    output.sceneOutput(), &descriptor.view, (*existing)->session
+                ))) {
+          histories.erase(existing);
+          existing = histories.end();
+        }
+        if (existing != histories.end()) {
+          descriptor.history = existing->get();
+          descriptor.view.session = descriptor.history->session;
+        } else {
+          if (descriptor.plan.history_bytes > std::numeric_limits<uint64_t>::max() - newHistoryBytes) {
             valid = false;
             break;
           }
-          descriptor.view.bypass_clips = nullptr;
-          descriptor.view.bypass_clip_count = 0;
-          if (!fx_scene_source_view_plan_for_test(output.sceneOutput(), &descriptor.view, &descriptor.plan)
-              || descriptor.plan.retained_bytes > std::numeric_limits<uint64_t>::max() - retained) {
-            valid = false;
-            break;
-          }
-          retained += descriptor.plan.retained_bytes;
-
-          peak = std::max(peak, descriptor.plan.capture_bytes);
-          auto existing =
-              std::ranges::find_if(histories, [&](const auto& history) { return history->identity == identity; });
-          if (existing != histories.end()
-              && (descriptor.plan.history_bytes == 0
-                  || !fx_scene_source_view_session_matches(
-                      output.sceneOutput(), &descriptor.view, (*existing)->session
-                  ))) {
-            histories.erase(existing);
-            existing = histories.end();
-          }
-          if (existing != histories.end()) {
-            descriptor.history = existing->get();
-            descriptor.view.session = descriptor.history->session;
-          } else {
-            if (descriptor.plan.history_bytes > std::numeric_limits<uint64_t>::max() - newHistoryBytes) {
-              valid = false;
-              break;
-            }
-            newHistoryBytes += descriptor.plan.history_bytes;
-          }
+          newHistoryBytes += descriptor.plan.history_bytes;
         }
-        if (!valid) {
-          continue;
-        }
-        if (newHistoryBytes > std::numeric_limits<uint64_t>::max() - peak
-            || retained > std::numeric_limits<uint64_t>::max() - peak - newHistoryBytes) {
-          return false;
-        }
-        auto next = std::make_unique<Sources>();
-        const uint64_t imageBytes = retained + peak;
-        if (!fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), imageBytes + newHistoryBytes)) {
-          continue;
-        }
-        // Full image + history admission precedes every allocation. Split the
-        // reservation in this single-threaded pool so histories can survive
-        // releasing transient capture images and the old displayed revision.
-        fx_scene_release(&next->reservation);
-        if (!fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), imageBytes)) {
-          return false;
-        }
-        for (size_t i = 0; i < descriptors.size(); ++i) {
-          auto& descriptor = descriptors[i];
-          if (descriptor.plan.history_bytes == 0 || descriptor.history != nullptr) {
-            continue;
-          }
-          auto history = std::make_unique<History>();
-          history->identity = captureIdentities[i];
-          if (!fx_scene_reserve(
-                  &history->reservation, &pool, &presentationAggregatePool(), descriptor.plan.history_bytes
-              )) {
-            return false;
-          }
-          history->session = fx_scene_source_view_session_create(
-              output.sceneOutput(), &descriptor.view, descriptor.plan.history_bytes
-          );
-          if (history->session == nullptr) {
-            return false;
-          }
-          descriptor.history = history.get();
-          descriptor.view.session = history->session;
-          histories.push_back(std::move(history));
-        }
-        next->retained = retained;
-        next->pairs.resize(descriptors.size());
-
-        server.effects().bindSourceTime(this);
-        for (size_t i = 0; i < descriptors.size(); ++i) {
-          if (i == 0 && frozen) {
-            continue;
-          }
-          if (auto* history = descriptors[i].history) {
-            if (!fx_scene_source_session_begin_frame_for_test(history->session)) {
-              return false;
-            }
-            history->pending = true;
-          }
-          if (!fx_scene_source_view_pair_capture_for_test(
-                  output.sceneOutput(), &descriptors[i].view, descriptors[i].plan.total_bytes, &next->pairs[i]
-              )) {
-            return false;
-          }
-          ++captures;
-        }
-
-        // Capture scratch has been released; retain only the owned images and
-        // images while this candidate awaits output submission.
-        fx_scene_release(&next->reservation);
-        const bool reserved = fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), retained);
-        if (!reserved) {
-          return false; // Shrinking cannot fail in this single-threaded reservation pool.
-        }
-        candidate = std::move(next);
-        capturedRevision = revision;
-        metadata.clear();
-        metadata.reserve(candidate->pairs.size());
-        for (size_t faceIndex = 0; faceIndex < candidate->pairs.size(); ++faceIndex) {
-          const auto& facePair = candidate->pairs[faceIndex];
-          auto& face = metadata.emplace_back();
-          if (faceIndex == 0 && frozen) {
-            face = frozenMetadata;
-            continue;
-          }
-          face.identity = captureIdentities[faceIndex];
-          face.display = facePair.display;
-          face.unfiltered = facePair.unfiltered;
-          face.width = descriptors[faceIndex].plan.width;
-          face.height = descriptors[faceIndex].plan.height;
-          face.workingSpace = facePair.working_space;
-          face.floatingPoint = facePair.floating_point;
-          face.viewport = box;
-          face.extent = descriptors[faceIndex].view.extent;
-          face.contentBounds = descriptors[faceIndex].contentBounds;
-          fx_scene_source_view_framing_for_test(
-              &descriptors[faceIndex].view, FX_SCENE_SOURCE_CONTENT, face.contentFraming.data()
-          );
-          fx_scene_source_view_framing_for_test(
-              &descriptors[faceIndex].view, FX_SCENE_SOURCE_VIEWPORT, face.viewportFraming.data()
-          );
-        }
-
-        pending = false;
-        return true;
       }
-      fallback = PresentationFallback::ResourceBudget;
-      return false;
+      if (!valid) {
+        return false;
+      }
+      if (newHistoryBytes > std::numeric_limits<uint64_t>::max() - peak
+          || retained > std::numeric_limits<uint64_t>::max() - peak - newHistoryBytes) {
+        return false;
+      }
+      auto next = std::make_unique<Sources>();
+      const uint64_t imageBytes = retained + peak;
+      if (!fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), imageBytes + newHistoryBytes)) {
+        fallback = PresentationFallback::ResourceBudget;
+        return false;
+      }
+      // Full image + history admission precedes every allocation. Split the
+      // reservation in this single-threaded pool so histories can survive
+      // releasing transient capture images and the old displayed revision.
+      fx_scene_release(&next->reservation);
+      if (!fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), imageBytes)) {
+        return false;
+      }
+      for (size_t i = 0; i < descriptors.size(); ++i) {
+        auto& descriptor = descriptors[i];
+        if (descriptor.plan.history_bytes == 0 || descriptor.history != nullptr) {
+          continue;
+        }
+        auto history = std::make_unique<History>();
+        history->identity = captureIdentities[i];
+        if (!fx_scene_reserve(
+                &history->reservation, &pool, &presentationAggregatePool(), descriptor.plan.history_bytes
+            )) {
+          return false;
+        }
+        history->session =
+            fx_scene_source_view_session_create(output.sceneOutput(), &descriptor.view, descriptor.plan.history_bytes);
+        if (history->session == nullptr) {
+          return false;
+        }
+        descriptor.history = history.get();
+        descriptor.view.session = history->session;
+        histories.push_back(std::move(history));
+      }
+      next->retained = retained;
+      next->pairs.resize(descriptors.size());
+
+      server.effects().bindSourceTime(this);
+      for (size_t i = 0; i < descriptors.size(); ++i) {
+        if (i == 0 && frozen) {
+          continue;
+        }
+        if (auto* history = descriptors[i].history) {
+          if (!fx_scene_source_session_begin_frame_for_test(history->session)) {
+            return false;
+          }
+          history->pending = true;
+        }
+        if (!fx_scene_source_view_pair_capture_for_test(
+                output.sceneOutput(), &descriptors[i].view, descriptors[i].plan.total_bytes, &next->pairs[i]
+            )) {
+          return false;
+        }
+        ++captures;
+      }
+
+      // Capture scratch has been released; retain only the owned images and
+      // images while this candidate awaits output submission.
+      fx_scene_release(&next->reservation);
+      const bool reserved = fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), retained);
+      if (!reserved) {
+        return false; // Shrinking cannot fail in this single-threaded reservation pool.
+      }
+      candidate = std::move(next);
+      capturedRevision = revision;
+      metadata.clear();
+      metadata.reserve(candidate->pairs.size());
+      for (size_t faceIndex = 0; faceIndex < candidate->pairs.size(); ++faceIndex) {
+        const auto& facePair = candidate->pairs[faceIndex];
+        auto& face = metadata.emplace_back();
+        if (faceIndex == 0 && frozen) {
+          face = frozenMetadata;
+          continue;
+        }
+        face.identity = captureIdentities[faceIndex];
+        face.display = facePair.display;
+        face.unfiltered = facePair.unfiltered;
+        face.width = descriptors[faceIndex].plan.width;
+        face.height = descriptors[faceIndex].plan.height;
+        face.workingSpace = facePair.working_space;
+        face.floatingPoint = facePair.floating_point;
+      }
+
+      pending = false;
+      return true;
     }
   };
 
@@ -615,11 +567,6 @@ namespace umbriel {
         .height = descriptor.plan.height,
         .workingSpace = pair.working_space,
         .floatingPoint = pair.floating_point,
-        .viewport = state.box,
-        .contentBounds = state.box,
-        .extent = state.box,
-        .contentFraming = {1, 1, 0, 0},
-        .viewportFraming = {1, 1, 0, 0}
     };
     state.frozen = std::move(frozen);
     ++state.captures;
@@ -637,7 +584,7 @@ namespace umbriel {
     }
     return m_state->pending ? WorkspaceSourceResult::Preparing : WorkspaceSourceResult::Ready;
   }
-  std::vector<WorkspaceSourceFace> WorkspaceSources::faces() const { return m_state->metadata; }
+  std::span<const WorkspaceSourceFace> WorkspaceSources::faces() const { return m_state->metadata; }
 
   void WorkspaceSources::frameSubmitted(bool success) {
     if (success) {
@@ -822,19 +769,8 @@ namespace umbriel {
   nlohmann::json WorkspaceSources::status() const {
     const auto& state = *m_state;
     nlohmann::json faces = nlohmann::json::array();
-    const auto boxJSON = [](const wlr_box& box) {
-      return nlohmann::json::array({box.x, box.y, box.width, box.height});
-    };
     for (const auto& face : state.metadata) {
-      faces.push_back(
-          {{"identity", face.identity},
-           {"viewport", boxJSON(face.viewport)},
-           {"content_bounds", boxJSON(face.contentBounds)},
-           {"extent", boxJSON(face.extent)},
-           {"content_framing", face.contentFraming},
-           {"width", face.width},
-           {"height", face.height}}
-      );
+      faces.push_back({{"identity", face.identity}, {"width", face.width}, {"height", face.height}});
     }
     return {
         {"faces", std::move(faces)},

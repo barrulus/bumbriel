@@ -872,8 +872,6 @@ namespace umbriel {
 
   Output::~Output() {
     m_workspaceTransition.reset();
-    if (m_server->cursor())
-      m_server->cursor()->forgetSceneInput(*this);
     if (m_activeWorkspaceSources)
       m_activeWorkspaceSources->cancel(PresentationFallback::OutputRemoved);
     if (m_frameRetryTimer != nullptr) {
@@ -1422,7 +1420,6 @@ namespace umbriel {
           m_gammaDirty = false;
         }
         if (commitOk && hasBuffer) {
-          sceneRestoreCommitted();
           m_lastCommitTearing = commitTearing;
           m_trackingPresentation = true;
           m_trackedPresentationCommitSeq = m_output->commit_seq;

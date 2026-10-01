@@ -56,23 +56,4 @@ namespace umbriel::scene_experiment {
   // A bad entry rejects the whole table so declarations and values stay atomic.
   [[nodiscard]] std::optional<std::vector<Parameter>> readParameters(Section& section);
 
-  struct StageUsage {
-    unsigned builtinVectors = 0;
-    unsigned parameterVectors = 0;
-    unsigned paletteVectors = 0;
-    unsigned samplers = 0;
-    unsigned cpuEntries = 0;
-  };
-
-  struct StageLimits {
-    unsigned uniformVectors = 0;
-    unsigned textureUnits = 0;
-    unsigned cpuEntries = 0;
-  };
-
-  // Conservative GLES2 admission: each declared scalar/vector occupies a vector
-  // and each sampler reserves one as well. Limits must come from the renderer;
-  // no assumed desktop minimum or legacy eight-entry slot is used here.
-  [[nodiscard]] bool fitsStage(const StageUsage& usage, const StageLimits& limits);
-
 } // namespace umbriel::scene_experiment

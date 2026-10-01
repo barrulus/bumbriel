@@ -3,7 +3,6 @@
 #include <math.h>
 #include <drm_fourcc.h>
 #include <limits.h>
-#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wlr/types/wlr_buffer.h>
@@ -39,7 +38,6 @@ struct fx_scene_target {
 	struct wl_listener destroy;
 	struct wlr_buffer *buffer;
 	struct fx_framebuffer *framebuffer;
-	GLuint depth;
 	bool working_space;
 };
 
@@ -211,7 +209,6 @@ static void target_renderer_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&target->destroy.link);
 	target->renderer = NULL;
 	target->framebuffer = NULL;
-	target->depth = 0;
 }
 
 struct wlr_buffer *fx_scene_buffer_create(struct wlr_renderer *renderer,
@@ -229,7 +226,7 @@ struct wlr_buffer *fx_scene_buffer_create(struct wlr_renderer *renderer,
 }
 
 static struct fx_scene_target *target_create(struct wlr_renderer *wlr_renderer,
-		struct wlr_buffer *buffer, bool depth, int working_space) {
+		struct wlr_buffer *buffer, int working_space) {
 	if (!wlr_renderer || !wlr_renderer_is_fx(wlr_renderer) || !buffer || buffer->width <= 0 || buffer->height <= 0) {
 		return NULL;
 	}
@@ -238,9 +235,8 @@ static struct fx_scene_target *target_create(struct wlr_renderer *wlr_renderer,
 	if (!wlr_egl_make_current(renderer->egl, &previous)) {
 		return NULL;
 	}
-	GLint old_fbo, old_renderbuffer;
+	GLint old_fbo;
 	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &old_fbo);
-	glGetIntegerv(GL_RENDERBUFFER_BINDING, &old_renderbuffer);
 	struct fx_scene_target *target = calloc(1, sizeof(*target));
 	if (!target) {
 		goto out;
@@ -254,26 +250,10 @@ static struct fx_scene_target *target_create(struct wlr_renderer *wlr_renderer,
 	}
 	target->working_space = working_space < 0 ? target->framebuffer->drm_format == DRM_FORMAT_ABGR16161616F : working_space;
 	glBindFramebuffer(GL_FRAMEBUFFER, fx_framebuffer_get_fbo(target->framebuffer));
-	if (depth) {
-		GLint attached = GL_NONE;
-		glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-			GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &attached);
-		if (attached != GL_NONE) {
-			free(target);
-			target = NULL;
-			goto out;
-		}
-		glGenRenderbuffers(1, &target->depth);
-		glBindRenderbuffer(GL_RENDERBUFFER, target->depth);
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, buffer->width, buffer->height);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, target->depth);
-	}
+
 	bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glGetError() == GL_NO_ERROR;
 	if (!ok) {
-		if (depth) {
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
-			glDeleteRenderbuffers(1, &target->depth);
-		}
+
 		free(target);
 		target = NULL;
 		goto out;
@@ -283,38 +263,25 @@ static struct fx_scene_target *target_create(struct wlr_renderer *wlr_renderer,
 	wl_signal_add(&wlr_renderer->events.destroy, &target->destroy);
 out:
 	glBindFramebuffer(GL_FRAMEBUFFER, old_fbo);
-	glBindRenderbuffer(GL_RENDERBUFFER, old_renderbuffer);
 	wlr_egl_restore_context(&previous);
 	return target;
 }
 
 struct fx_scene_target *fx_scene_target_create(struct wlr_renderer *renderer,
-		struct wlr_buffer *buffer, bool depth) {
-	return target_create(renderer, buffer, depth, -1);
+		struct wlr_buffer *buffer) {
+	return target_create(renderer, buffer, -1);
 }
 
 struct fx_scene_target *fx_scene_target_create_with_color(struct wlr_renderer *renderer,
-		struct wlr_buffer *buffer, bool depth, bool working_space) {
-	return target_create(renderer, buffer, depth, working_space);
+		struct wlr_buffer *buffer, bool working_space) {
+	return target_create(renderer, buffer, working_space);
 }
 
 void fx_scene_target_destroy(struct fx_scene_target *target) {
 	if (!target) {
 		return;
 	}
-	if (target->renderer) {
-		struct wlr_egl_context previous;
-		if (target->depth && wlr_egl_make_current(target->renderer->egl, &previous)) {
-			GLint old_fbo;
-			glGetIntegerv(GL_FRAMEBUFFER_BINDING, &old_fbo);
-			glBindFramebuffer(GL_FRAMEBUFFER, fx_framebuffer_get_fbo(target->framebuffer));
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
-			glDeleteRenderbuffers(1, &target->depth);
-			glBindFramebuffer(GL_FRAMEBUFFER, old_fbo);
-			wlr_egl_restore_context(&previous);
-		}
-		wl_list_remove(&target->destroy.link);
-	}
+	if (target->renderer) { wl_list_remove(&target->destroy.link); }
 	wlr_buffer_unlock(target->buffer);
 	free(target);
 }
@@ -395,10 +362,7 @@ static void bind_frame(const struct scene_stage *stage, const struct fx_scene_fr
 	glUniform1i(l[PALETTE_COUNT], frame->palette_count);
 }
 
-static void draw_mesh(const struct fx_scene_mesh *mesh) {
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, mesh->uv);
-	glDrawElements(GL_TRIANGLES, mesh->index_count, GL_UNSIGNED_SHORT, mesh->indices);
-}
+
 
 static bool render_stage(struct fx_scene_program *program, const struct scene_stage *stage,
 		struct fx_scene_target *target, const struct fx_scene_frame *frame,
@@ -422,17 +386,17 @@ static bool render_stage(struct fx_scene_program *program, const struct scene_st
 	glClearColor(0, 0, 0, 0);
 	glClearDepthf(1);
 	glDepthRangef(0, 1);
-	glClear(GL_COLOR_BUFFER_BIT | (target->depth ? GL_DEPTH_BUFFER_BIT : 0));
+	glClear(GL_COLOR_BUFFER_BIT);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 	glEnableVertexAttribArray(0);
 	bind_frame(stage, frame, target, 0);
 	static float uv[] = {0, 0, 1, 0, 0, 1, 1, 1};
 	static uint16_t indices[] = {0, 1, 2, 2, 1, 3};
-	const struct fx_scene_mesh quad = {.uv = uv, .indices = indices, .vertices = 4, .index_count = 6};
 	bind_input(stage, &pair[0], 0);
 	bind_input(stage, &pair[1], 1);
-	draw_mesh(&quad);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, uv);
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, indices);
 	bool ok = !pass->incomplete && glGetError() == GL_NO_ERROR;
 	// Restore the renderer's ordinary-pass invariants before submission and
 	// any output conversion. There is no renderer state cache to invalidate.
@@ -455,7 +419,7 @@ bool fx_scene_program_render(struct fx_scene_program *program,
 			!isfinite(frame->output_size[0]) || !isfinite(frame->output_size[1]) ||
 			frame->output_size[0] <= 0 || frame->output_size[1] <= 0 ||
 			frame->output_transform > WL_OUTPUT_TRANSFORM_FLIPPED_270 ||
-			frame->scene_count < 0 || frame->scene_count > (int)FX_SCENE_MAX_FACES ||
+			frame->scene_count != 2 ||
 			frame->role < 0 || frame->role > 1 || frame->palette_count < 0 || frame->palette_count > 4) {
 		return false;
 	}
@@ -498,19 +462,9 @@ struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_render
 	}
 	for (unsigned i = 0; i < parameter_count; i++) {
 		const struct fx_scene_parameter *p = &parameters[i];
-		if (!memchr(p->name, 0, sizeof(p->name)) || !p->name[0] ||
-				strncmp(p->name, "umbriel_", 8) == 0 || strncmp(p->name, "_fx_", 4) == 0 ||
-				strncmp(p->name, "gl_", 3) == 0 || strstr(p->name, "__") != NULL || strcmp(p->name, "main") == 0 ||
-				strcmp(p->name, "transition") == 0 || strcmp(p->name, "transition_vertex") == 0 ||
-				strcmp(p->name, "transition_fragment") == 0 || strcmp(p->name, "transition_composite") == 0 ||
+		if (!memchr(p->name, 0, sizeof(p->name)) || !fx_scene_parameter_identifier(p->name) ||
 				p->components < 1 || p->components > 4) {
 			return NULL;
-		}
-		for (unsigned j = 0; p->name[j]; j++) {
-			unsigned char c = p->name[j];
-			if (!(c == '_' || isalpha(c) || (j > 0 && isdigit(c)))) {
-				return NULL;
-			}
 		}
 		for (unsigned j = 0; j < p->components; j++) {
 			if (!isfinite(p->value[j])) {

@@ -1,5 +1,6 @@
 #include "config/scene_effects.h"
 
+#include "../../umbrielfx/internal/render/fx_renderer/scene_program.h"
 #include "config/section.h"
 
 #include <algorithm>
@@ -88,30 +89,10 @@ namespace umbriel::scene_experiment {
       return "too many scene parameters";
     }
     std::set<std::string_view> names;
-    const auto letter = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; };
     for (const auto& parameter : parameters) {
       const auto& name = parameter.name;
-      if (name.empty()
-          || name.size() > kParameterNameLimit
-          || !letter(name.front())
-          || !std::ranges::all_of(name, [&](char c) { return letter(c) || (c >= '0' && c <= '9'); })) {
-        return "invalid scene parameter identifier";
-      }
-      if (name.starts_with("umbriel_") || name.starts_with("gl_") || name.starts_with("_fx_") || name.contains("__")) {
-        return "reserved scene parameter identifier";
-      }
-      // GLSL ES keywords and reserved future-language words cannot be uniform
-      // identifiers. main belongs to the wrapper even though it is not a keyword.
-      constexpr std::string_view reserved =
-          " attribute const uniform varying break continue do for while if else in out inout float int void bool "
-          " true false lowp mediump highp precision invariant discard return mat2 mat3 mat4 vec2 vec3 vec4 ivec2 "
-          " ivec3 ivec4 bvec2 bvec3 bvec4 sampler2D samplerCube struct asm class union enum typedef template this "
-          " packed goto switch default inline noinline volatile public static extern external interface long short "
-          " double half fixed unsigned superp input output hvec2 hvec3 hvec4 dvec2 dvec3 dvec4 fvec2 fvec3 fvec4 "
-          " sampler1D sampler3D sampler1DShadow sampler2DShadow sampler2DRect sampler3DRect sampler2DRectShadow "
-          " sizeof cast namespace using main transition transition_vertex transition_fragment transition_composite ";
-      if (reserved.contains(" " + name + " ")) {
-        return "reserved scene parameter identifier";
+      if (name.size() > kParameterNameLimit || name.contains('\0') || !fx_scene_parameter_identifier(name.c_str())) {
+        return "invalid or reserved scene parameter identifier";
       }
       if (!names.insert(name).second) {
         return "duplicate scene parameter identifier";
@@ -179,17 +160,6 @@ namespace umbriel::scene_experiment {
       return std::nullopt;
     }
     return result;
-  }
-
-  bool fitsStage(const StageUsage& usage, const StageLimits& limits) {
-    const std::uint64_t vectors = std::uint64_t{usage.builtinVectors}
-        + usage.parameterVectors
-        + usage.paletteVectors
-
-        + usage.samplers;
-    return vectors <= limits.uniformVectors
-        && usage.samplers <= limits.textureUnits
-        && usage.cpuEntries <= limits.cpuEntries;
   }
 
 } // namespace umbriel::scene_experiment

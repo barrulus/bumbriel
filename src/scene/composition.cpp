@@ -23,11 +23,10 @@ namespace umbriel {
         }
       }
       bool prepare(
-          wlr_renderer* renderer, wlr_allocator* allocator, int width, int height, bool workingSpace,
-          bool floatingPoint, bool depth
+          wlr_renderer* renderer, wlr_allocator* allocator, int width, int height, bool workingSpace, bool floatingPoint
       ) {
         buffer = fx_scene_buffer_create(renderer, allocator, width, height, floatingPoint);
-        target = buffer != nullptr ? fx_scene_target_create_with_color(renderer, buffer, depth, workingSpace) : nullptr;
+        target = buffer != nullptr ? fx_scene_target_create_with_color(renderer, buffer, workingSpace) : nullptr;
         return target != nullptr;
       }
     };
@@ -92,22 +91,19 @@ namespace umbriel {
     wl_signal_add(&renderer->events.destroy, &state->rendererDestroy);
     state->bundle = std::move(bundle);
     // Conservative row/page alignment allowance, charged for all double-buffered
-    // role targets and optional final-composite scratch. No independent budget.
+    // role targets. No independent budget.
     const uint64_t stride = (static_cast<uint64_t>(width) * (floatingPoint ? 8 : 4) + 255) & ~uint64_t{255};
     const uint64_t image = (stride * static_cast<uint64_t>(height) + 4095) & ~uint64_t{4095};
-    const uint64_t depthBytes = 0;
     const uint64_t count = 4;
-    if (image > (std::numeric_limits<uint64_t>::max() - sizeof(State)) / count - depthBytes
-        || !fx_scene_reserve(
-            &state->reservation, &outputPool, &aggregatePool, sizeof(State) + count * (image + depthBytes)
-        )) {
+    if (image > (std::numeric_limits<uint64_t>::max() - sizeof(State)) / count
+        || !fx_scene_reserve(&state->reservation, &outputPool, &aggregatePool, sizeof(State) + count * image)) {
       return nullptr;
     }
     auto composition = std::unique_ptr<SceneComposition>(new SceneComposition(std::move(state)));
 
     for (auto& version : composition->m_state->versions) {
       for (auto& output : version.output) {
-        if (!output.prepare(renderer, allocator, width, height, workingSpace, floatingPoint, false)) {
+        if (!output.prepare(renderer, allocator, width, height, workingSpace, floatingPoint)) {
           return nullptr;
         }
       }
@@ -125,29 +121,31 @@ namespace umbriel {
     }
     if (sources.size() != 2)
       return false;
-    using Texture = std::unique_ptr<wlr_texture, decltype(&wlr_texture_destroy)>;
-    std::vector<std::array<Texture, 2>> textures;
-    textures.reserve(sources.size());
-    for (const auto& source : sources) {
-      if (source.display == nullptr || source.unfiltered == nullptr) {
+    struct DestroyTexture {
+      void operator()(wlr_texture* texture) const { wlr_texture_destroy(texture); }
+    };
+    using Texture = std::unique_ptr<wlr_texture, DestroyTexture>;
+    std::array<std::array<Texture, 2>, 2> textures;
+    for (size_t i = 0; i < sources.size(); ++i) {
+      const auto& source = sources[i];
+      if (source.display == nullptr || source.unfiltered == nullptr)
         return false;
-      }
-      std::array<Texture, 2> imported{
-          Texture(wlr_texture_from_buffer(state.renderer, source.display), wlr_texture_destroy),
-          Texture(wlr_texture_from_buffer(state.renderer, source.unfiltered), wlr_texture_destroy)
-      };
-      if (!imported[0] || !imported[1]) {
+      textures[i][0].reset(wlr_texture_from_buffer(state.renderer, source.display));
+      if (!textures[i][0])
         return false;
+      if (source.unfiltered != source.display) {
+        textures[i][1].reset(wlr_texture_from_buffer(state.renderer, source.unfiltered));
+        if (!textures[i][1])
+          return false;
       }
-      textures.push_back(std::move(imported));
     }
     auto& version = state.versions[state.candidate];
     for (unsigned role = 0; role < 2; ++role) {
       auto roleFrame = frame;
       roleFrame.role = static_cast<int>(role);
       std::array<fx_scene_input, 2> inputs{};
-      inputs[0].texture = textures[0][role].get();
-      inputs[1].texture = textures[1][role].get();
+      inputs[0].texture = (role && textures[0][1] ? textures[0][1] : textures[0][0]).get();
+      inputs[1].texture = (role && textures[1][1] ? textures[1][1] : textures[1][0]).get();
       inputs[0].sample_matrix = sources[0].sampleMatrix;
       inputs[1].sample_matrix = sources[1].sampleMatrix;
       if (!fx_scene_program_render(

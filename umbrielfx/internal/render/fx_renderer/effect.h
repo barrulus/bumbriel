@@ -110,14 +110,6 @@ bool fx_effect_prepare_light(struct fx_renderer* renderer);
 bool fx_effect_light_cache_prepare_scene(struct fx_effect_light_cache* cache,
     int width, int height, float spread_px);
 uint64_t fx_effect_light_cache_storage_bytes(const struct fx_effect_light_cache* cache);
-// Copy completed raw emission exactly, with no authored evaluation/history step.
-// Target dimensions must match; FP16 emission requires FP16 destination storage.
-bool fx_effect_light_cache_copy_emission(struct fx_effect_light_cache* cache, struct wlr_buffer* target);
-// No allocation, compilation, authored shader evaluation, or history promotion.
-// Source must be a same-renderer renderable GL2D canvas in the pass working space.
-bool fx_render_pass_emit_scene_light(struct fx_gles_render_pass* pass,
-    struct fx_effect_light_cache* cache, struct wlr_texture* source,
-    const struct fx_effect_light* light, float logical_scale);
 // Screen-blends the blurred emission over `box` (the proxy's buffer box), clipped.
 void fx_render_pass_add_effect_light(
     struct fx_gles_render_pass* pass, struct fx_effect_light_cache* cache, const struct fx_effect_light* light,

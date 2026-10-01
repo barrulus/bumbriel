@@ -74,6 +74,16 @@ grim "$UMBRIEL_RUNTIME_DIR/from.png"
 "$UMBRIEL" msg workspace-switch:3
 ready
 state | jq -e '.active and .source_ready and .progress == 0 and .memory_bytes > 0' > /dev/null
+# A visual transition must not swallow native destination input or dismiss.
+"$UMBRIEL_POINTER_CLIENT" 640 360 move 320 180 pause 300 press 272 release 272
+for _ in $(seq 50); do
+  grep -q 'pointer-button code=272 state=released' "$UMBRIEL_RUNTIME_DIR/to.log" && break
+  sleep .02
+done
+grep -q 'pointer-button code=272 state=pressed' "$UMBRIEL_RUNTIME_DIR/to.log"
+grep -q 'pointer-button code=272 state=released' "$UMBRIEL_RUNTIME_DIR/to.log"
+! grep -q 'pointer-button code=272' "$UMBRIEL_RUNTIME_DIR/from.log"
+state | jq -e '.active and .source_ready and .progress == 0' > /dev/null
 grim "$UMBRIEL_RUNTIME_DIR/start.png"
 cmp "$UMBRIEL_RUNTIME_DIR/from.png" "$UMBRIEL_RUNTIME_DIR/start.png"
 # Outgoing client updates after acquisition must not change retained source.

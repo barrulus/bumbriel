@@ -445,8 +445,10 @@ vec4 animation(vec2 uv) {
     const auto submitted = m_submittedEffectTimes.find(output);
     m_compositionAdvance =
         advance || submitted == m_submittedEffectTimes.end() || submitted->second != output->effectSeconds();
-    // A view may unmap while its role object survives. Node destruction alone
-    // is not a sufficient visibility boundary for a finite-slot occurrence.
+    // Ordinary frames without authored node effects need no view traversal.
+    if (m_timeInstances.empty() && m_sourceOccurrences.empty()) {
+      return;
+    }
 
     // The animation clock may be frozen or already ticked by another output.
     // Rebind visible timed effects for this output before source composition.

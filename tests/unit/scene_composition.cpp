@@ -83,7 +83,7 @@ void __wrap_wlr_buffer_drop(wlr_buffer* buffer) {
     delete buffer;
   }
 }
-fx_scene_target* __wrap_fx_scene_target_create_with_color(wlr_renderer*, wlr_buffer* buffer, bool, bool) {
+fx_scene_target* __wrap_fx_scene_target_create_with_color(wlr_renderer*, wlr_buffer* buffer, bool) {
   ++targets;
   return new fx_scene_target{.buffer = buffer};
 }

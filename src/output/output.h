@@ -52,9 +52,6 @@ namespace umbriel {
     void notePresentationSourceContent();
     void notePresentationViewMapped(View& view);
     void notePresentationViewUnmapping(View& view);
-    bool beginSceneInput(std::function<void()> dismiss);
-    void endSceneInput(bool requireRestore = true);
-    void sceneRestoreCommitted();
     bool registerWorkspaceSources(WorkspaceSources* sources);
     void unregisterWorkspaceSources(WorkspaceSources* sources);
     [[nodiscard]] wlr_scene_tree* layerTree(uint32_t layer) const;

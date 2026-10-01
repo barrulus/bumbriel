@@ -537,7 +537,6 @@ pure_sources = files(
   'src/config/section.cpp',
   'src/config/effects.cpp',
   'src/config/scene_effects.cpp',
-  'src/scene/presentation.cpp',
   'src/input/lid_state.cpp',
   'src/input/modifier_tap.cpp',
   'src/input/swipe_tracker.cpp',

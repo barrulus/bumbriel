@@ -53,7 +53,7 @@ static bool experiment(struct fixture *fixture, const char *name, bool melt) {
 	struct fx_scene_program *program = fx_scene_program_create(fixture->renderer, FX_SCENE_PAIR, &sources, NULL, 0);
 	free(source);
 	struct wlr_buffer *buffer = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, WIDTH, HEIGHT);
-	struct fx_scene_target *target = buffer ? fx_scene_target_create(fixture->renderer, buffer, false) : NULL;
+	struct fx_scene_target *target = buffer ? fx_scene_target_create(fixture->renderer, buffer) : NULL;
 	uint8_t from[BYTES], to[BYTES], pixels[BYTES], held[BYTES];
 	for (unsigned y = 0; y < HEIGHT; y++) {
 		for (unsigned x = 0; x < WIDTH; x++) {
@@ -74,7 +74,7 @@ static bool experiment(struct fixture *fixture, const char *name, bool melt) {
 		WIDTH * 4, WIDTH, HEIGHT, to);
 	struct fx_scene_input pair[2] = {{.texture = from_texture}, {.texture = to_texture}};
 	bool ok = check(program && target && from_texture && to_texture, "prepare authored pair resources");
-	struct fx_scene_frame frame = {.output_size = {WIDTH, HEIGHT}, .scale = 1,
+	struct fx_scene_frame frame = {.output_size = {WIDTH, HEIGHT}, .scale = 1, .scene_count = 2,
 		.random_seed = {0.21f, 0.67f, 0.13f, 0.89f}};
 	for (unsigned axis = 0; ok && axis < 2; axis++) {
 		frame.axis[0] = axis == 0;

@@ -18,7 +18,6 @@ extern "C" {
 }
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <nlohmann/json.hpp>
 
 namespace umbriel {
@@ -48,21 +47,15 @@ namespace umbriel {
               static_cast<float>(y.x - origin.x), static_cast<float>(y.y - origin.y), 0,
               static_cast<float>(origin.x),       static_cast<float>(origin.y),       1};
     }
-    struct LiveFace final : PresentationVisualSource {
-      std::shared_ptr<WorkspaceSources> owner;
-      std::string identity;
-      LiveFace(std::shared_ptr<WorkspaceSources> provider, std::string id)
-          : owner(std::move(provider)), identity(std::move(id)) {}
-    };
   } // namespace
 
   struct WorkspaceTransition::State {
     Server& server;
     Output& output;
     std::shared_ptr<const scene_experiment::ProgramBundle> bundle;
-    std::shared_ptr<WorkspaceSources> sources;
+    std::unique_ptr<WorkspaceSources> sources;
     std::unique_ptr<SceneComposition> composition;
-    PresentationLease lease;
+    bool sourceReady = false;
     AnimatedValue progress;
     std::array<float, 4> seed{};
     uint64_t identity = 0;
@@ -76,7 +69,6 @@ namespace umbriel {
     bool active = false, interactive = false, released = false, commit = true;
     bool workingSpace = false, pendingEnd = false, activated = false;
     bool floatingPoint = false;
-    bool inputOwned = false;
     bool awaitNative = false;
     float direction = 1;
     bool horizontal = false;
@@ -100,6 +92,7 @@ namespace umbriel {
         if (picture == nullptr) {
           return false;
         }
+        picture->point_accepts_input = [](wlr_scene_buffer*, double*, double*) { return false; };
         wlr_scene_buffer_set_dest_size(picture, box.width, box.height);
         wlr_scene_buffer_set_transform(picture, output.wlr()->transform);
         if (workingSpace) {
@@ -173,7 +166,7 @@ namespace umbriel {
     state.pendingEnd = false;
     state.lastProgress = -1;
     state.lastSources = 0;
-    state.sources = std::make_shared<WorkspaceSources>(state.server, state.output, [this](PresentationFallback reason) {
+    state.sources = std::make_unique<WorkspaceSources>(state.server, state.output, [this](PresentationFallback reason) {
       cancel(reason);
     });
     state.workingSpace = fx_scene_source_working_space(state.output.sceneOutput());
@@ -230,7 +223,7 @@ namespace umbriel {
     else
       state.progress.retarget(target, settings.durationMs, settings.curve);
     state.progress.tick(state.server.animationClockMsec());
-    if (state.lease.active() && commit) {
+    if (state.sourceReady && commit) {
       state.activated = state.sources->activateSelection(state.destination);
       state.server.refocus(&state.output);
     }
@@ -287,28 +280,8 @@ namespace umbriel {
       cancel(PresentationFallback::SourceUnavailable);
       return;
     }
-    if (!state.lease.active()) {
-      PresentationRequest request;
-      request.scope = PresentationScope::WorkspacePair;
-      request.identity = state.identity;
-      request.startMsec = state.server.animationClockMsec();
-      request.deadlineMsec =
-          state.interactive ? std::numeric_limits<uint64_t>::max() : request.startMsec + state.progress.durationMs();
-      request.workspaces = {state.original, state.destination};
-      request.destination = state.destination;
-      for (const auto& face : faces) {
-        auto source = std::make_shared<LiveFace>(state.sources, face.identity);
-        request.sources.push_back({source, source});
-      }
-      state.inputOwned = state.output.beginSceneInput([this] { cancel(PresentationFallback::InputDismissal); });
-      if (!state.inputOwned) {
-        cancel(PresentationFallback::InputGrab);
-        return;
-      }
-      if (!state.lease.acquire(std::move(request))) {
-        cancel(state.lease.lastFallback());
-        return;
-      }
+    if (!state.sourceReady) {
+      state.sourceReady = true;
       if (!state.interactive) {
         state.progress.retarget(1, config().animation.workspaces.durationMs, config().animation.workspaces.curve);
         state.progress.tick(state.server.animationClockMsec());
@@ -401,7 +374,7 @@ namespace umbriel {
     }
     state.active = false;
     state.fallback = reason;
-    state.lease.cancel(reason);
+    state.sourceReady = false;
     state.server.effects().clearSceneTime(this);
     if (state.tree) {
       wlr_scene_node_set_enabled(&state.tree->node, false);
@@ -427,17 +400,14 @@ namespace umbriel {
       }
     }
     state.progress.snap(state.commit ? 1 : 0);
-    if (state.inputOwned) {
-      state.output.endSceneInput(visible);
-      state.inputOwned = false;
-    }
+
     if (visible)
       wlr_output_schedule_frame(state.output.wlr());
   }
   bool WorkspaceTransition::active() const { return m_state->active; }
   bool WorkspaceTransition::interactive() const { return m_state->interactive && !m_state->released; }
   bool WorkspaceTransition::tickAnimations(uint64_t nowMsec) {
-    if (!m_state->active || !m_state->lease.active())
+    if (!m_state->active || !m_state->sourceReady)
       return false;
     m_state->progress.tick(nowMsec);
     return hasActiveAnimations();
@@ -447,9 +417,16 @@ namespace umbriel {
   nlohmann::json WorkspaceTransition::status() const {
     const auto& state = *m_state;
     constexpr std::array reasons{
-        "",           "unsupported_capability", "source_unavailable", "resource_budget", "composition_failure",
-        "input_grab", "overlapping_lifecycle",  "topology_changed",   "renderer_lost",   "output_removed",
-        "locked",     "binding_removed",        "input_dismissal"
+        "",
+        "unsupported_capability",
+        "source_unavailable",
+        "resource_budget",
+        "composition_failure",
+        "topology_changed",
+        "renderer_lost",
+        "output_removed",
+        "locked",
+        "binding_removed",
     };
     return {
         {"active", state.active},
@@ -459,7 +436,7 @@ namespace umbriel {
         {"to", state.destination},
         {"progress", state.progress.current()},
         {"interactive", interactive()},
-        {"source_ready", state.lease.active()},
+        {"source_ready", state.sourceReady},
         {"memory_bytes", state.sources ? state.sources->reservedBytes() : 0},
         {"fallback", reasons[static_cast<size_t>(state.fallback)]},
         {"sources", state.sources ? state.sources->status() : nlohmann::json()}

@@ -866,7 +866,7 @@ struct fx_scene_source_session {
   bool frame_open;
   bool frozen;
   bool virtual_view;
-  struct wlr_box view_extent, view_viewport;
+  struct wlr_box view_extent;
   float view_scale;
   uint64_t reserved_history_bytes;
   bool failed;
@@ -923,7 +923,6 @@ struct render_data {
   bool source_capture;
   struct fx_scene_source_session* source_session;
   const struct fx_scene_source_view* source_view;
-  const struct fx_scene_source_view* source_complete_view;
   struct wl_array* source_lights;
   bool native_light_read_only;
   bool* source_failed;
@@ -1380,21 +1379,6 @@ static const struct fx_scene_source_root_override* source_view_override(
   return NULL;
 }
 
-static const struct fx_scene_source_node_override* source_node_override(
-    const struct render_data* data, struct wlr_scene_node* node) {
-  if (data->source_view != NULL) {
-    for (size_t i = 0; i < data->source_view->node_count; i++) {
-      if (data->source_view->nodes[i].node == node) return &data->source_view->nodes[i];
-    }
-  }
-  return NULL;
-}
-
-static bool source_skip_slot(const struct render_data* data, struct wlr_scene_node* node, unsigned slot) {
-  const struct fx_scene_source_node_override* override = source_node_override(data, node);
-  return override != NULL && (override->skip_slots & (1u << slot)) != 0;
-}
-
 static bool source_view_contains(const struct fx_scene_source_view* view, struct wlr_scene_node* node) {
   while (node->parent != NULL && node->parent != view->first->parent) {
     node = &node->parent->node;
@@ -1442,17 +1426,7 @@ static bool source_node_coords(const struct render_data* data, struct wlr_scene_
   return enabled;
 }
 
-static struct scene_tree_clip* source_tree_clip(const struct fx_scene_source_view* view,
-    struct wlr_scene_tree* tree) {
-  if (view != NULL) {
-    for (size_t i = 0; i < view->bypass_clip_count; i++) {
-      if (view->bypass_clips[i] == tree) {
-        return NULL;
-      }
-    }
-  }
-  return scene_tree_clip_try_get(tree);
-}
+
 
 static void source_node_bounds(struct wlr_scene_node* node, int x, int y,
     pixman_region32_t* bounds, const struct render_data* data) {
@@ -1485,7 +1459,7 @@ static bool source_ancestor_clip(struct wlr_scene_node* node, int x, int y,
   }
   bool found = false;
   for (struct wlr_scene_tree* parent = node->parent; parent != NULL; parent = parent->node.parent) {
-    struct scene_tree_clip* clip = source_tree_clip(data->source_view, parent);
+    struct scene_tree_clip* clip = scene_tree_clip_try_get(parent);
     if (clip == NULL) {
       continue;
     }
@@ -1554,9 +1528,7 @@ static bool source_light_requested(const struct render_data* data, struct scene_
     return animation->light != NULL && animation->light->rect->node.enabled;
   }
   const struct fx_effect_light* light = &animation->parameters[FX_SLOT_BORDER_EFFECT].light;
-  if (data->source_view->emission_owner == animation->node) {
-    return animation->shaders[FX_SLOT_BORDER_EFFECT] != NULL && light->enabled && light->intensity > 0 && light->spread > 0;
-  }
+
   int x, y;
   return animation->shaders[FX_SLOT_BORDER_EFFECT] != NULL && light->enabled && light->intensity > 0
       && light->spread > 0 && data->effects != NULL && data->effects->light_layer != NULL
@@ -3450,7 +3422,6 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
       node->type == WLR_SCENE_NODE_RECT && data->effects != NULL && data->effects->light_layer != NULL
       ? scene_light_from_node(node)
       : NULL;
-  const struct fx_scene_source_node_override* override = source_node_override(data, node);
   switch (node->type) {
   case WLR_SCENE_NODE_TREE:
     assert(false);
@@ -3470,7 +3441,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     }
     struct wlr_scene_rect* scene_rect = wlr_scene_rect_from_node(node);
     struct fx_corner_radii rect_corners = scene_rect->corners;
-    const float* rect_color = override != NULL && override->has_colors ? override->colors[0] : scene_rect->color;
+    const float* rect_color = scene_rect->color;
 
     fx_corner_radii_transform(node_transform, &rect_corners);
 
@@ -3517,8 +3488,8 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     break;
   case WLR_SCENE_NODE_BORDER:;
     struct wlr_scene_border* scene_border = wlr_scene_border_from_node(node);
-    const float* inner_color = override != NULL && override->has_colors ? override->colors[0] : scene_border->inner_color;
-    const float* outer_color = override != NULL && override->has_colors ? override->colors[1] : scene_border->outer_color;
+    const float* inner_color = scene_border->inner_color;
+    const float* outer_color = scene_border->outer_color;
     struct wlr_box border_clipped_region_box = scene_border->clipped_region.area;
     struct fx_corner_radii border_clipped_corners = scene_border->clipped_region.corners;
     struct fx_corner_radii border_seam_corners = scene_border->seam_corners;
@@ -3564,7 +3535,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
   case WLR_SCENE_NODE_BUFFER:;
     struct wlr_scene_buffer* scene_buffer = wlr_scene_buffer_from_node(node);
     struct fx_corner_radii buffer_corners = scene_buffer->corners;
-    const float buffer_opacity = override != NULL && override->has_opacity ? override->opacity : scene_buffer->opacity;
+    const float buffer_opacity = scene_buffer->opacity;
 
     if (scene_buffer->is_single_pixel_buffer) {
       // TODO: Render blur/rounded corners/etc here:
@@ -3772,7 +3743,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     break;
   case WLR_SCENE_NODE_SHADOW:;
     struct wlr_scene_shadow* scene_shadow = wlr_scene_shadow_from_node(node);
-    const float* shadow_color = override != NULL && override->has_colors ? override->colors[0] : scene_shadow->color;
+    const float* shadow_color = scene_shadow->color;
 
     struct wlr_box shadow_clipped_region_box = scene_shadow->clipped_region.area;
     struct fx_corner_radii shadow_clipped_corners = scene_shadow->clipped_region.corners;
@@ -3941,8 +3912,7 @@ static bool render_animation_shadow(struct render_list_entry* entry, const struc
     }
     for (unsigned i = 0; i < FX_ANIMATION_SLOTS && !animated; i++) {
       const struct fx_effect_shader* shader = effect->shaders[i];
-      animated = shader != NULL && shader->renderer == pass->buffer->renderer && !shader->shape_preserving
-          && !source_skip_slot(data, effect->node, i);
+      animated = shader != NULL && shader->renderer == pass->buffer->renderer && !shader->shape_preserving;
     }
     if (animated) {
       break;
@@ -4095,8 +4065,7 @@ static void render_in_place_slots(
   bool shape_known = false;
   for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
     struct fx_effect_shader* shader = animation->shaders[slot];
-    if (!fx_slot_in_place(slot) || shader == NULL || shader->renderer != pass->buffer->renderer
-        || source_skip_slot(data, animation->node, slot)) {
+    if (!fx_slot_in_place(slot) || shader == NULL || shader->renderer != pass->buffer->renderer) {
       continue;
     }
     if (!shape_known) {
@@ -4221,9 +4190,7 @@ static void render_animated_range(
         continue;
       }
     }
-    const struct fx_scene_source_node_override* override = source_node_override(data, animation->node);
-    const bool has_animation_clip = animation->output_clip_enabled && !data->shadow_capture
-        && !(override != NULL && override->skip_animation_clip);
+    const bool has_animation_clip = animation->output_clip_enabled && !data->shadow_capture;
     struct wlr_box output_box = {0};
     if (has_animation_clip) {
       output_box = animation->output_clip;
@@ -4234,7 +4201,7 @@ static void render_animated_range(
     struct wlr_box ancestor_clip;
     bool has_clip = source_ancestor_clip(animation->node, lx, ly, &ancestor_clip, data);
     if (animation->node->type == WLR_SCENE_NODE_TREE) {
-      struct scene_tree_clip* own = source_tree_clip(data->source_view, wlr_scene_tree_from_node(animation->node));
+      struct scene_tree_clip* own = scene_tree_clip_try_get(wlr_scene_tree_from_node(animation->node));
       if (own != NULL) {
         struct wlr_box own_box = own->box;
         own_box.x += lx;
@@ -4262,7 +4229,6 @@ static void render_animated_range(
       if (shader != NULL
           && shader->renderer == pass->buffer->renderer
           && !fx_slot_in_place(slot)
-          && !source_skip_slot(data, animation->node, slot)
           && (persistent_damaged || !fx_slot_persistent(slot))) {
         captured[slot] = fx_render_pass_begin_animation(pass);
         captured_any |= captured[slot];
@@ -5980,8 +5946,7 @@ static bool source_capture_iterator(
 ) {
   struct source_capture_list* list = data;
   if (scene_picture_output(node) != NULL) return false;
-  const struct fx_scene_source_node_override* override = source_node_override(list->data, node);
-  if (list->failed || (scene_node_invisible(node) && !(override != NULL && override->has_colors))) {
+  if (list->failed || scene_node_invisible(node)) {
     return list->failed;
   }
   struct wlr_box box = {.x = lx, .y = ly};
@@ -6021,9 +5986,7 @@ static bool source_capture_iterator(
   pixman_region32_intersect_rect(visible, visible, box.x, box.y, box.width, box.height);
   pixman_region32_t opaque;
   pixman_region32_init(&opaque);
-  if (override == NULL || (!override->has_opacity && !override->has_colors)) {
-    scene_node_opaque_region(list->effects, node, lx, ly, &opaque);
-  }
+  scene_node_opaque_region(list->effects, node, lx, ly, &opaque);
   pixman_region32_intersect_rect(&opaque, &opaque, box.x, box.y, box.width, box.height);
   pixman_region32_subtract(&list->remaining, &list->remaining, &opaque);
   pixman_region32_subtract(&list->samples, &list->samples, &opaque);
@@ -6051,8 +6014,7 @@ static bool source_capture_iterator(
   return false;
 }
 
-static bool source_view_band_frame(const struct fx_scene_source_view* view,
-    struct wlr_scene_node* node, struct fx_scene_source_view* band);
+
 
 static bool source_view_emit_lights(struct source_capture_list* list, const struct wlr_box* clip) {
   if (list->effects == NULL) {
@@ -6092,30 +6054,9 @@ static bool source_view_emit_lights(struct source_capture_list* list, const stru
       return false;
     }
     *owned = proxy;
-    // Light is generated in its owner's face framing, then composed later at
-    // the native light stratum. Preserve that physical placement even when
-    // the stratum itself uses viewport framing (or the opposite).
-    const struct fx_scene_source_view* complete = list->data->source_complete_view != NULL
-        ? list->data->source_complete_view : list->data->source_view;
-    struct wlr_scene_node* owner_root = animation->node;
-    while (owner_root->parent != NULL && owner_root->parent->node.parent != NULL)
-      owner_root = &owner_root->parent->node;
-    struct fx_scene_source_view owner_view;
-    if (!source_view_band_frame(complete, owner_root, &owner_view)) return false;
-    struct render_data owner_data = *list->data;
-    owner_data.logical = owner_view.extent;
-    owner_data.scale = owner_view.scale;
     proxy->light.source_position = true;
-    proxy->light.source_box = (struct wlr_box){x - owner_view.extent.x, y - owner_view.extent.y, width, height};
-    transform_output_box(&proxy->light.source_box, &owner_data);
-    double left = (x - owner_view.extent.x) * (double)owner_view.scale / list->data->scale;
-    double top = (y - owner_view.extent.y) * (double)owner_view.scale / list->data->scale;
-    int right = (int)ceil(left + width * (double)owner_view.scale / list->data->scale);
-    int bottom = (int)ceil(top + height * (double)owner_view.scale / list->data->scale);
-    x = (int)floor(left) + list->data->logical.x;
-    y = (int)floor(top) + list->data->logical.y;
-    width = right - (int)floor(left);
-    height = bottom - (int)floor(top);
+    proxy->light.source_box = (struct wlr_box){x - list->data->logical.x, y - list->data->logical.y, width, height};
+    transform_output_box(&proxy->light.source_box, list->data);
     proxy->rect.node.type = WLR_SCENE_NODE_RECT;
     proxy->rect.node.enabled = true;
     proxy->rect.node.parent = list->effects->light_layer;
@@ -6148,7 +6089,7 @@ static bool source_view_walk(struct source_capture_list* list, struct wlr_scene_
     return !source_capture_iterator(node, x, y, ancestor_clip, list);
   }
   struct wlr_scene_tree* tree = wlr_scene_tree_from_node(node);
-  struct scene_tree_clip* clip = source_tree_clip(list->data->source_view, tree);
+  struct scene_tree_clip* clip = scene_tree_clip_try_get(tree);
   struct wlr_box clipped;
   if (clip != NULL) {
     clipped = clip->box;
@@ -6172,23 +6113,13 @@ static bool source_view_walk(struct source_capture_list* list, struct wlr_scene_
   return true;
 }
 
-struct source_emission_export {
-  struct wlr_scene_node* owner;
-  struct wlr_buffer* buffer;
-  struct wlr_box extent;
-  struct fx_effect_light recipe;
-  bool working_space;
-  bool floating_point;
-};
-
 static bool source_pair_working_space(struct wlr_scene_output* output);
 static bool source_pair_floating_point(struct wlr_scene_output* output);
 
 static bool scene_capture_range(
     struct wlr_scene_output* scene_output, struct wlr_scene_node* first, struct wlr_scene_node* last,
     struct wlr_buffer* target, bool unfiltered, bool transparent, const struct wlr_box* extent,
-    struct fx_scene_source_session* session, const struct fx_scene_source_view* view,
-    struct source_emission_export* emission
+    struct fx_scene_source_session* session, const struct fx_scene_source_view* view
 ) {
   if (scene_output == NULL || first == NULL || last == NULL || target == NULL
       || !scene_output->scene->tree.node.enabled
@@ -6217,7 +6148,7 @@ static bool scene_capture_range(
   }
   struct render_data data = {
       .logical = {.x = scene_output->x, .y = scene_output->y}, .scale = view != NULL ? view->scale : output->scale,
-      .source_view = view, .source_complete_view = view,
+      .source_view = view,
       .transform = output->transform, .trans_width = target->width, .trans_height = target->height,
       .output = scene_output, .effects = scene_effects_get(scene_output->scene, false),
   };
@@ -6298,7 +6229,7 @@ static bool scene_capture_range(
       .source_visible = list.visible.data,
       .source_capture = true,
       .source_session = session,
-      .source_view = view, .source_complete_view = view,
+      .source_view = view,
       .source_lights = &list.lights,
       .native_light_read_only = transparent,
       .source_failed = &source_failed,
@@ -6333,28 +6264,7 @@ static bool scene_capture_range(
   source_failed |= fx_pass->incomplete || (session != NULL && session->failed);
   ok = wlr_render_pass_submit(pass) && resources && !source_failed;
   fx_offscreen_buffers_finish_local(&scratch);
-  if (ok && emission != NULL) {
-    ok = false;
-    wl_array_for_each(light, &list.lights) {
-      if (light->animation->node != emission->owner) continue;
-      struct fx_effect_light_cache* cache = light->cache;
-      emission->buffer = fx_scene_buffer_create(output->renderer, output->allocator,
-          cache->emission_width, cache->emission_height, cache->emission_type == GL_HALF_FLOAT_OES);
-      if (emission->buffer != NULL && fx_effect_light_cache_copy_emission(cache, emission->buffer)) {
-        emission->extent = cache->logical_box;
-        emission->extent.x += view->extent.x;
-        emission->extent.y += view->extent.y;
-        emission->recipe = cache->recipe;
-        emission->working_space = cache->working_space;
-        emission->floating_point = cache->emission_type == GL_HALF_FLOAT_OES;
-        ok = true;
-      } else if (emission->buffer != NULL) {
-        wlr_buffer_drop(emission->buffer);
-        emission->buffer = NULL;
-      }
-      break;
-    }
-  }
+
 finish:
   source_capture_list_finish(&list);
   return ok;
@@ -6364,131 +6274,7 @@ bool fx_scene_capture_range_for_test(
     struct wlr_scene_output* output, struct wlr_scene_node* first, struct wlr_scene_node* last,
     struct wlr_buffer* target, bool unfiltered
 ) {
-  return scene_capture_range(output, first, last, target, unfiltered, false, NULL, NULL, NULL, NULL);
-}
-
-static bool source_view_has_viewport_bands(const struct fx_scene_source_view* view) {
-  for (size_t i = 0; i < view->root_count; i++) {
-    if (view->roots[i].framing == FX_SCENE_SOURCE_VIEWPORT) return true;
-  }
-  return false;
-}
-
-static enum fx_scene_source_framing source_view_root_framing(
-    const struct fx_scene_source_view* view, struct wlr_scene_node* node) {
-  while (node->parent != NULL && node->parent != view->first->parent) node = &node->parent->node;
-  const struct fx_scene_source_root_override* override = source_view_override(view, node);
-  return override != NULL ? override->framing : FX_SCENE_SOURCE_CONTENT;
-}
-
-bool fx_scene_source_view_framing_for_test(const struct fx_scene_source_view* view,
-    enum fx_scene_source_framing framing, float transform[4]) {
-  if (view == NULL || transform == NULL || view->viewport.width <= 0 || view->viewport.height <= 0
-      || view->extent.width <= 0 || view->extent.height <= 0 || !isfinite(view->scale) || view->scale <= 0
-      || framing < FX_SCENE_SOURCE_CONTENT || framing > FX_SCENE_SOURCE_VIEWPORT) return false;
-  double width = lround((double)view->extent.width * view->scale);
-  double height = lround((double)view->extent.height * view->scale);
-  float viewport_scale = width / view->viewport.width;
-  if (width <= 0 || height <= 0 || !isfinite(viewport_scale) || viewport_scale <= 0
-      || lround(view->viewport.height * viewport_scale) != height) return false;
-  float scale = framing == FX_SCENE_SOURCE_VIEWPORT ? 1 : view->scale / viewport_scale;
-  const struct wlr_box* extent = framing == FX_SCENE_SOURCE_VIEWPORT ? &view->viewport : &view->extent;
-  transform[0] = transform[1] = scale;
-  transform[2] = -extent->x * scale;
-  transform[3] = -extent->y * scale;
-  return isfinite(transform[2]) && isfinite(transform[3]);
-}
-
-static bool source_view_band_frame(const struct fx_scene_source_view* view,
-    struct wlr_scene_node* node, struct fx_scene_source_view* band) {
-  *band = *view;
-  const struct fx_scene_source_root_override* override = source_view_override(view, node);
-  if (override == NULL || override->framing != FX_SCENE_SOURCE_VIEWPORT) return true;
-  if (view->viewport.width <= 0 || view->viewport.height <= 0) return false;
-  double width = lround((double)view->extent.width * view->scale);
-  double height = lround((double)view->extent.height * view->scale);
-  float scale = width / view->viewport.width;
-  if (!isfinite(scale) || scale <= 0 || lround(view->viewport.height * scale) != height) return false;
-  band->extent = view->viewport;
-  band->scale = scale;
-  return true;
-}
-
-// Mixed framing preserves backdrop dependencies by drawing every stratum into
-// the SAME target/pass. Coverage is local to each band: lower bands remain in
-// the framebuffer for subsequent live/optimized blur and in-place programs.
-static bool scene_capture_view_bands(struct wlr_scene_output* scene_output,
-    const struct fx_scene_source_view* view, struct wlr_buffer* target, bool unfiltered) {
-  struct wlr_output* output = scene_output->output;
-  int width = target->width, height = target->height;
-  wlr_output_transform_coords(output->transform, &width, &height);
-  if (lround((double)view->extent.width * view->scale) != width
-      || lround((double)view->extent.height * view->scale) != height) return false;
-  struct wlr_render_pass* pass = wlr_renderer_begin_buffer_pass(output->renderer, target, NULL);
-  if (pass == NULL) return false;
-  struct fx_gles_render_pass* fx_pass = fx_get_render_pass(pass);
-  fx_pass->deferred_history_updates = view->session != NULL ? &view->session->pending : NULL;
-  fx_pass->working_space = source_pair_working_space(scene_output);
-  struct fx_offscreen_buffers scratch = {
-      .renderer = fx_get_renderer(output->renderer), .allocator = output->allocator,
-  };
-  fx_pass->fx_offscreen_buffers = &scratch;
-  fx_pass->has_blur = true;
-  struct wl_array lights;
-  wl_array_init(&lights);
-  pixman_region32_t damage;
-  pixman_region32_init_rect(&damage, 0, 0, target->width, target->height);
-  if (view->transparent) {
-    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-        .box = {0, 0, target->width, target->height}, .color = {0}, .blend_mode = WLR_RENDER_BLEND_MODE_NONE});
-  } else {
-    render_background(pass, scene_output->scene, target, &damage, WLR_RENDER_BLEND_MODE_NONE);
-  }
-  bool failed = false;
-  struct scene_effects* effects = scene_effects_get(scene_output->scene, false);
-  for (struct wl_list* link = &view->first->link; !failed; link = link->next) {
-    struct wlr_scene_node* node = wl_container_of(link, node, link);
-    struct fx_scene_source_view band;
-    if (!source_view_band_frame(view, node, &band)) { failed = true; break; }
-    struct render_data data = {
-        .transform = output->transform, .scale = band.scale, .logical = band.extent,
-        .trans_width = width, .trans_height = height, .output = scene_output,
-        .render_pass = pass, .source_capture = true, .source_session = view->session, .source_view = &band, .source_complete_view = view,
-        .source_lights = &lights, .source_failed = &failed, .effect_capture = unfiltered,
-        .sampled_earlier = true, .effects = effects,
-        .transient_effects = effects != NULL && effects->transient > 0,
-        .persistent_visible = effects != NULL && effects->persistent > 0,
-    };
-    struct source_capture_list list;
-    source_capture_list_init(&list, &data);
-    int x, y;
-    source_node_coords(&data, node, &x, &y);
-    struct wlr_box clip;
-    bool clipped = source_ancestor_clip(node, x, y, &clip, &data);
-    failed |= !source_view_walk(&list, node, clipped ? &clip : NULL) || list.failed;
-    if (!failed) {
-      data.entries = list.entries.data;
-      data.entry_count = list.entries.size / sizeof(struct render_list_entry);
-      data.source_visible = list.visible.data;
-      pixman_region32_init(&data.damage);
-      pixman_region32_copy(&data.damage, &damage);
-      render_animated_range(data.entries, data.entry_count - 1, 0, NULL, &data);
-      pixman_region32_fini(&data.damage);
-    }
-    source_capture_list_finish(&list);
-    if (node == view->last) break;
-  }
-  struct source_light_entry* light;
-  wl_array_for_each(light, &lights) {
-    failed |= light->cache == NULL || !light->cache->valid || light->cache->failed;
-  }
-  failed |= fx_pass->incomplete;
-  bool submitted = wlr_render_pass_submit(pass);
-  wl_array_for_each(light, &lights) fx_effect_light_cache_destroy(light->cache);
-  wl_array_release(&lights);
-  pixman_region32_fini(&damage);
-  fx_offscreen_buffers_finish_local(&scratch);
-  return submitted && !failed;
+  return scene_capture_range(output, first, last, target, unfiltered, false, NULL, NULL, NULL);
 }
 
 static bool scene_capture_view(struct wlr_scene_output* output,
@@ -6499,9 +6285,7 @@ static bool scene_capture_view(struct wlr_scene_output* output,
       || !fx_scene_source_view_session_matches(output, view, session))) return false;
   unsigned role = unfiltered ? 1 : 0;
   if (session != NULL && session->cached[role] != NULL) return session->cached[role] == target;
-  bool ok = source_view_has_viewport_bands(view)
-      ? scene_capture_view_bands(output, view, target, unfiltered)
-      : scene_capture_range(output, view->first, view->last, target, unfiltered, view->transparent, NULL, session, view, NULL);
+  bool ok = scene_capture_range(output, view->first, view->last, target, unfiltered, view->transparent, NULL, session, view);
   if (session != NULL && (!ok || session->failed)) {
     session->failed = true;
     fx_animation_history_finish_updates(&session->pending, false);
@@ -6545,7 +6329,7 @@ bool fx_scene_capture_participant_for_test(
     struct wlr_scene_output* output, struct wlr_scene_node* node, struct wlr_buffer* target
 ) {
   return fx_scene_participant_admit_for_test(node) == FX_SCENE_PARTICIPANT_SUPPORTED
-      && scene_capture_range(output, node, node, target, false, true, NULL, NULL, NULL, NULL);
+      && scene_capture_range(output, node, node, target, false, true, NULL, NULL, NULL);
 }
 
 bool fx_scene_capture_participant_extent_for_test(
@@ -6553,7 +6337,7 @@ bool fx_scene_capture_participant_extent_for_test(
     const struct wlr_box* extent
 ) {
   return extent != NULL && fx_scene_participant_admit_for_test(node) == FX_SCENE_PARTICIPANT_SUPPORTED
-      && scene_capture_range(output, node, node, target, false, true, extent, NULL, NULL, NULL);
+      && scene_capture_range(output, node, node, target, false, true, extent, NULL, NULL);
 }
 
 // C0 admission deliberately rejects expanded effect groups rather than
@@ -6659,7 +6443,7 @@ static uint64_t source_pair_base_bytes(struct wlr_scene_output* scene_output) {
   }
   struct fx_scene_resource_request request = {
       .width = scene_output->output->width, .height = scene_output->output->height,
-      .faces = 1, .roles = source_native_roles_alias(scene_output) ? 1 : 2,
+      .roles = source_native_roles_alias(scene_output) ? 1 : 2,
       .color_bytes = source_pair_floating_point(scene_output) ? 8 : 4,
       // Both output/group sets, one nested shadow/group capture, blur ping-pong,
       // in-place source, backdrop and optimized/saved targets. Reserving this
@@ -6736,7 +6520,7 @@ static bool source_view_budget_walk(struct source_view_budget* budget,
   if (animation != NULL) {
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
       struct fx_effect_shader* shader = animation->shaders[slot];
-      if (shader == NULL || source_skip_slot(budget->data, node, slot)) continue;
+      if (shader == NULL) continue;
       if (++budget->stages > SOURCE_HISTORY_LIMIT) {
         return false;
       }
@@ -6763,7 +6547,7 @@ static bool source_view_budget_walk(struct source_view_budget* budget,
     // both roles at the highest supported precision, including edge rounding.
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
       struct fx_effect_shader* shader = animation->shaders[slot];
-      if (shader == NULL || source_skip_slot(budget->data, node, slot)) continue;
+      if (shader == NULL) continue;
       unsigned index = 0;
       while (index < SOURCE_HISTORY_LIMIT && budget->stage[index].node != NULL) index++;
       if (index == SOURCE_HISTORY_LIMIT) return false;
@@ -6816,9 +6600,8 @@ static bool source_view_plan(struct wlr_scene_output* output,
   if (output == NULL || output->output->renderer == NULL || output->output->allocator == NULL || view == NULL
       || !output->scene->tree.node.enabled || view->first == NULL || view->last == NULL || view->first->parent == NULL || scene_node_get_root(view->first) != output->scene
       || view->last->parent != view->first->parent || view->root_count > FX_SCENE_SOURCE_ROOT_LIMIT
-      || view->bypass_clip_count > FX_SCENE_SOURCE_CLIP_LIMIT || (view->root_count > 0 && view->roots == NULL)
-      || view->node_count > FX_SCENE_SOURCE_ROOT_LIMIT || (view->node_count > 0 && view->nodes == NULL)
-      || (view->bypass_clip_count > 0 && view->bypass_clips == NULL) || !isfinite(view->scale)
+      || (view->root_count > 0 && view->roots == NULL)
+      || !isfinite(view->scale)
       || view->scale <= 0 || view->scale > output->output->scale || view->extent.width <= 0 || view->extent.height <= 0
       || llabs(view->extent.x) + (int64_t)view->extent.width > INT_MAX / 4
       || llabs(view->extent.y) + (int64_t)view->extent.height > INT_MAX / 4) return 0;
@@ -6830,36 +6613,13 @@ static bool source_view_plan(struct wlr_scene_output* output,
   for (size_t i = 0; i < view->root_count; i++) {
     const struct fx_scene_source_root_override* root = &view->roots[i];
     if (root->root == NULL || root->visibility < FX_SCENE_SOURCE_INHERIT || root->visibility > FX_SCENE_SOURCE_HIDDEN
-        || !source_view_contains(view, root->root) || root->framing < FX_SCENE_SOURCE_CONTENT
-        || root->framing > FX_SCENE_SOURCE_VIEWPORT
-        || (root->framing == FX_SCENE_SOURCE_VIEWPORT && root->root->parent != view->first->parent)
+        || !source_view_contains(view, root->root)
         || llabs(root->offset_x) > INT_MAX / 4
         || llabs(root->offset_y) > INT_MAX / 4) return 0;
     for (size_t j = 0; j < i; j++) if (view->roots[j].root == root->root) return 0;
   }
-  for (size_t i = 0; i < view->node_count; i++) {
-    const struct fx_scene_source_node_override* override = &view->nodes[i];
-    if (override->node == NULL || !source_view_contains(view, override->node)
-        || (override->skip_slots & ~((1u << FX_SLOT_WINDOWS_IN) | (1u << FX_SLOT_WINDOWS_OUT))) != 0
-        || (override->has_opacity && (override->node->type != WLR_SCENE_NODE_BUFFER
-            || !isfinite(override->opacity) || override->opacity < 0 || override->opacity > 1))
-        || (override->has_colors && override->node->type != WLR_SCENE_NODE_RECT
-            && override->node->type != WLR_SCENE_NODE_SHADOW && override->node->type != WLR_SCENE_NODE_BORDER)) return false;
-    if (override->has_colors) {
-      for (unsigned color = 0; color < 2; color++) for (unsigned c = 0; c < 4; c++) {
-        if (!isfinite(override->colors[color][c]) || override->colors[color][c] < 0 || override->colors[color][c] > 1) return false;
-      }
-    }
-    for (size_t j = 0; j < i; j++) if (view->nodes[j].node == override->node) return false;
-  }
-  for (size_t i = 0; i < view->bypass_clip_count; i++) {
-    if (view->bypass_clips[i] == NULL || scene_node_get_root(&view->bypass_clips[i]->node) != output->scene) return 0;
-    for (size_t j = 0; j < i; j++) if (view->bypass_clips[j] == view->bypass_clips[i]) return 0;
-  }
-  if (source_view_has_viewport_bands(view) && (view->viewport.width <= 0 || view->viewport.height <= 0
-      || llabs(view->viewport.x) + (int64_t)view->viewport.width > INT_MAX / 4
-      || llabs(view->viewport.y) + (int64_t)view->viewport.height > INT_MAX / 4)) return 0;
-  if (view->emission_owner != NULL && !source_view_contains(view, view->emission_owner)) return false;
+
+
   struct fx_scene_limits limits;
   if (!fx_scene_program_get_limits(output->output->renderer, &limits)) return 0;
   double width = lround((double)view->extent.width * view->scale);
@@ -6872,17 +6632,12 @@ static bool source_view_plan(struct wlr_scene_output* output,
   }
   if (width <= 0 || height <= 0 || width > limits.texture_size || height > limits.texture_size) return 0;
   bool failed = false;
-  struct render_data data = {.source_view = view, .source_complete_view = view, .source_failed = &failed, .output = output,
+  struct render_data data = {.source_view = view, .source_failed = &failed, .output = output,
       .logical = view->extent, .scale = view->scale, .effects = scene_effects_get(output->scene, false)};
   struct source_view_budget budget = {.data = &data, .width = width,
       .height = height, .texture_limit = limits.texture_size, .native_viewport = native_viewport};
   for (struct wl_list* link = &view->first->link;; link = link->next) {
     struct wlr_scene_node* node = wl_container_of(link, node, link);
-    struct fx_scene_source_view band;
-    if (!source_view_band_frame(view, node, &band) || band.scale > output->output->scale) return 0;
-    data.source_view = &band;
-    data.scale = band.scale;
-    data.logical = band.extent;
     if (!source_view_budget_walk(&budget, node, 0)) return 0;
     if (node == view->last) break;
   }
@@ -6910,7 +6665,7 @@ static bool source_view_plan(struct wlr_scene_output* output,
       + (budget.blur ? 2 * pools + (capture_depth > 0 ? pools : 0) : 0)
       + (budget.optimized_blur ? 2u : 0u);
   struct fx_scene_resource_request request = {
-      .width = budget.width, .height = budget.height, .faces = 1, .roles = 1,
+      .width = budget.width, .height = budget.height, .roles = 1,
       .color_bytes = source_pair_floating_point(output) ? 8 : 4,
       .scratch_images = scratch_images, .texture_limit = limits.texture_size,
       .held_bytes = budget.light_bytes,
@@ -6946,121 +6701,6 @@ uint64_t fx_scene_source_view_history_bytes(struct wlr_scene_output* output,
     const struct fx_scene_source_view* view) {
   struct fx_scene_source_view_plan plan;
   return source_view_plan(output, view, &plan, NULL, false) ? plan.history_bytes : 0;
-}
-
-static bool source_view_visual_bounds(const struct render_data* data,
-    struct wlr_scene_node* node, int64_t inherited_expand, unsigned* nodes,
-    pixman_region32_t* result) {
-  int x, y;
-  if (!source_node_coords(data, node, &x, &y)) return !*data->source_failed;
-  if (++*nodes > SOURCE_VIEW_NODE_LIMIT) return false;
-  struct scene_animation* animation = scene_animation_get(node);
-  int64_t expand = inherited_expand + (animation != NULL ? animation_expand(animation) : 0);
-  if (animation != NULL && source_light_requested(data, animation)) {
-    double halo = ceil(animation->parameters[FX_SLOT_BORDER_EFFECT].light.spread * 2 + 8) + 2;
-    if (!isfinite(halo) || halo < 0 || halo > INT_MAX / 8) return false;
-    expand += (int64_t)halo;
-  }
-  if (expand < 0 || expand > INT_MAX / 8) return false;
-  if (node->type == WLR_SCENE_NODE_TREE) {
-    struct wlr_scene_node* child;
-    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
-      if (!source_view_visual_bounds(data, child, expand, nodes, result)) return false;
-    }
-    return true;
-  }
-  struct wlr_box box = {.x = x, .y = y}, clip;
-  scene_node_get_size(node, &box.width, &box.height);
-  if (source_ancestor_clip(node, x, y, &clip, data) && !wlr_box_intersection(&box, &box, &clip)) return true;
-  if (wlr_box_empty(&box)) return true;
-  if (llabs(box.x) + box.width + expand > INT_MAX / 4 ||
-      llabs(box.y) + box.height + expand > INT_MAX / 4) return false;
-  pixman_region32_union_rect(result, result, box.x - expand, box.y - expand,
-      box.width + expand * 2, box.height + expand * 2);
-  return true;
-}
-
-bool fx_scene_source_view_bounds_for_test(struct wlr_scene_output* output,
-    const struct fx_scene_source_view* view, enum fx_scene_source_framing framing,
-    struct wlr_box* bounds) {
-  if (bounds == NULL) return false;
-  *bounds = (struct wlr_box){0};
-  struct fx_scene_source_view_plan plan;
-  if (framing < FX_SCENE_SOURCE_CONTENT || framing > FX_SCENE_SOURCE_VIEWPORT ||
-      !fx_scene_source_view_plan_for_test(output, view, &plan)) return false;
-  bool failed = false, ok = true;
-  struct render_data data = {.source_view = view, .source_complete_view = view, .source_failed = &failed,
-      .output = output, .effects = scene_effects_get(output->scene, false)};
-  pixman_region32_t region;
-  pixman_region32_init(&region);
-  unsigned nodes = 0;
-  for (struct wl_list* link = &view->first->link;; link = link->next) {
-    struct wlr_scene_node* node = wl_container_of(link, node, link);
-    if (source_view_root_framing(view, node) == framing &&
-        !source_view_visual_bounds(&data, node, 0, &nodes, &region)) { ok = false; break; }
-    if (node == view->last) break;
-  }
-  if (ok && !failed && pixman_region32_not_empty(&region)) {
-    const pixman_box32_t* box = pixman_region32_extents(&region);
-    *bounds = (struct wlr_box){box->x1, box->y1, box->x2 - box->x1, box->y2 - box->y1};
-  }
-  pixman_region32_fini(&region);
-  return ok && !failed;
-}
-
-static bool source_view_hits_walk(const struct render_data* data,
-    struct wlr_scene_node* node, const float transform[4],
-    fx_scene_source_hit_iterator iterator, void* user_data, size_t* count) {
-  int x, y;
-  if (!source_node_coords(data, node, &x, &y)) return !*data->source_failed;
-  if (node->type == WLR_SCENE_NODE_TREE) {
-    struct wlr_scene_node* child;
-    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
-      if (!source_view_hits_walk(data, child, transform, iterator, user_data, count)) return false;
-    }
-    return true;
-  }
-  if (node->type == WLR_SCENE_NODE_SHADOW || fx_scene_source_light_owner(node) != NULL) return true;
-  const struct fx_scene_source_node_override* override = source_node_override(data, node);
-  if (node->type == WLR_SCENE_NODE_RECT) {
-    const float alpha = override != NULL && override->has_colors
-        ? override->colors[0][3] : wlr_scene_rect_from_node(node)->color[3];
-    if (alpha == 0) return true;
-  }
-  if (node->type == WLR_SCENE_NODE_BUFFER) {
-    struct wlr_scene_buffer* buffer = wlr_scene_buffer_from_node(node);
-    const float opacity = override != NULL && override->has_opacity ? override->opacity : buffer->opacity;
-    if (buffer->buffer == NULL || opacity == 0) return true;
-  }
-  struct wlr_box box = {.x = x, .y = y}, clip;
-  scene_node_get_size(node, &box.width, &box.height);
-  if (source_ancestor_clip(node, x, y, &clip, data) && !wlr_box_intersection(&box, &box, &clip)) return true;
-  if (wlr_box_empty(&box)) return true;
-  if (++*count > SOURCE_VIEW_NODE_LIMIT) return false;
-  const struct wlr_fbox framed = {
-      .x = box.x * (double)transform[0] + transform[2],
-      .y = box.y * (double)transform[1] + transform[3],
-      .width = box.width * (double)transform[0], .height = box.height * (double)transform[1]};
-  return iterator == NULL || iterator(node, &framed, user_data);
-}
-
-bool fx_scene_source_view_hits(struct wlr_scene_output* output,
-    const struct fx_scene_source_view* view, fx_scene_source_hit_iterator iterator,
-    void* user_data, size_t* count) {
-  struct fx_scene_source_view_plan plan;
-  if (count == NULL || !fx_scene_source_view_plan_for_test(output, view, &plan)) return false;
-  *count = 0;
-  bool failed = false;
-  struct render_data data = {.source_view = view, .source_complete_view = view,
-      .source_failed = &failed, .output = output};
-  for (struct wl_list* link = &view->first->link;; link = link->next) {
-    struct wlr_scene_node* node = wl_container_of(link, node, link);
-    float transform[4];
-    if (!fx_scene_source_view_framing_for_test(view, source_view_root_framing(view, node), transform)
-        || !source_view_hits_walk(&data, node, transform, iterator, user_data, count)) return false;
-    if (node == view->last) break;
-  }
-  return !failed;
 }
 
 uint64_t fx_scene_source_view_bytes_for_test(struct wlr_scene_output* output,
@@ -7116,7 +6756,7 @@ bool fx_scene_source_view_pair_capture_for_test(struct wlr_scene_output* scene_o
   int height = lround((double)view->extent.height * view->scale);
   wlr_output_transform_coords(output->transform, &width, &height);
   bool failed = false, alias = true;
-  struct render_data data = {.source_view = view, .source_complete_view = view, .source_failed = &failed};
+  struct render_data data = {.source_view = view, .source_failed = &failed};
   for (struct wl_list* link = &view->first->link;; link = link->next) {
     struct wlr_scene_node* node = wl_container_of(link, node, link);
     alias &= source_view_roles_identical(&data, node);
@@ -7153,139 +6793,6 @@ void fx_scene_source_pair_finish_for_test(struct fx_scene_source_pair_for_test* 
     wlr_buffer_drop(pair->unfiltered);
   }
   *pair = (struct fx_scene_source_pair_for_test){0};
-}
-
-static struct fx_effect_light_cache* source_native_emission(struct wlr_scene_output* output,
-    struct wlr_scene_node* owner, bool unfiltered) {
-  if (output == NULL || owner == NULL || scene_node_get_root(owner) != output->scene) return NULL;
-  struct scene_animation* animation = scene_animation_get(owner);
-  if (animation == NULL || animation->light == NULL) return NULL;
-  struct fx_effect_light_cache* cache = unfiltered && !source_native_roles_alias(output)
-      ? animation->light->capture_cache : animation->light->cache;
-  if (fx_effect_light_cache_bytes(cache) == 0 || !cache->committed || cache->output != output->output
-      || cache->transform != output->output->transform || cache->logical_box.width <= 0 || cache->logical_box.height <= 0) return NULL;
-  return cache;
-}
-
-uint64_t fx_scene_emission_source_bytes(struct wlr_scene_output* output, struct wlr_scene_node* owner) {
-  struct fx_effect_light_cache* display = source_native_emission(output, owner, false);
-  struct fx_effect_light_cache* capture = source_native_emission(output, owner, true);
-  if (display == NULL || capture == NULL || display->working_space != capture->working_space
-      || display->emission_width != capture->emission_width || display->emission_height != capture->emission_height
-      || !wlr_box_equal(&display->logical_box, &capture->logical_box)) return 0;
-  uint64_t pixels = (uint64_t)display->emission_width * display->emission_height;
-  unsigned bpp = display->emission_type == GL_HALF_FLOAT_OES || capture->emission_type == GL_HALF_FLOAT_OES ? 8 : 4;
-  unsigned roles = display == capture ? 1 : 2;
-  uint64_t overhead = sizeof(struct fx_scene_emission_source) + roles * 4096;
-  if (pixels > (FX_SCENE_OUTPUT_BUDGET - overhead) / bpp / roles) return 0;
-  return pixels * bpp * roles + overhead;
-}
-
-void fx_scene_emission_source_finish(struct fx_scene_emission_source* source) {
-  if (source == NULL) return;
-  if (source->unfiltered != NULL && source->unfiltered != source->display) wlr_buffer_drop(source->unfiltered);
-  if (source->display != NULL) wlr_buffer_drop(source->display);
-  *source = (struct fx_scene_emission_source){0};
-}
-
-bool fx_scene_emission_source_capture(struct wlr_scene_output* output, struct wlr_scene_node* owner,
-    uint64_t reserved_bytes, struct fx_scene_emission_source* source) {
-  uint64_t bytes = fx_scene_emission_source_bytes(output, owner);
-  if (source == NULL || source->display != NULL || source->unfiltered != NULL || bytes == 0 || reserved_bytes < bytes) return false;
-  struct fx_effect_light_cache* display = source_native_emission(output, owner, false);
-  struct fx_effect_light_cache* capture = source_native_emission(output, owner, true);
-  bool fp16 = display->emission_type == GL_HALF_FLOAT_OES || capture->emission_type == GL_HALF_FLOAT_OES;
-  struct fx_scene_emission_source candidate = {.extent = display->logical_box, .recipe = display->recipe,
-      .reserved_bytes = bytes, .working_space = display->working_space, .floating_point = fp16};
-  candidate.extent.x += output->x;
-  candidate.extent.y += output->y;
-  candidate.display = fx_scene_buffer_create(output->output->renderer, output->output->allocator,
-      display->emission_width, display->emission_height, fp16);
-  candidate.unfiltered = display == capture ? candidate.display : fx_scene_buffer_create(output->output->renderer,
-      output->output->allocator, capture->emission_width, capture->emission_height, fp16);
-  if (candidate.display == NULL || candidate.unfiltered == NULL
-      || !fx_effect_light_cache_copy_emission(display, candidate.display)
-      || (display != capture && !fx_effect_light_cache_copy_emission(capture, candidate.unfiltered))) {
-    fx_scene_emission_source_finish(&candidate);
-    return false;
-  }
-  *source = candidate;
-  return true;
-}
-
-bool fx_scene_emission_view_plan(struct wlr_scene_output* output,
-    const struct fx_scene_source_view* view, struct wlr_scene_node* owner,
-    struct fx_scene_emission_view_plan* result) {
-  if (result == NULL) return false;
-  *result = (struct fx_scene_emission_view_plan){0};
-  if (view == NULL || view->first == NULL || view->last == NULL || view->first->parent == NULL
-      || owner == NULL || !source_view_contains(view, owner) || source_view_has_viewport_bands(view)) return 0;
-  struct scene_animation* animation = scene_animation_get(owner);
-  if (animation == NULL || animation->shaders[FX_SLOT_BORDER_EFFECT] == NULL
-      || animation->shaders[FX_SLOT_BORDER_EFFECT]->previous_tex >= 0) return 0;
-  struct fx_scene_source_view capture = *view;
-  capture.emission_owner = owner;
-  capture.transparent = true;
-  struct fx_scene_source_view_plan plan;
-  if (!fx_scene_source_view_plan_for_test(output, &capture, &plan)) return 0;
-  bool failed = false;
-  struct render_data data = {.source_view = &capture, .source_failed = &failed,
-      .output = output, .effects = scene_effects_get(output->scene, false)};
-  if (!source_light_requested(&data, animation)) return 0;
-  int x, y;
-  if (!source_node_coords(&data, owner, &x, &y)) return 0;
-  pixman_region32_t bounds;
-  pixman_region32_init(&bounds);
-  source_node_bounds(owner, x, y, &bounds, &data);
-  const pixman_box32_t* box = pixman_region32_extents(&bounds);
-  double width = ceil(((double)box->x2 - box->x1 + 2 * animation_expand(animation) + 4) * view->scale) + 4;
-  double height = ceil(((double)box->y2 - box->y1 + 2 * animation_expand(animation) + 4) * view->scale) + 4;
-  pixman_region32_fini(&bounds);
-  if (failed || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0
-      || width * height > FX_SCENE_OUTPUT_BUDGET / 16) return 0;
-  // One ordinary face target is reused for both roles; retain both raw emissions
-  // plus conservative descriptor/import storage before publishing either role.
-  uint64_t retained = (uint64_t)width * (uint64_t)height * 16 + 8192 + sizeof(struct fx_scene_emission_source);
-  // Capture reuses one face target; raw role images remain independently held.
-  uint64_t capture_bytes = plan.capture_bytes + (uint64_t)plan.width * plan.height * (plan.floating_point ? 8 : 4);
-  uint64_t peak = capture_bytes + retained;
-  if (peak > FX_SCENE_OUTPUT_BUDGET) return false;
-  *result = (struct fx_scene_emission_view_plan){retained, capture_bytes, peak};
-  return true;
-}
-
-uint64_t fx_scene_emission_view_bytes(struct wlr_scene_output* output,
-    const struct fx_scene_source_view* view, struct wlr_scene_node* owner) {
-  struct fx_scene_emission_view_plan plan;
-  return fx_scene_emission_view_plan(output, view, owner, &plan) ? plan.total_bytes : 0;
-}
-
-bool fx_scene_emission_view_capture(struct wlr_scene_output* output,
-    const struct fx_scene_source_view* view, struct wlr_scene_node* owner,
-    uint64_t reserved_bytes, struct fx_scene_emission_source* source) {
-  uint64_t bytes = fx_scene_emission_view_bytes(output, view, owner);
-  if (source == NULL || source->display != NULL || source->unfiltered != NULL || !bytes || reserved_bytes < bytes) return false;
-  struct fx_scene_source_view capture = *view;
-  capture.emission_owner = owner;
-  capture.transparent = true;
-  struct fx_scene_source_view_plan plan;
-  if (!fx_scene_source_view_plan_for_test(output, &capture, &plan)) return false;
-  struct wlr_buffer* target = fx_scene_buffer_create(output->output->renderer, output->output->allocator,
-      plan.width, plan.height, plan.floating_point);
-  if (target == NULL) return false;
-  struct source_emission_export roles[2] = {{.owner = owner}, {.owner = owner}};
-  bool ok = scene_capture_range(output, view->first, view->last, target, false, true, NULL, NULL, &capture, &roles[0])
-      && scene_capture_range(output, view->first, view->last, target, true, true, NULL, NULL, &capture, &roles[1]);
-  wlr_buffer_drop(target);
-  ok = ok && roles[0].working_space == roles[1].working_space && wlr_box_equal(&roles[0].extent, &roles[1].extent)
-      && roles[0].buffer->width == roles[1].buffer->width && roles[0].buffer->height == roles[1].buffer->height;
-  if (!ok) {
-    for (unsigned i = 0; i < 2; i++) if (roles[i].buffer != NULL) wlr_buffer_drop(roles[i].buffer);
-    return false;
-  }
-  *source = (struct fx_scene_emission_source){.display = roles[0].buffer, .unfiltered = roles[1].buffer,
-      .extent = roles[0].extent, .recipe = roles[0].recipe, .working_space = roles[0].working_space, .floating_point = roles[0].floating_point, .reserved_bytes = bytes};
-  return true;
 }
 
 static struct fx_scene_source_session* source_frozen_session_create(struct wlr_scene_output* output,
@@ -7607,7 +7114,7 @@ bool fx_scene_source_view_session_matches(struct wlr_scene_output* output,
   if (!source_session_matches_output(session) || !session->virtual_view || session->output != output
       || view == NULL || session->first != view->first || session->last != view->last
       || !wlr_box_equal(&session->view_extent, &view->extent)
-      || !wlr_box_equal(&session->view_viewport, &view->viewport) || session->view_scale != view->scale) return false;
+      || session->view_scale != view->scale) return false;
   struct source_view_budget stages;
   struct fx_scene_source_view_plan plan;
   if (!source_view_plan(output, view, &plan, &stages, false) || plan.history_bytes > session->reserved_history_bytes
@@ -7636,7 +7143,6 @@ static struct fx_scene_source_session* source_view_session_create(struct wlr_sce
   session->virtual_view = !frozen;
   session->frozen = frozen;
   session->view_extent = view->extent;
-  session->view_viewport = view->viewport;
   session->view_scale = view->scale;
   session->reserved_history_bytes = reserved_history_bytes;
   session->width = output->output->width;
@@ -7789,7 +7295,7 @@ bool fx_scene_source_session_capture_for_test(struct fx_scene_source_session* se
     return session->cached[role] == target;
   }
   bool ok = scene_capture_range(session->output, session->first, session->last,
-      target, unfiltered, false, NULL, session, NULL, NULL);
+      target, unfiltered, false, NULL, session, NULL);
   if (ok) {
     session->cached[role] = wlr_buffer_lock(target);
   } else {

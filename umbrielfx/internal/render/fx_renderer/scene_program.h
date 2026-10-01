@@ -2,6 +2,7 @@
 #define FX_SCENE_PROGRAM_PRIVATE_H
 
 #include <stdbool.h>
+#include <umbrielfx/render/glsl.h>
 #include <stdint.h>
 #include "scene_resources.h"
 
@@ -18,8 +19,8 @@ enum fx_scene_profile {
 };
 
 #define FX_SCENE_PARAMETERS 32
-#define FX_SCENE_VERTEX_VECTORS 41u
-#define FX_SCENE_FRAGMENT_VECTORS 52u
+#define FX_SCENE_VERTEX_VECTORS 19u
+#define FX_SCENE_FRAGMENT_VECTORS 28u
 struct fx_scene_limits {
 	unsigned texture_size, vertex_vectors, fragment_vectors, fragment_texture_units;
 };
@@ -59,12 +60,12 @@ struct wlr_buffer *fx_scene_buffer_create(struct wlr_renderer *renderer,
 	struct wlr_allocator *allocator, int width, int height, bool floating_point);
 
 // Prepared before acquiring presentation. Retains the supplied buffer and
-// prepares depth storage for scene-set targets. Caller budgets both resources.
+// retains its framebuffer. The caller budgets the backing image.
 struct fx_scene_target *fx_scene_target_create(struct wlr_renderer *renderer,
-	struct wlr_buffer *buffer, bool depth);
+	struct wlr_buffer *buffer);
 // Explicit value encoding, including gamma-valued FP16 for unmanaged 10-bit.
 struct fx_scene_target *fx_scene_target_create_with_color(struct wlr_renderer *renderer,
-	struct wlr_buffer *buffer, bool depth, bool working_space);
+	struct wlr_buffer *buffer, bool working_space);
 void fx_scene_target_destroy(struct fx_scene_target *target);
 struct fx_scene_input {
 	struct wlr_texture *texture;
@@ -77,5 +78,12 @@ struct fx_scene_input {
 // native rendering only after success. Failure leaves target contents unspecified.
 bool fx_scene_program_render(struct fx_scene_program *program,
 	struct fx_scene_target *target, const struct fx_scene_frame *frame, const struct fx_scene_input pair[2]);
+
+// Names emitted by the scene wrapper are unavailable to user parameters.
+static inline bool fx_scene_parameter_identifier(const char *name) {
+  return fx_glsl_identifier(name) && strncmp(name, "umbriel_", 8) != 0 &&
+    strncmp(name, "_fx_", 4) != 0 && strcmp(name, "main") != 0 &&
+    strcmp(name, "transition") != 0 && strcmp(name, "transition_vertex") != 0;
+}
 
 #endif

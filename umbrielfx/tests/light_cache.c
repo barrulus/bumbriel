@@ -142,74 +142,6 @@ static bool experiment(struct fixture *fixture, GLenum type, struct fx_effect_li
 	return ok;
 }
 
-static bool light_pixel(GLuint framebuffer, GLenum type, int x, int y, float pixel[4]) {
-	glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-	if (type == GL_HALF_FLOAT_OES) {
-		glReadPixels(x, y, 1, 1, GL_RGBA, GL_FLOAT, pixel);
-	} else {
-		uint8_t bytes[4] = {0};
-		glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, bytes);
-		for (unsigned i = 0; i < 4; i++) {
-			pixel[i] = bytes[i] / 255.0f;
-		}
-	}
-	return glGetError() == GL_NO_ERROR;
-}
-
-static bool scene_emission(struct fixture *fixture, struct wlr_buffer *source) {
-	struct fx_renderer *renderer = fx_get_renderer(fixture->renderer);
-	struct fx_effect_light_cache *cache = fx_effect_light_cache_create(renderer);
-	bool ok = check(cache && fx_effect_prepare_light(renderer) &&
-		fx_effect_light_cache_prepare_scene(cache, TEST_WIDTH, TEST_HEIGHT, 8),
-		"prepare fixed padded scene emission before drawing");
-	if (!ok) {
-		fx_effect_light_cache_destroy(cache);
-		return false;
-	}
-	uint64_t bytes = fx_effect_light_cache_storage_bytes(cache);
-	GLuint emission = cache->emission_texture, pyramid[FX_LIGHT_LEVELS + 1];
-	memcpy(pyramid, cache->textures, sizeof(pyramid));
-	ok &= check(bytes > 0 && fx_effect_light_cache_bytes(cache) == 0 &&
-		fx_effect_light_cache_clone(cache) == NULL, "reserved storage is not completed light");
-	struct wlr_texture *texture = wlr_texture_from_buffer(fixture->renderer, source);
-	struct wlr_buffer *target = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, TEST_WIDTH, TEST_HEIGHT);
-	struct wlr_render_pass *base = target ? wlr_renderer_begin_buffer_pass(fixture->renderer, target, NULL) : NULL;
-	ok &= check(texture && base, "scene light texture and pass");
-	if (base && texture) {
-		struct fx_gles_render_pass *pass = fx_get_render_pass(base);
-		struct fx_effect_light light = {.spread = 8, .intensity = 1, .threshold = 0};
-		for (unsigned i = 0; i < 2; i++) {
-			light.threshold = i;
-			ok &= check(fx_render_pass_emit_scene_light(pass, cache, texture, &light, 1),
-				"threshold already-authored texture using prepared storage");
-			float pixel[4] = {0};
-			ok &= check(light_pixel(cache->emission_framebuffer, cache->emission_type,
-				TEST_WIDTH / 2, TEST_HEIGHT / 2, pixel) &&
-				pixel[0] == 0 && pixel[1] == 1 && pixel[2] == 0 && pixel[3] == 1,
-				"authored emission copied without transfer or opacity change");
-			ok &= check(light_pixel(cache->framebuffers[0], cache->types[0],
-				cache->widths[0] / 2, cache->heights[0] / 2, pixel) && (i == 0 ? pixel[1] > 0.4f : pixel[1] == 0),
-				"threshold negative control changes blurred light without reevaluating an effect");
-			ok &= check(cache->emission_texture == emission && memcmp(pyramid, cache->textures, sizeof(pyramid)) == 0 &&
-				fx_effect_light_cache_bytes(cache) == bytes, "successive recipes reuse every preallocated image");
-		}
-		ok &= check(!fx_render_pass_emit_scene_light(pass, cache, texture, &light, 2) &&
-			!cache->valid && cache->emission_texture == emission,
-			"unadmitted scale rejects instead of allocating during a draw");
-	}
-	if (base) {
-		ok &= check(wlr_render_pass_submit(base), "submit scene emission fixture");
-	}
-	if (texture) {
-		wlr_texture_destroy(texture);
-	}
-	if (target) {
-		wlr_buffer_drop(target);
-	}
-	fx_effect_light_cache_destroy(cache);
-	return ok;
-}
-
 int main(void) {
 	struct fixture fixture;
 	if (!fixture_init(&fixture)) {
@@ -236,7 +168,6 @@ int main(void) {
 			"cloning preserves subsequent ordinary renderer drawing");
 	}
 	if (byte && buffer) {
-		ok &= scene_emission(&fixture, buffer);
 		fx_effect_light_cache_await_commit(byte, buffer);
 		ok &= check(!byte->committed && byte->pending_buffer == buffer,
 			"rendered emission is unavailable before its output submission succeeds");

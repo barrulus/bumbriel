@@ -90,10 +90,12 @@ UMBRIEL_TEST(sceneParametersRejectReservedDuplicateAndInvalidValues) {
   CHECK(!validateParameters(parameters));
   for (std::string_view invalid :
        {"", "1name", "a.b", "umbriel_time", "gl_Position", "_fx_wrapper", "name__reserved", "float", "uniform", "main",
-        "transition", "transition_vertex", "transition_fragment", "transition_composite"}) {
+        "transition", "transition_vertex"}) {
     parameters[0].name = invalid;
     CHECK(validateParameters(parameters).has_value());
   }
+  parameters[0].name = std::string("strength\0suffix", 15);
+  CHECK(validateParameters(parameters).has_value());
   parameters[0].name = "strength";
   parameters[0].values[0] = std::numeric_limits<float>::quiet_NaN();
   CHECK(validateParameters(parameters).has_value());
@@ -144,23 +146,6 @@ UMBRIEL_TEST(sceneParameterTablesAreAtomicAndTyped) {
     excess += "p" + std::to_string(i) + " = 0\n";
   }
   CHECK(!read(excess));
-}
-
-UMBRIEL_TEST(sceneStageAdmissionCountsAllInputsAndRejectsOverflow) {
-  StageUsage usage{.builtinVectors = 10, .parameterVectors = 2, .paletteVectors = 17, .samplers = 2, .cpuEntries = 7};
-  StageLimits limits{.uniformVectors = 31, .textureUnits = 2, .cpuEntries = 7};
-  CHECK(fitsStage(usage, limits));
-  --limits.uniformVectors;
-  CHECK(!fitsStage(usage, limits));
-  ++limits.uniformVectors;
-  --limits.textureUnits;
-  CHECK(!fitsStage(usage, limits));
-  ++limits.textureUnits;
-  --limits.cpuEntries;
-  CHECK(!fitsStage(usage, limits));
-  ++limits.cpuEntries;
-  usage.builtinVectors = std::numeric_limits<unsigned>::max();
-  CHECK(!fitsStage(usage, limits));
 }
 
 int main() { return RUN_TESTS(); }

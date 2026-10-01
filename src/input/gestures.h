@@ -96,8 +96,6 @@ namespace umbriel {
 
     Server* m_server = nullptr;
     State m_state = State::Idle;
-    bool m_pinchForwarded = false;
-    bool m_holdForwarded = false;
     double m_accumX = 0;
     double m_accumY = 0;
     Output* m_output = nullptr;

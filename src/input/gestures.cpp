@@ -434,10 +434,6 @@ namespace umbriel {
     if (m_state != State::Idle) {
       cancelActive();
     }
-    if (m_server->cursor()->sceneInputBlocked()) {
-      m_state = State::Blocked;
-      return;
-    }
     Overview* overview = m_server->overview();
     if (event->fingers == 4 && overview != nullptr) {
       overview->cancelNavigation();
@@ -859,8 +855,7 @@ namespace umbriel {
     auto* event = static_cast<wlr_pointer_pinch_begin_event*>(data);
     m_server->notifyInputActivity();
     m_server->cancelModifierTap();
-    m_pinchForwarded = !m_server->sessionLocked() && !m_server->cursor()->sceneInputBlocked();
-    if (!m_pinchForwarded) {
+    if (m_server->sessionLocked()) {
       return;
     }
     wlr_pointer_gestures_v1_send_pinch_begin(
@@ -871,7 +866,7 @@ namespace umbriel {
   void Gestures::handlePinchUpdate(void* data) {
     auto* event = static_cast<wlr_pointer_pinch_update_event*>(data);
     m_server->notifyInputActivity();
-    if (m_server->sessionLocked() || !m_pinchForwarded) {
+    if (m_server->sessionLocked()) {
       return;
     }
     wlr_pointer_gestures_v1_send_pinch_update(
@@ -883,9 +878,7 @@ namespace umbriel {
   void Gestures::handlePinchEnd(void* data) {
     auto* event = static_cast<wlr_pointer_pinch_end_event*>(data);
     m_server->notifyIdleActivity();
-    const bool forwarded = m_pinchForwarded;
-    m_pinchForwarded = false;
-    if (m_server->sessionLocked() || !forwarded) {
+    if (m_server->sessionLocked()) {
       return;
     }
     wlr_pointer_gestures_v1_send_pinch_end(
@@ -899,8 +892,7 @@ namespace umbriel {
     auto* event = static_cast<wlr_pointer_hold_begin_event*>(data);
     m_server->notifyInputActivity();
     m_server->cancelModifierTap();
-    m_holdForwarded = !m_server->sessionLocked() && !m_server->cursor()->sceneInputBlocked();
-    if (!m_holdForwarded) {
+    if (m_server->sessionLocked()) {
       return;
     }
     wlr_pointer_gestures_v1_send_hold_begin(
@@ -911,9 +903,7 @@ namespace umbriel {
   void Gestures::handleHoldEnd(void* data) {
     auto* event = static_cast<wlr_pointer_hold_end_event*>(data);
     m_server->notifyIdleActivity();
-    const bool forwarded = m_holdForwarded;
-    m_holdForwarded = false;
-    if (m_server->sessionLocked() || !forwarded) {
+    if (m_server->sessionLocked()) {
       return;
     }
     wlr_pointer_gestures_v1_send_hold_end(

@@ -12,7 +12,6 @@ unit_tests = [
     '-Wl,--wrap=wlr_texture_destroy', '-Wl,--wrap=fx_scene_program_render',
   ]],
   ['scene-effects', ['unit/scene_effects.cpp'], [umbriel_core_dep]],
-  ['scene-presentation', ['unit/scene_presentation.cpp'], []],
   ['overview-navigation', ['unit/overview_navigation.cpp'], []],
   ['gesture-physics', ['unit/gesture_physics.cpp'], []],
   ['overview-preview-geometry', ['unit/overview_preview_geometry.cpp'], [umbriel_core_dep]],

@@ -85,23 +85,23 @@ static bool experiment(struct fixture *fixture) {
 	wlr_scene_node_set_animation(&overlay->node, FX_SLOT_WINDOW, window_shader, &parameters);
 	struct wlr_buffer *source = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
 	ok &= check(source && light_shader && window_shader && group_shader, "virtual source resources");
-	for (unsigned framing = 0; ok && framing < 3; framing++) {
+	{
 		for (unsigned role = 0; ok && role < 2; role++) {
 			// Native oracle scales the complete output. Enlarge only shared
 			// geometry to keep its final face-coordinate size/position fixed.
-			wlr_scene_rect_set_size(pinned, framing == 2 ? 4 : 2, framing == 2 ? 4 : 2);
-			wlr_scene_node_set_position(&pinned->node, framing == 2 ? 28 : 14, 0);
-			wlr_scene_rect_set_size(stripe, framing == 2 ? 8 : 4, 32);
-			wlr_scene_node_set_position(&stripe->node, framing == 2 ? 16 : 8, 0);
+			wlr_scene_rect_set_size(pinned, 2, 2);
+			wlr_scene_node_set_position(&pinned->node, 14, 0);
+			wlr_scene_rect_set_size(stripe, 4, 32);
+			wlr_scene_node_set_position(&stripe->node, 8, 0);
 			wlr_scene_node_set_enabled(&active->node, false);
 			wlr_scene_node_set_enabled(&hidden->node, true);
 			wlr_scene_node_set_position(&hidden->node, 0, 0);
 			wlr_scene_node_set_enabled(&overlay->node, false);
-			wlr_scene_tree_set_clip(workspace, framing ? NULL : &viewport);
+			wlr_scene_tree_set_clip(workspace, &viewport);
 			wlr_scene_node_set_animation(&hidden->node, FX_SLOT_WINDOW, role ? NULL : window_shader, &parameters);
 			struct wlr_output_state state;
 			wlr_output_state_init(&state);
-			wlr_output_state_set_scale(&state, framing ? 0.5f : 1);
+			wlr_output_state_set_scale(&state, 1);
 			ok &= wlr_output_commit_state(fixture->output, &state);
 			wlr_output_state_finish(&state);
 			struct wlr_buffer *native = fixture_render_scene(fixture, output, &state);
@@ -125,36 +125,18 @@ static bool experiment(struct fixture *fixture) {
 			struct fx_scene_source_root_override roots[] = {
 				{.root = &active->node, .visibility = FX_SCENE_SOURCE_HIDDEN},
 				{.root = &hidden->node, .visibility = FX_SCENE_SOURCE_VISIBLE, .offset_x = -100},
-				{.root = &backdrop->node, .framing = framing == 2 ? FX_SCENE_SOURCE_VIEWPORT : FX_SCENE_SOURCE_CONTENT},
-				{.root = &pinned->node, .framing = framing == 2 ? FX_SCENE_SOURCE_VIEWPORT : FX_SCENE_SOURCE_CONTENT},
-				{.root = &lights->node, .framing = framing == 2 ? FX_SCENE_SOURCE_VIEWPORT : FX_SCENE_SOURCE_CONTENT},
+				{.root = &backdrop->node},
+				{.root = &pinned->node},
+				{.root = &lights->node},
 			};
-			struct wlr_scene_tree *bypass[] = {workspace};
 			struct fx_scene_source_view view = {.first = &backdrop->node, .last = &pinned->node,
-				.roots = roots, .root_count = 5, .bypass_clips = bypass, .bypass_clip_count = framing ? 1 : 0,
-				.extent = {-8, 16, framing ? 32 : 16, framing ? 32 : 16}, .scale = framing ? 0.5f : 1, .viewport = {-8, 16, 16, 16}};
+				.roots = roots, .root_count = 5,
+				.extent = {-8, 16, 16, 16}, .scale = 1};
 			uint64_t bytes = fx_scene_source_view_bytes_for_test(output, &view);
 			struct fx_scene_source_view_plan plan;
 			ok &= check(fx_scene_source_view_plan_for_test(output, &view, &plan)
 				&& plan.total_bytes == bytes && plan.total_bytes == plan.retained_bytes + plan.capture_bytes
 				&& plan.width == 16 && plan.height == 16, "source plan separates retained images from reusable capture peak");
-			float content_transform[4], shared_transform[4];
-			ok &= check(fx_scene_source_view_framing_for_test(&view, FX_SCENE_SOURCE_CONTENT, content_transform)
-				&& fx_scene_source_view_framing_for_test(&view, FX_SCENE_SOURCE_VIEWPORT, shared_transform)
-				&& content_transform[0] == (framing ? 0.5f : 1)
-				&& content_transform[2] == (framing ? 4 : 8)
-				&& content_transform[3] == (framing ? -8 : -16)
-				&& shared_transform[0] == 1 && shared_transform[2] == 8 && shared_transform[3] == -16,
-				"exact content and shared framing metadata matches rendered band transforms");
-			struct wlr_box visual;
-			ok &= check(!fx_scene_source_working_space(output) &&
-				fx_scene_source_view_bounds_for_test(output, &view, FX_SCENE_SOURCE_CONTENT, &visual),
-				"source visual bounds query validates selected virtual geometry");
-			if (framing == 2) {
-				ok &= check(visual.x <= -20 && visual.y <= 4 && visual.x + visual.width >= 20
-					&& visual.y + visual.height >= 40,
-					"fit content bounds include cold light halo and off-viewport transient content");
-			}
 			unsigned before_samples = samples.count;
 			pixman_region32_t before_damage;
 			pixman_region32_init(&before_damage);
@@ -217,111 +199,6 @@ static bool experiment(struct fixture *fixture) {
 	if (source) wlr_buffer_drop(source);
 	return ok;
 }
-static bool target_bypass(struct fixture *fixture) {
-	struct wlr_scene *scene = wlr_scene_create();
-	struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
-	struct wlr_scene_tree *workspace = wlr_scene_tree_create(&scene->tree);
-	struct wlr_scene_tree *target = wlr_scene_tree_create(workspace);
-	const float border_color[] = {0.4f, 0.1f, 0.05f, 0.5f}, shadow_color[] = {0, 0, 0, 0.4f}, zero[4] = {0};
-	struct wlr_scene_shadow *shadow = wlr_scene_shadow_create(target, 12, 12, 1, 2, shadow_color);
-	wlr_scene_node_set_position(&shadow->node, 1, 1);
-	struct wlr_buffer *pixels = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 8, 8);
-	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(fixture->renderer, pixels, NULL);
-	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {0, 0, 8, 8}, .color = {0.3f, 0.2f, 0.1f, 0.5f}, .blend_mode = WLR_RENDER_BLEND_MODE_NONE});
-	bool ok = wlr_render_pass_submit(pass);
-	struct wlr_scene_buffer *content = wlr_scene_buffer_create(target, pixels);
-	wlr_buffer_drop(pixels);
-	wlr_scene_node_set_position(&content->node, 3, 3);
-	wlr_scene_buffer_set_opacity(content, 0.6f);
-	struct wlr_scene_border *border = wlr_scene_border_create(target, border_color, border_color);
-	wlr_scene_border_set_geometry(border, 10, 10, 1, 0, (struct clipped_region){.area = {1, 1, 8, 8}},
-		(struct fx_corner_radii){0}, (struct fx_corner_radii){0});
-	wlr_scene_node_set_position(&border->node, 2, 2);
-	// Preserve this unrelated stage while bypassing only the target's lifecycle.
-	struct fx_effect_shader *move = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
-		"vec4 animation(vec2 uv){vec4 c=umbriel_sample(uv);return vec4(c.b,c.r,c.g,c.a)*0.75;}", "participant-unrelated-move");
-	struct fx_effect_shader *opening = fx_effect_shader_create(fixture->renderer, FX_EFFECT_ANIMATION,
-		"vec4 animation(vec2 uv){return umbriel_sample_previous(uv)*0.5;}", "participant-bypassed-feedback-opening");
-	struct fx_animation_parameters params = {.progress = 0.5f, .linear_progress = 0.5f, .direction = 1};
-	wlr_scene_node_set_animation(&target->node, FX_SLOT_WINDOWS_MOVE, move, &params);
-	struct wlr_buffer *reference = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
-	ok &= move && opening && fx_scene_capture_participant_extent_for_test(output, &target->node, reference,
-		&(struct wlr_box){0, 0, 16, 16});
-	wlr_scene_buffer_set_opacity(content, 0);
-	wlr_scene_border_set_colors(border, zero, zero);
-	wlr_scene_shadow_set_color(shadow, zero);
-	wlr_scene_node_set_animation(&target->node, FX_SLOT_WINDOWS_IN, opening, &params);
-	wlr_scene_node_set_animation_output_clip(&target->node, &(struct wlr_box){0});
-	struct fx_scene_source_node_override overrides[] = {
-		{.node = &target->node, .skip_slots = 1u << FX_SLOT_WINDOWS_IN, .skip_animation_clip = true},
-		{.node = &content->node, .has_opacity = true, .opacity = 0.6f},
-		{.node = &border->node, .has_colors = true, .colors = {{0.4f, 0.1f, 0.05f, 0.5f}, {0.4f, 0.1f, 0.05f, 0.5f}}},
-		{.node = &shadow->node, .has_colors = true, .colors = {{0, 0, 0, 0.4f}}},
-	};
-	struct fx_scene_source_view view = {.first = &target->node, .last = &target->node,
-		.extent = {0, 0, 16, 16}, .scale = 1, .transparent = true, .nodes = overrides, .node_count = 4};
-	uint64_t bytes = fx_scene_source_view_bytes_for_test(output, &view);
-	struct fx_scene_source_pair_for_test pair = {0};
-	pixman_region32_t damage;
-	pixman_region32_init(&damage);
-	pixman_region32_copy(&damage, &output->pending_commit_damage);
-	ok &= check(bytes && fx_scene_source_view_pair_capture_for_test(output, &view, bytes, &pair),
-		"nested target pair bypasses only replaced lifecycle even with zero native fade");
-	ok &= pair.display && equal(fixture, reference, pair.display) && equal(fixture, reference, pair.unfiltered);
-	ok &= check(content->opacity == 0 && border->inner_color[3] == 0 && shadow->color[3] == 0 &&
-		pixman_region32_equal(&damage, &output->pending_commit_damage), "target bypass preserves native opacity/colors/damage");
-	fx_scene_source_pair_finish_for_test(&pair);
-	struct fx_effect_shader *cold = fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER,
-		"vec4 border(vec2 uv){return vec4(0.8,0.2,0.1,1.0);}", "participant-cold-emission");
-	params.light = (struct fx_effect_light){.enabled = true, .spread = 3, .intensity = 1.5f, .threshold = 0.4f};
-	wlr_scene_node_set_animation(&border->node, FX_SLOT_BORDER_EFFECT, cold, &params);
-	pixman_region32_copy(&damage, &output->pending_commit_damage);
-	struct fx_scene_emission_source raw = {0};
-	uint64_t raw_bytes = fx_scene_emission_view_bytes(output, &view, &border->node);
-	ok &= check(cold && raw_bytes && fx_scene_emission_source_bytes(output, &border->node) == 0,
-		"cold border has no committed native emission or light proxy");
-	ok &= check(!fx_scene_emission_view_capture(output, &view, &border->node, raw_bytes - 1, &raw) && raw.display == NULL,
-		"cold emission reserves complete raw roles and capture peak");
-	ok &= check(fx_scene_emission_view_capture(output, &view, &border->node, raw_bytes, &raw)
-		&& raw.display && raw.unfiltered && raw.extent.x == 2 && raw.extent.y == 2 && raw.extent.width == 10
-		&& raw.extent.height == 10 && raw.recipe.threshold == 0.4f && !raw.working_space,
-		"cold source-only emission exports exact owner extent and held recipe");
-	for (unsigned role = 0; ok && role < 2; role++) {
-		struct wlr_buffer *image = role ? raw.unfiltered : raw.display;
-		struct fx_framebuffer *fb = fx_framebuffer_get_or_create(fx_get_renderer(fixture->renderer), image);
-		unsigned count = image->width * image->height * 4;
-		float red = 0;
-		if (fb->drm_format == DRM_FORMAT_ABGR16161616F) {
-			uint16_t pixels[count];
-			ok &= read_buffer(fixture, image, DRM_FORMAT_ABGR16161616F, image->width * 8, pixels);
-			for (unsigned i = 0; i < count; i += 4) {
-				int exponent = (pixels[i] >> 10) & 31;
-				float value = exponent ? ldexpf(1 + (pixels[i] & 1023) / 1024.0f, exponent - 15) : ldexpf(pixels[i] & 1023, -24);
-				red = fmaxf(red, value);
-			}
-		} else {
-			uint8_t pixels[count];
-			ok &= read_buffer(fixture, image, DRM_FORMAT_ABGR8888, image->width * 4, pixels);
-			for (unsigned i = 0; i < count; i += 4) red = fmaxf(red, pixels[i] / 255.0f);
-		}
-		ok &= check(fabsf(red - 0.8f) < 0.005f, "cold raw emission precedes threshold and unrelated parent compositing");
-	}
-	ok &= check(fx_scene_emission_source_bytes(output, &border->node) == 0
-		&& pixman_region32_equal(&damage, &output->pending_commit_damage) && border->inner_color[3] == 0,
-		"cold acquisition leaves native light ownership/properties/damage untouched");
-	fx_scene_emission_source_finish(&raw);
-	fx_effect_shader_unref(cold);
-	view.node_count = 0;
-	struct fx_scene_source_view_plan history_plan;
-	ok &= check(fx_scene_source_view_plan_for_test(output, &view, &history_plan) && history_plan.history_bytes > 0,
-		"unbypassed feedback lifecycle requires an explicit history reservation");
-	pixman_region32_fini(&damage);
-	wlr_buffer_drop(reference);
-	wlr_scene_node_destroy(&scene->tree.node);
-	fx_effect_shader_unref(move); fx_effect_shader_unref(opening);
-	return ok;
-}
-
 static bool rectangular(struct fixture *fixture) {
 	bool ok = true;
 	for (unsigned scale_index = 0; ok && scale_index < 2; scale_index++) {
@@ -369,8 +246,7 @@ static bool rectangular(struct fixture *fixture) {
 					.visibility = FX_SCENE_SOURCE_VISIBLE, .offset_x = -100, .offset_y = 50};
 				struct fx_scene_source_view view = {.first = &desktop->node, .last = &desktop->node,
 					.roots = &override, .root_count = 1, .scale = source_scale,
-					.extent = {-12, 8, lroundf(logical_width / source_scale), lroundf(logical_height / source_scale)},
-					.viewport = {-12, 8, lroundf(logical_width / scale), lroundf(logical_height / scale)}};
+					.extent = {-12, 8, lroundf(logical_width / source_scale), lroundf(logical_height / source_scale)}};
 				struct fx_scene_source_view_plan plan;
 				struct fx_scene_source_pair_for_test pair = {0};
 				ok &= check(fx_scene_source_view_plan_for_test(output, &view, &plan) && plan.width == 40 && plan.height == 30,
@@ -438,7 +314,7 @@ static bool budget_matrix(struct fixture *fixture) {
 	return ok;
 }
 
-static bool virtual_history(struct fixture *fixture, bool bands) {
+static bool virtual_history(struct fixture *fixture) {
 	struct wlr_scene *scene = wlr_scene_create();
 	struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
 	struct wlr_scene_tree *tree = wlr_scene_tree_create(&scene->tree);
@@ -456,10 +332,10 @@ static bool virtual_history(struct fixture *fixture, bool bands) {
 	wlr_scene_node_set_enabled(&tree->node,false);
 	struct fx_scene_source_root_override roots[] = {
 		{.root=&tree->node, .visibility=FX_SCENE_SOURCE_VISIBLE},
-		{.root=&panel->node, .framing=bands ? FX_SCENE_SOURCE_VIEWPORT : FX_SCENE_SOURCE_CONTENT},
+		{.root=&panel->node},
 	};
 	struct fx_scene_source_view view = {.first=&tree->node, .last=&panel->node, .roots=roots, .root_count=2,
-		.extent={0,0,16,16}, .viewport={0,0,16,16}, .scale=1};
+		.extent={0,0,16,16}, .scale=1};
 	struct fx_scene_source_view_plan plan;
 	bool ok = check(accumulate && green && fx_scene_source_view_plan_for_test(output,&view,&plan)
 		&& plan.history_bytes > 0 && plan.total_bytes == plan.retained_bytes+plan.capture_bytes,
@@ -479,7 +355,7 @@ static bool virtual_history(struct fixture *fixture, bool bands) {
 		uint8_t shown[4], plain[4];
 		ok &= fixture_read_pixel(fixture,pair.display,8,8,shown) && fixture_read_pixel(fixture,pair.unfiltered,8,8,plain);
 		int red=frame<2 ? 64 : 128;
-		fprintf(stderr,"virtual feedback bands%u frame%u display=%u,%u,%u capture=%u,%u,%u\n",bands,frame,
+		fprintf(stderr,"virtual feedback frame%u display=%u,%u,%u capture=%u,%u,%u\n",frame,
 			shown[2],shown[1],shown[0],plain[2],plain[1],plain[0]);
 		ok &= check(abs(shown[2]-red)<=1 && abs(plain[2]-red)<=1 && shown[0]<2 && shown[1]<2
 			&& plain[0]>253 && plain[1]>253,
@@ -561,125 +437,12 @@ static bool shader_scratch_matrix(struct fixture *fixture) {
 }
 
 
-struct source_hit_snapshot {
-	struct wlr_scene_node *nodes[16];
-	struct wlr_fbox boxes[16];
-	size_t count;
-};
-static bool snapshot_hit(struct wlr_scene_node *node, const struct wlr_fbox *box, void *data) {
-	struct source_hit_snapshot *snapshot = data;
-	if (snapshot->count >= 16) return false;
-	snapshot->nodes[snapshot->count] = node;
-	snapshot->boxes[snapshot->count++] = *box;
-	return true;
-}
-static bool hit_box(const struct source_hit_snapshot *snapshot, size_t index,
-		struct wlr_scene_node *node, double x, double y, double width, double height) {
-	if (index >= snapshot->count) return check(false, "source hit snapshot has expected leaf");
-	const struct wlr_fbox *box = &snapshot->boxes[index];
-	return check(snapshot->nodes[index] == node && fabs(box->x - x) < 0.0001
-		&& fabs(box->y - y) < 0.0001 && fabs(box->width - width) < 0.0001
-		&& fabs(box->height - height) < 0.0001, "source hit snapshot order and exact face-local geometry");
-}
-static bool hit_snapshots(struct fixture *fixture) {
-	struct wlr_scene *scene = wlr_scene_create();
-	struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
-	wlr_scene_output_set_position(output, -8, 16);
-	wlr_scene_node_set_position(&scene->tree.node, -8, 16);
-	const float white[] = {1, 1, 1, 1}, clear[] = {0, 0, 0, 0};
-	struct wlr_scene_tree *workspace = wlr_scene_tree_create(&scene->tree);
-	const struct wlr_box viewport_clip = {0, 0, 16, 16};
-	wlr_scene_tree_set_clip(workspace, &viewport_clip);
-	struct wlr_scene_tree *active = wlr_scene_tree_create(workspace);
-	wlr_scene_rect_create(active, 16, 16, white);
-	struct wlr_scene_tree *hidden = wlr_scene_tree_create(workspace);
-	wlr_scene_node_set_position(&hidden->node, 100, 0);
-	wlr_scene_node_set_enabled(&hidden->node, false);
-	struct wlr_scene_tree *clip = wlr_scene_tree_create(hidden);
-	wlr_scene_node_set_position(&clip->node, 3, 3);
-	wlr_scene_tree_set_clip(clip, &(struct wlr_box){1, 1, 4, 4});
-	struct wlr_scene_rect *first = wlr_scene_rect_create(clip, 6, 6, white);
-	struct wlr_scene_rect *second = wlr_scene_rect_create(hidden, 2, 2, white);
-	wlr_scene_node_set_position(&second->node, 5, 4);
-	struct wlr_scene_rect *outside = wlr_scene_rect_create(hidden, 6, 6, white);
-	wlr_scene_node_set_position(&outside->node, 22, 3);
-	struct wlr_scene_rect *transparent = wlr_scene_rect_create(hidden, 3, 3, clear);
-	struct wlr_buffer *pixels = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 3, 3);
-	struct wlr_scene_buffer *zero = wlr_scene_buffer_create(hidden, pixels);
-	if (pixels) wlr_buffer_drop(pixels);
-	wlr_scene_buffer_set_opacity(zero, 0);
-	wlr_scene_shadow_create(hidden, 12, 12, 2, 1, white);
-	struct wlr_scene_rect *pinned = wlr_scene_rect_create(&scene->tree, 2, 2, white);
-	wlr_scene_node_set_position(&pinned->node, 14, 0);
-	struct fx_scene_source_root_override roots[] = {
-		{.root = &active->node, .visibility = FX_SCENE_SOURCE_HIDDEN},
-		{.root = &hidden->node, .visibility = FX_SCENE_SOURCE_VISIBLE, .offset_x = -100},
-		{.root = &pinned->node, .framing = FX_SCENE_SOURCE_VIEWPORT},
-	};
-	struct wlr_scene_tree *bypass[] = {workspace};
-	struct fx_scene_source_view view = {.first = &workspace->node, .last = &pinned->node,
-		.roots = roots, .root_count = 3, .bypass_clips = bypass, .bypass_clip_count = 1,
-		.extent = {-8, 16, 32, 32}, .scale = 0.5f, .viewport = {-8, 16, 16, 16}};
-	pixman_region32_t before_damage;
-	pixman_region32_init(&before_damage);
-	pixman_region32_copy(&before_damage, &output->pending_commit_damage);
-	struct source_hit_snapshot snapshot = {0};
-	size_t count = 0;
-	bool ok = check(pixels != NULL && fx_scene_source_view_hits(output, &view, NULL, NULL, &count)
-		&& count == 4, "source hit reservation excludes hidden, transparent and shadow leaves");
-	ok &= check(fx_scene_source_view_hits(output, &view, snapshot_hit, &snapshot, &count)
-		&& count == snapshot.count && count == 4, "source hit capture matches reservation count");
-	ok &= hit_box(&snapshot, 0, &first->node, 2, 2, 2, 2);
-	ok &= hit_box(&snapshot, 1, &second->node, 2.5, 2, 1, 1);
-	ok &= hit_box(&snapshot, 2, &outside->node, 11, 1.5, 3, 3);
-	ok &= hit_box(&snapshot, 3, &pinned->node, 14, 0, 2, 2);
-	ok &= check(!hidden->node.enabled && hidden->node.x == 100 && active->node.enabled
-		&& pixman_region32_equal(&before_damage, &output->pending_commit_damage),
-		"hit snapshot does not mutate native visibility, geometry or damage");
-	view.bypass_clip_count = 0;
-	struct source_hit_snapshot clipped = {0};
-	ok &= check(fx_scene_source_view_hits(output, &view, snapshot_hit, &clipped, &count)
-		&& count == 3, "native viewport clip survives snapshot and removes off-viewport hit unless explicitly bypassed");
-	ok &= hit_box(&clipped, 2, &pinned->node, 14, 0, 2, 2);
-	view.bypass_clip_count = 1;
-	wlr_scene_node_place_below(&second->node, &clip->node);
-	struct source_hit_snapshot reordered = {0};
-	ok &= check(fx_scene_source_view_hits(output, &view, snapshot_hit, &reordered, &count),
-		"reordered source hit snapshot succeeds");
-	ok &= hit_box(&reordered, 0, &second->node, 2.5, 2, 1, 1);
-	ok &= hit_box(&reordered, 1, &first->node, 2, 2, 2, 2);
-	ok &= hit_box(&snapshot, 0, &first->node, 2, 2, 2, 2);
-	struct fx_scene_source_node_override nodes[] = {
-		{.node = &first->node, .has_colors = true, .colors = {{0,0,0,0}, {0,0,0,0}}},
-		{.node = &transparent->node, .has_colors = true, .colors = {{1,1,1,1}, {1,1,1,1}}},
-		{.node = &zero->node, .has_opacity = true, .opacity = 0.5f},
-	};
-	view.nodes = nodes; view.node_count = 3;
-	struct source_hit_snapshot overrides = {0};
-	ok &= check(fx_scene_source_view_hits(output, &view, snapshot_hit, &overrides, &count)
-		&& count == 5, "hit eligibility honors effective source colors and opacity");
-	ok &= hit_box(&overrides, 0, &second->node, 2.5, 2, 1, 1);
-	ok &= hit_box(&overrides, 1, &outside->node, 11, 1.5, 3, 3);
-	ok &= hit_box(&overrides, 2, &transparent->node, 0, 0, 1.5, 1.5);
-	ok &= hit_box(&overrides, 3, &zero->node, 0, 0, 1.5, 1.5);
-	ok &= check(first->color[3] == 1 && transparent->color[3] == 0 && zero->opacity == 0,
-		"source hit overrides leave native opacity and colors unchanged");
-	struct source_hit_snapshot full = {.count = 16};
-	ok &= check(!fx_scene_source_view_hits(output, &view, snapshot_hit, &full, &count),
-		"snapshot callback capacity failure aborts rather than publishing truncated success");
-	pixman_region32_fini(&before_damage);
-	wlr_scene_node_destroy(&scene->tree.node);
-	return ok;
-}
-
 int main(void) {
 	struct fixture fixture;
 	if (!fixture_init(&fixture)) { fixture_finish(&fixture); return 77; }
-	bool ok = hit_snapshots(&fixture);
-	ok &= target_bypass(&fixture);
+	bool ok = true;
 	ok &= shader_scratch_matrix(&fixture);
-	ok &= virtual_history(&fixture, false);
-	ok &= virtual_history(&fixture, true);
+	ok &= virtual_history(&fixture);
 	for (unsigned transform = 0; ok && transform <= WL_OUTPUT_TRANSFORM_FLIPPED_270; transform++) {
 		struct wlr_output_state state;
 		wlr_output_state_init(&state);

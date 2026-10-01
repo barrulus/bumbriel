@@ -130,7 +130,7 @@ for axis in ('vertical', 'horizontal'):
     advance()
     wait(state, lambda s: not s['active'], 'lost-device pair never retired')
     assert native() == 2
-    # Explicit overview opening cancels the lease and pointer ownership; the
+    # Explicit overview opening cancels the transition; the
     # remainder of that physical swipe cannot recreate the pair underneath it.
     inject('begin 3 700')
     move(-180, 710)

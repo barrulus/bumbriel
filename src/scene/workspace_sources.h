@@ -37,17 +37,12 @@ namespace umbriel {
     int height = 0;
     bool workingSpace = false;
     bool floatingPoint = false;
-    wlr_box viewport{};
-    wlr_box contentBounds{};
-    wlr_box extent{};
-    std::array<float, 4> contentFraming{};
-    std::array<float, 4> viewportFraming{};
   };
 
   enum class WorkspaceSourceResult { Preparing, Ready, Failed };
 
   // Internal native workspace inventory and paired source owner. The caller
-  // owns composition, input admission and final output replacement.
+  // owns composition and final output replacement.
   class WorkspaceSources {
   public:
     WorkspaceSources(Server& server, Output& output, std::function<void(PresentationFallback)> invalidated = {});
@@ -58,7 +53,7 @@ namespace umbriel {
     bool freezeOutgoing();
     bool activateSelection(std::string_view identity);
     WorkspaceSourceResult prepareFrame(bool animate);
-    [[nodiscard]] std::vector<WorkspaceSourceFace> faces() const;
+    [[nodiscard]] std::span<const WorkspaceSourceFace> faces() const;
     void frameSubmitted(bool success);
     void sendFrameDone(const timespec& when);
     void cancel(PresentationFallback reason);
@@ -71,7 +66,7 @@ namespace umbriel {
     [[nodiscard]] uint64_t reservedBytes() const;
     [[nodiscard]] uint64_t revision() const;
     [[nodiscard]] PresentationFallback lastFallback() const;
-    // Final composition reserves target/depth/landing in this same output
+    // Final composition reserves output targets in this same output
     // arena and presentationAggregatePool before acquisition. Release those
     // reservations before destroying this provider.
     [[nodiscard]] fx_scene_resource_pool& resourcePool();

@@ -258,7 +258,7 @@ static bool test_unmanaged_ten_bit(struct fixture *fixture) {
 			}
 		}
 		struct wlr_buffer *mixed = fx_scene_buffer_create(fixture->renderer, fixture->allocator, 16, 16, true);
-		struct fx_scene_target *target = fx_scene_target_create_with_color(fixture->renderer, mixed, false, false);
+		struct fx_scene_target *target = fx_scene_target_create_with_color(fixture->renderer, mixed, false);
 		struct wlr_texture *texture = pair.display ? wlr_texture_from_buffer(fixture->renderer, pair.display) : NULL;
 		struct fx_scene_input input = {.texture = texture, .sample_matrix = (float[]){1,0,0,0,1,0,0,0,1}};
 		struct fx_scene_sources stages = {.fragment = "vec4 transition(vec2 uv) { return mix(umbriel_sample_from(uv), umbriel_sample_to(uv), umbriel_progress); }"};
@@ -735,44 +735,7 @@ static bool test_frozen_feedback_light(struct fixture *fixture, bool split) {
 			&& state.buffer, "present native feedback border and its emission");
 		ok &= check(fx_scene_source_pair_bytes_for_test(output) == 0,
 			"uncommitted feedback emission cannot be acquired as a displayed freeze");
-		ok &= check(fx_scene_emission_source_bytes(output, &border->node) == 0,
-			"raw emission export rejects in-flight native frame");
 		ok &= check(wlr_output_commit_state(fixture->output, &state), "commit feedback emission before freeze admission");
-		struct fx_scene_emission_source emission = {0};
-		uint64_t emission_bytes = fx_scene_emission_source_bytes(output, &border->node);
-		ok &= check(emission_bytes && !fx_scene_emission_source_capture(output, &border->node, emission_bytes - 1, &emission)
-			&& emission.display == NULL, "raw emission reservation is atomic");
-		ok &= check(fx_scene_emission_source_capture(output, &border->node, emission_bytes, &emission)
-			&& (emission.display == emission.unfiltered) == !split && !emission.working_space
-			&& emission.recipe.intensity == 2 && emission.recipe.spread == 2,
-			"retain committed raw role emission without another feedback evaluation");
-		for (unsigned role = 0; ok && role < 2; role++) {
-			struct wlr_buffer *image = role ? emission.unfiltered : emission.display;
-			struct fx_framebuffer *fb = fx_framebuffer_get_or_create(fx_get_renderer(fixture->renderer), image);
-			unsigned count = image->width * image->height * 4;
-			float max_red = 0, max_green = 0;
-			if (fb->drm_format == DRM_FORMAT_ABGR16161616F) {
-				uint16_t pixels[count];
-				ok &= read_buffer(fixture, image, DRM_FORMAT_ABGR16161616F, image->width * 8, pixels);
-				for (unsigned i = 0; i < count; i += 4) {
-					max_red = fmaxf(max_red, source_half(pixels[i]));
-					max_green = fmaxf(max_green, source_half(pixels[i + 1]));
-				}
-			} else {
-				uint8_t pixels[count];
-				ok &= read_buffer(fixture, image, DRM_FORMAT_ABGR8888, image->width * 4, pixels);
-				for (unsigned i = 0; i < count; i += 4) {
-					max_red = fmaxf(max_red, pixels[i] / 255.0f);
-					max_green = fmaxf(max_green, pixels[i + 1] / 255.0f);
-				}
-			}
-			if (!check(fabsf(max_red - (frame ? 0.25f : 0.5f)) < 0.01f && fabsf(max_green - 0.3f) < 0.01f,
-					"raw emission preserves represented feedback step before threshold/blur")) {
-				fprintf(stderr, "frame%u role%u rawmax=%f,%f\n", frame, role, max_red, max_green);
-				ok = false;
-			}
-		}
-		fx_scene_emission_source_finish(&emission);
 		struct fx_scene_source_pair_for_test pair = {0};
 		uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
 		ok &= check(bytes && fx_scene_source_pair_capture_for_test(output,
