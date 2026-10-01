@@ -57,6 +57,8 @@ interface = "scene-v1"
 scope = "workspace_set"
 vertex_shader = "carousel.vert"
 shader = "carousel.frag"
+[effects.preset.carousel.parameters]
+max_elevation_degrees = 0.0
 [effects.audio.sources.fixture]
 provider = "external"
 mode = "playback"

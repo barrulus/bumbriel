@@ -119,6 +119,10 @@ namespace umbriel {
     double lastProgress = -1;
     double lastNavigation = -1;
     float lastNavigationVelocity = 0;
+    std::array<float, 2> pointer{0.5F, 0.5F};
+    std::array<float, 2> lastPointer{};
+    double zoom = 1;
+    double lastZoom = 1;
     std::array<float, 16> lastPalette{};
     int lastPaletteCount = 0;
     float lastTime = 0;
@@ -227,8 +231,53 @@ namespace umbriel {
     state.lastSources = state.lastAudio = 0;
     state.fallback = PresentationFallback::None;
     state.active = true;
+    state.pointer = {0.5F, 0.5F};
+    state.zoom = 1;
+    if (auto* cursor = state.server.cursor()) {
+      pointerMoved(cursor->wlr()->x, cursor->wlr()->y);
+    }
     wlr_output_schedule_frame(state.output.wlr());
     return true;
+  }
+
+  void WorkspacePresentation::pointerMoved(double layoutX, double layoutY) {
+    auto& state = *m_state;
+    if (!state.active
+        || state.exiting
+        || !fx_scene_program_reads_pointer(state.bundle->program.get())
+        || !std::isfinite(layoutX)
+        || !std::isfinite(layoutY)
+        || layoutX < state.box.x
+        || layoutX >= state.box.x + state.box.width
+        || layoutY < state.box.y
+        || layoutY >= state.box.y + state.box.height) {
+      return;
+    }
+    const std::array<float, 2> pointer{
+        static_cast<float>((layoutX - state.box.x) / state.box.width),
+        static_cast<float>((layoutY - state.box.y) / state.box.height)
+    };
+    if (pointer != state.pointer) {
+      state.pointer = pointer;
+      wlr_output_schedule_frame(state.output.wlr());
+    }
+  }
+
+  void WorkspacePresentation::zoomBy(double notches) {
+    auto& state = *m_state;
+    if (!state.active
+        || !state.lease.active()
+        || state.exiting
+        || !std::isfinite(notches)
+        || !fx_scene_program_reads_zoom(state.bundle->program.get())) {
+      return;
+    }
+    // Fractional wheel/touchpad travel scales continuously; negative is up/in.
+    const double zoom = std::clamp(state.zoom * std::pow(1.12, -std::clamp(notches, -100.0, 100.0)), 0.25, 3.0);
+    if (zoom != state.zoom) {
+      state.zoom = zoom;
+      wlr_output_schedule_frame(state.output.wlr());
+    }
   }
 
   bool WorkspacePresentation::select(std::string_view identity) {
@@ -535,6 +584,8 @@ namespace umbriel {
         && state.progress.current() == state.lastProgress
         && state.navigation.current() == state.lastNavigation
         && frame.navigation_velocity == state.lastNavigationVelocity
+        && state.pointer == state.lastPointer
+        && state.zoom == state.lastZoom
         && frame.palette_count == state.lastPaletteCount
         && std::ranges::equal(frame.palette, state.lastPalette)
         && (!state.bundle->readsTime || state.output.effectSeconds() == state.lastTime)) {
@@ -548,6 +599,8 @@ namespace umbriel {
     frame.progress = static_cast<float>(state.progress.current());
     frame.linear_progress = static_cast<float>(state.progress.progress());
     frame.navigation_position = static_cast<float>(state.navigation.current());
+    std::ranges::copy(state.pointer, frame.pointer);
+    frame.zoom = static_cast<float>(state.zoom);
     frame.scene_count = static_cast<int>(faces.size());
     frame.framing = state.fitAll ? 1 : 0;
     frame.viewport[2] = frame.output_size[0];
@@ -592,6 +645,8 @@ namespace umbriel {
     state.lastProgress = state.progress.current();
     state.lastNavigation = state.navigation.current();
     state.lastNavigationVelocity = frame.navigation_velocity;
+    state.lastPointer = state.pointer;
+    state.lastZoom = state.zoom;
     std::ranges::copy(frame.palette, state.lastPalette.begin());
     state.lastPaletteCount = frame.palette_count;
     state.lastTime = frame.time;
@@ -730,6 +785,8 @@ namespace umbriel {
         {"phase", phase()},
         {"progress", state.progress.current()},
         {"navigation", state.navigation.current()},
+        {"pointer", state.pointer},
+        {"zoom", state.zoom},
         {"click_target", state.clickedWindow},
         {"navigation_velocity",
          state.navigationPointer != nullptr ? state.fingerVelocity : state.navigation.velocity()},

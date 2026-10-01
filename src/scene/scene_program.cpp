@@ -26,7 +26,8 @@ namespace umbriel::scene_experiment {
           }
           continue;
         }
-        if ((sources.scope == Scope::WorkspacePair && (stage == Stage::Vertex || stage == Stage::Composite))
+        if ((sources.scope == Scope::WorkspacePair
+             && (stage == Stage::Vertex || stage == Stage::Composite || stage == Stage::Backdrop))
             || source->code.empty()
             || source->code.size() > kShaderSourceLimit
             || source->code.contains('\0')) {
@@ -114,6 +115,7 @@ namespace umbriel::scene_experiment {
         .vertex = source(Stage::Vertex),
         .fragment = source(Stage::Fragment),
         .composite = source(Stage::Composite),
+        .backdrop = source(Stage::Backdrop),
     };
     std::array<fx_scene_parameter, kParameterLimit> parameters{};
     for (std::size_t i = 0; i < definition.parameters.size(); ++i) {

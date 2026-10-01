@@ -40,6 +40,7 @@ static bool experiment(struct fixture *fixture) {
 			"vec4 transition_vertex(vec2 uv) { float w=1.0+umbriel_direction*uv.x;"
 			"vec2 xy=(umbriel_current_box.xy+uv*umbriel_current_box.zw)/umbriel_output_size;"
 			"xy.y+=sin(uv.x*3.14159265)*umbriel_time;"
+			"xy+=umbriel_pointer+vec2(umbriel_zoom,0.0);"
 			"return vec4((xy*2.0-1.0)*w,umbriel_source_box.x*w,w); }",
 		.fragment =
 			"vec4 transition_fragment(vec2 uv,vec2 output_uv) {"
@@ -63,6 +64,8 @@ static bool experiment(struct fixture *fixture) {
 		return false;
 	}
 	ok &= check(fx_scene_program_reads_time(program), "active authored vertex time is reflected for frame demand");
+	ok &= check(fx_scene_program_reads_pointer(program), "active authored pointer is reflected for motion demand");
+	ok &= check(fx_scene_program_reads_zoom(program), "active authored zoom is reflected for scroll demand");
 	struct wlr_texture *textures[64] = {0};
 	struct fx_scene_draw draws[64] = {0};
 	for (unsigned i = 0; ok && i < 64; i++) {
@@ -122,6 +125,17 @@ static bool experiment(struct fixture *fixture) {
 				"generic wrapper preserves W and top-left raster coordinates on both axes");
 	}
 	frame.direction = 0;
+	frame.pointer[1] = 0.25f;
+	ok &= fx_scene_program_render(program, target, NULL, &frame, NULL, draws, 1);
+	uint8_t pointer_pixel[4];
+	ok &= pixel(fixture, buffer, 64, 8, pointer_pixel) &&
+		check(pointer_pixel[3] == 0, "pointer uniform shifts authored geometry downward");
+	frame.pointer[1] = 0;
+	frame.zoom = 0.25f;
+	ok &= fx_scene_program_render(program, target, NULL, &frame, NULL, draws, 1);
+	ok &= pixel(fixture, buffer, 8, 32, pointer_pixel) &&
+		check(pointer_pixel[3] == 0, "zoom uniform reaches authored geometry");
+	frame.zoom = 0;
 	for (unsigned transform = 0; ok && transform <= WL_OUTPUT_TRANSFORM_FLIPPED_270; transform++) {
 		int logical_width = 128, logical_height = 64;
 		wlr_output_transform_coords(transform, &logical_width, &logical_height);
@@ -218,6 +232,25 @@ static bool experiment(struct fixture *fixture) {
 	ok &= check(!fx_scene_program_render(window_program, target, NULL, &frame, NULL, draws, 129),
 		"draw count bound rejects before touching unavailable draw descriptors");
 	fx_scene_program_unref(window_program);
+	window_sources.composite =
+		"vec4 transition_composite(vec2 uv){return vec4(umbriel_current_box.z/128.0,"
+		"float(umbriel_item_token)/2.0,umbriel_motion_progress,1.0);}";
+	struct fx_scene_program *window_final = fx_scene_program_create(fixture->renderer, FX_SCENE_WINDOWS,
+		&window_sources, NULL, 0);
+	int saved_kind = draws[0].item.kind;
+	draws[0].item.kind = FX_SCENE_CONTENT;
+	ok &= check(window_final && fx_scene_program_render(window_final, target, composed, &frame, NULL, draws, 1),
+		"window composite receives triggering content geometry");
+	ok &= pixel(fixture, buffer, 64, 32, rgba) && check(rgba[0] == 255 && abs(rgba[1] - 128) <= 1 &&
+		abs(rgba[2] - 64) <= 1, "composite binds target box, token and motion clock");
+	frame.target_token = 2;
+	ok &= check(fx_scene_program_render(window_final, target, composed, &frame, NULL, draws, 1),
+		"window composite supports an absent target");
+	ok &= pixel(fixture, buffer, 64, 32, rgba) && check(rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0,
+		"absent target clears previous composite geometry");
+	frame.target_token = 1;
+	draws[0].item.kind = saved_kind;
+	fx_scene_program_unref(window_final);
 	char parameter_source[4096] = {0};
 	struct fx_scene_parameter full_parameters[FX_SCENE_PARAMETERS] = {0};
 	for (unsigned i = 0; i < FX_SCENE_PARAMETERS; i++) {

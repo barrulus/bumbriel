@@ -42,7 +42,7 @@ workspace-switch timelines.
 | `melt` | `workspace_pair` | Outgoing-image drip distance and shape in `shader.glsl`; destination stays intact. |
 | `wipe` | `workspace_pair` | Directional reveal boundary in `shader.glsl`. |
 | `iris` | `workspace_pair` | Aspect-correct circular reveal in `shader.glsl`. |
-| `carousel` | `workspace_set` | Perspective, orbit and spacing in `shader.vert`; face appearance in `shader.frag`. |
+| `carousel` | `workspace_set` | Move the pointer up/down to raise/lower the viewpoint; centre is straight-on. Set `parameters.max_elevation_degrees` in the preset (default 35, range 0–90; 0 disables tilt). Perspective, orbit and spacing in `shader.vert`; face appearance in `shader.frag`. |
 | `water` | `window_scene` | Waves and formation in vertex/fragment stages; output-wide ripple tint in `composite.glsl`. |
 | `portal` | `window_scene` | Neighbour displacement, target aperture and output-wide ring in separate stages. |
 
@@ -53,6 +53,34 @@ selector. `framing = "viewport"` retains each workspace's normal viewport;
 layers keep their normal framing. The selected face returns to native quality
 before ordinary presentation resumes. Carousel navigation wraps in both directions,
 independently of the output’s `cyclic_workspaces` setting.
+
+In the carousel, hold Ctrl while scrolling vertically with a mouse wheel or two
+fingers to zoom in/out. Ordinary scrolling still rotates between workspaces.
+Zoom ranges from 0.25× to 3× the preset's held size, resets on entry, and fades
+back to native size when leaving. Mouse elevation remains available while zoomed.
+
+The bundled carousel defaults to a static Noctalia-inspired universe backdrop.
+Its lavender, teal and peach defaults are editable RGB triples, independent of
+the desktop wallpaper. They are preset colours rather than an automatic link to
+Noctalia's theme file. In the carousel preset's `parameters` table:
+
+```toml
+backdrop_style = 2.0       # 0 off, 1 solid colour, 2 universe
+backdrop_opacity = 1.0    # 0–1; also fades with carousel entry/exit
+backdrop_brightness = 1.0 # 0–3
+backdrop_color = [0.0667, 0.0667, 0.1059]
+nebula_color = [0.7961, 0.6510, 0.9686]
+nebula_accent = [0.5804, 0.8863, 0.8353]
+star_color = [0.9804, 0.7020, 0.5294]
+nebula_strength = 1.0     # 0–3
+star_density = 1.0        # 0–3; 0 removes stars
+```
+
+The preset names `backdrop_shader = "backdrop.glsl"`. Replace that file to author
+another procedural background, or remove the key to omit the stage entirely.
+The backdrop renders before the faces, adds no full-screen image allocation,
+and leaves face picking intact; backdrop clicks do not select a workspace.
+The default shader has no time dependency, so an idle backdrop does not redraw.
 
 Click a visible window in the carousel to select its workspace and focus that
 window after native presentation returns. The selecting press and release are
@@ -75,6 +103,10 @@ A later transaction can use the repaired version.
 
 The vertex file controls geometry; the fragment file controls each item; the
 optional composite controls the complete output after those items are drawn.
+In a `window_scene` composite, the item uniforms describe the triggering window's
+content item, including `umbriel_current_box`, so full-output water or other effects
+can flow around its boundary. They are zero when that content item is absent;
+workspace composites also receive zero item uniforms.
 For example, increase water's `amplitude` in `shader.vert` to change displacement,
 then change the tint vector in `composite.glsl` to change appearance independently.
 Keep displacement and tint multiplied by `water_envelope()`: that analytic
@@ -122,6 +154,10 @@ vec4 transition_fragment(vec2 item_uv, vec2 output_uv);
 // Optional composite_shader for the geometry profiles
 vec4 transition_composite(vec2 output_uv);
 // umbriel_sample_composed(output_uv)
+
+// Optional backdrop_shader for the geometry profiles, before any items
+vec4 transition_backdrop(vec2 output_uv);
+// No input samplers; return premultiplied RGBA. Item uniforms are zero.
 ```
 
 UV coordinates start at the top left. Samplers return transparent outside the
@@ -160,6 +196,8 @@ premultiplication when changing alpha, and avoid clamping HDR values to 1.0.
 | `umbriel_time` | `float` | Effect time; reading it requests ongoing effect frames. |
 | `umbriel_navigation_position`, `umbriel_navigation_velocity` | `float` | Continuous workspace-set navigation state. |
 | `umbriel_scene_count` | `int` | Workspace-set faces, two for a pair, or window participant owners. |
+| `umbriel_pointer` | `vec2` | Workspace-set pointer in normalized output-local coordinates, top-left `(0,0)`. Starts at the centre if the pointer is outside the output, holds its last value outside that output and during exit. Other scopes supply `(0,0)`. Pointer changes redraw only scenes that read this input. |
+| `umbriel_zoom` | `float` | Workspace-set magnification, initially 1; Ctrl + vertical scroll adjusts it between 0.25 and 3. Held fixed during exit. Other scopes supply 0. |
 | `umbriel_role` | `int` | 0 display, 1 unfiltered capture; both use one coherent frame input snapshot. |
 | `umbriel_target_token` | `int` | Triggering window's transaction-local token; zero when absent. |
 | `umbriel_item_token`, `umbriel_item_ordinal` | `int` | Shared owner identity and native draw order. Zero token denotes a static band. |

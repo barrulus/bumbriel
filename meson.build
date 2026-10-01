@@ -859,6 +859,7 @@ foreach effect : ['wipe', 'melt', 'iris']
 endforeach
 install_data(
   'examples/effects/scene/carousel/effect.toml',
+  'examples/effects/scene/carousel/backdrop.glsl',
   'examples/effects/scene/carousel/shader.vert',
   'examples/effects/scene/carousel/shader.frag',
   install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'scene/carousel',

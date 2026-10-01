@@ -26,7 +26,7 @@ enum location {
 	CURRENT_BOX, SOURCE_BOX, DESTINATION_BOX, CAPTURE_EXTENT, CONTENT_BOUNDS,
 	AXIS, VIEWPORT, FRAMING, MOTION_PROGRESS, LINEAR_MOTION_PROGRESS, NATIVE_OPACITY, COVERAGE_BOX,
 	CLIP_MATRIX, RASTER_MATRIX, TARGET_TOKEN, FRAMING_TRANSFORM,
-	TARGET_SIZE, INPUT0, INPUT1, MATRIX0, MATRIX1, PICK_OFFSET, PICK_PASS, LOCATION_COUNT,
+	TARGET_SIZE, INPUT0, INPUT1, MATRIX0, MATRIX1, PICK_OFFSET, PICK_PASS, POINTER, ZOOM, LOCATION_COUNT,
 };
 
 static const char *names[LOCATION_COUNT] = {
@@ -40,7 +40,7 @@ static const char *names[LOCATION_COUNT] = {
 	"umbriel_framing", "umbriel_motion_progress", "umbriel_linear_motion_progress",
 	"umbriel_native_opacity", "umbriel_coverage_box", "_fx_clip_matrix", "_fx_raster_matrix", "umbriel_target_token", "umbriel_framing_transform", "_fx_target_size",
 	"_fx_input0", "_fx_input1", "_fx_matrix0", "_fx_matrix1",
-	"_fx_pick_offset", "_fx_pick_pass",
+	"_fx_pick_offset", "_fx_pick_pass", "umbriel_pointer", "umbriel_zoom",
 };
 
 struct scene_stage {
@@ -53,7 +53,7 @@ struct fx_scene_program {
 	struct wl_listener destroy;
 	unsigned references;
 	enum fx_scene_profile profile;
-	struct scene_stage main, composite, pick;
+	struct scene_stage main, composite, pick, backdrop;
 };
 
 struct fx_scene_picker {
@@ -93,6 +93,8 @@ static const char preamble[] =
 	"#define sin(x) sin(mod((x), 6.283185307179586))\n"
 	"#define cos(x) cos(mod((x), 6.283185307179586))\n"
 	"uniform vec2 umbriel_output_size;\n"
+	"uniform vec2 umbriel_pointer;\n"
+	"uniform float umbriel_zoom;\n"
 	"uniform float umbriel_scale, umbriel_time, umbriel_progress, umbriel_linear_progress, umbriel_direction;\n"
 	"uniform vec4 umbriel_random_seed;\n"
 	"uniform float umbriel_navigation_position, umbriel_navigation_velocity;\n"
@@ -254,12 +256,27 @@ bool fx_scene_program_reads_audio(const struct fx_scene_program *program) {
 	return program && program->renderer &&
 		(program->main.location[AUDIO_LEVELS] >= 0 || program->main.location[AUDIO_BANDS] >= 0 ||
 			(program->composite.program && (program->composite.location[AUDIO_LEVELS] >= 0 ||
-				program->composite.location[AUDIO_BANDS] >= 0)));
+				program->composite.location[AUDIO_BANDS] >= 0)) ||
+			(program->backdrop.program && (program->backdrop.location[AUDIO_LEVELS] >= 0 ||
+				program->backdrop.location[AUDIO_BANDS] >= 0)));
 }
 
 bool fx_scene_program_reads_time(const struct fx_scene_program *program) {
 	return program && program->renderer && (program->main.location[TIME] >= 0 ||
-		(program->composite.program && program->composite.location[TIME] >= 0));
+		(program->composite.program && program->composite.location[TIME] >= 0) ||
+		(program->backdrop.program && program->backdrop.location[TIME] >= 0));
+}
+
+bool fx_scene_program_reads_pointer(const struct fx_scene_program *program) {
+	return program && program->renderer && (program->main.location[POINTER] >= 0 ||
+		(program->composite.program && program->composite.location[POINTER] >= 0) ||
+		(program->backdrop.program && program->backdrop.location[POINTER] >= 0));
+}
+
+bool fx_scene_program_reads_zoom(const struct fx_scene_program *program) {
+	return program && program->renderer && (program->main.location[ZOOM] >= 0 ||
+		(program->composite.program && program->composite.location[ZOOM] >= 0) ||
+		(program->backdrop.program && program->backdrop.location[ZOOM] >= 0));
 }
 
 bool fx_scene_program_supports_picking(const struct fx_scene_program *program) {
@@ -747,6 +764,8 @@ static void bind_frame(const struct scene_stage *stage, const struct fx_scene_fr
 	glUniformMatrix3fv(l[CLIP_MATRIX], 1, GL_FALSE, clip);
 	glUniformMatrix3fv(l[RASTER_MATRIX], 1, GL_FALSE, raster);
 	glUniform2fv(l[OUTPUT_SIZE], 1, frame->output_size);
+	glUniform2fv(l[POINTER], 1, frame->pointer);
+	glUniform1f(l[ZOOM], frame->zoom);
 	glUniform2f(l[TARGET_SIZE], target->buffer->width + 2 * padding, target->buffer->height + 2 * padding);
 	glUniform2f(l[PICK_OFFSET], 0, 0);
 	glUniform1i(l[PICK_PASS], 0);
@@ -970,8 +989,33 @@ static bool render_stage(struct fx_scene_program *program, const struct scene_st
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 	glEnableVertexAttribArray(0);
+	// Backdrops draw into the same target before geometry. They neither write
+	// depth nor participate in picking, and need no extra full-output buffer.
+	if (!composite && program->backdrop.program) {
+		bind_frame(&program->backdrop, frame, target, 0);
+		const struct fx_scene_item empty = {0};
+		bind_item(&program->backdrop, &empty);
+		float uv[] = {0, 0, 1, 0, 0, 1, 1, 1};
+		uint16_t indices[] = {0, 1, 2, 2, 1, 3};
+		const struct fx_scene_mesh quad = {.uv = uv, .indices = indices, .vertices = 4, .index_count = 6};
+		glDepthMask(GL_FALSE);
+		draw_mesh(&quad);
+		glDepthMask(GL_TRUE);
+	}
 	bind_frame(stage, frame, target, 0);
 	if (composite || program->profile == FX_SCENE_PAIR) {
+		// Final window stages need the obstacle's owner geometry, not whichever
+		// companion happened to draw last. Clear it when no target is present.
+		struct fx_scene_item target_item = {0};
+		if (composite && program->profile == FX_SCENE_WINDOWS && frame->target_token != 0) {
+			for (unsigned i = 0; i < count; i++) {
+				if (draws[i].item.token == frame->target_token && draws[i].item.kind == FX_SCENE_CONTENT) {
+					target_item = draws[i].item;
+					break;
+				}
+			}
+		}
+		bind_item(stage, &target_item);
 		static float uv[] = {0, 0, 1, 0, 0, 1, 1, 1};
 		static uint16_t indices[] = {0, 1, 2, 2, 1, 3};
 		const struct fx_scene_mesh quad = {.uv = uv, .indices = indices, .vertices = 4, .index_count = 6};
@@ -1165,7 +1209,7 @@ bool fx_scene_program_render(struct fx_scene_program *program,
 	transform_uv_matrix(wlr_output_transform_invert(frame->output_transform), matrix);
 	struct fx_scene_input input[2] = {{.texture = texture, .sample_matrix = matrix}};
 	bool ok = texture && input_valid(input, target) &&
-		render_stage(program, &program->composite, target, frame, input, NULL, 0, true);
+		render_stage(program, &program->composite, target, frame, input, draws, draw_count, true);
 	if (texture) {
 		wlr_texture_destroy(texture);
 	}
@@ -1182,6 +1226,7 @@ void fx_scene_program_unref(struct fx_scene_program *program) {
 			glDeleteProgram(program->main.program);
 			glDeleteProgram(program->composite.program);
 			glDeleteProgram(program->pick.program);
+			glDeleteProgram(program->backdrop.program);
 			wlr_egl_restore_context(&previous);
 		}
 		wl_list_remove(&program->destroy.link);
@@ -1195,12 +1240,12 @@ struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_render
 	if (!wlr_renderer || !wlr_renderer_is_fx(wlr_renderer) || !sources || !sources->fragment ||
 			profile < FX_SCENE_PAIR || profile > FX_SCENE_WINDOWS || parameter_count > FX_SCENE_PARAMETERS ||
 			(parameter_count && !parameters) || (profile == FX_SCENE_PAIR
-				? sources->vertex || sources->composite : !sources->vertex)) {
+				? sources->vertex || sources->composite || sources->backdrop : !sources->vertex)) {
 		return NULL;
 	}
 	size_t source_size = strlen(sources->fragment);
-	const char *extra[] = {sources->common, sources->vertex, sources->composite};
-	for (unsigned i = 0; i < 3; i++) {
+	const char *extra[] = {sources->common, sources->vertex, sources->composite, sources->backdrop};
+	for (unsigned i = 0; i < 4; i++) {
 		if (extra[i]) {
 			source_size += strlen(extra[i]);
 		}
@@ -1215,6 +1260,7 @@ struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_render
 				strncmp(p->name, "gl_", 3) == 0 || strstr(p->name, "__") != NULL || strcmp(p->name, "main") == 0 ||
 				strcmp(p->name, "transition") == 0 || strcmp(p->name, "transition_vertex") == 0 ||
 				strcmp(p->name, "transition_fragment") == 0 || strcmp(p->name, "transition_composite") == 0 ||
+				strcmp(p->name, "transition_backdrop") == 0 ||
 				p->components < 1 || p->components > 4) {
 			return NULL;
 		}
@@ -1275,6 +1321,11 @@ struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_render
 		ok = stage_create(&program->composite, sources->common, default_vertex, sources->composite,
 			"void main(){gl_FragColor=transition_composite(_fx_output_uv());}\n",
 			"vec4 umbriel_sample_composed(vec2 uv){return _fx_sample0(uv);}\n", parameters, parameter_count);
+	}
+	if (ok && sources->backdrop) {
+		ok = stage_create(&program->backdrop, sources->common, default_vertex, sources->backdrop,
+			"void main(){gl_FragColor=transition_backdrop(_fx_output_uv());}\n",
+			"", parameters, parameter_count);
 	}
 	if (ok && profile == FX_SCENE_SET && !sources->composite) {
 		ok = stage_create(&program->pick, sources->common, sources->vertex, sources->fragment,
