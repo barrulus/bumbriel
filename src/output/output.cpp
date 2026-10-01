@@ -38,6 +38,18 @@ extern "C" {
 
 namespace umbriel {
 
+#ifdef UMBRIEL_TEST_IPC
+  void Output::setTestCommitHold(bool held) {
+    if (m_testCommitHeld == held) {
+      return;
+    }
+    m_testCommitHeld = held;
+    if (!held) {
+      wlr_output_schedule_frame(m_output);
+    }
+  }
+#endif
+
   namespace {
     constexpr Logger kLog("output");
     constexpr int kFrameRetryDelayMs = 16;
@@ -123,6 +135,17 @@ namespace umbriel {
     wlr_output_schedule_frame(m_output);
   }
 
+  void Output::scheduleAudioFrame() {
+    if (m_handlingFrame
+        || m_server->sessionLocked()
+        || !outputFrameAllowed(m_server->stopping(), m_server->session())) {
+      return;
+    }
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    armEffectFrame(static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000);
+  }
+
   void Output::applyOutputEffects() {
     EffectRegistry& registry = m_server->effects();
     const Effects& settings = config().effects;
@@ -147,11 +170,13 @@ namespace umbriel {
     // Registers the slot's instance and returns its parameters at this output's effect time.
     const auto bind = [&](const void* owner, const EffectPreset& preset, fx_effect_shader* shader, bool visible) {
       fx_animation_parameters parameters{};
-      registry.fillTimeUniforms(parameters, m_effectSeconds, preset, shader);
+      registry.fillTimeUniforms(parameters, m_effectSeconds, preset, shader, this);
       const bool readsTime = fx_effect_shader_reads(shader, "umbriel_time");
-      m_outputEffectsTimed = m_outputEffectsTimed || (readsTime && visible);
+      m_outputEffectsTimed =
+          m_outputEffectsTimed || ((readsTime || !registry.audioSource(preset, shader).empty()) && visible);
       registry.updateInstance(
-          owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing}
+          owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing},
+          registry.audioSource(preset, shader)
       );
       return parameters;
     };
@@ -203,7 +228,9 @@ namespace umbriel {
     return captureLocks > 0 && !config().effects.inCapture && m_server->effects().inPlaceReferenced();
   }
 
-  unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
+  unsigned Output::effectEligible() const {
+    return m_server->effects().ledger().eligible(this) + (m_server->effects().audioDirty(this) ? 1U : 0U);
+  }
 
   wlr_box Output::layoutBox() const {
     wlr_box box{.x = m_arrangedLayoutX, .y = m_arrangedLayoutY, .width = 0, .height = 0};
@@ -1247,7 +1274,7 @@ namespace umbriel {
     // Effect time moves only on effect frames, which caps them at max_fps. It follows the clock while nothing here
     // needs frames of its own, so a new instance starts from now, and while the clock is frozen, so the first frozen
     // frame draws the frozen instant.
-    const EffectRegistry& effects = m_server->effects();
+    EffectRegistry& effects = m_server->effects();
     bool stampEffectTime =
         effectFrame || (effectEligible() == 0 && (effects.persistentReferenced() || effects.active()));
 #ifdef UMBRIEL_TEST_IPC
@@ -1256,8 +1283,9 @@ namespace umbriel {
     if (stampEffectTime) {
       m_effectSeconds = effects.clockSeconds();
     }
+    effects.beginAudioFrame(this, effectFrame);
     m_server->tickAnimations(m_server->animationClockMsec());
-    if (stampEffectTime && m_outputEffectsTimed) {
+    if ((stampEffectTime && m_outputEffectsTimed) || effects.audioActive(this)) {
       applyOutputEffects();
     }
 
@@ -1271,7 +1299,6 @@ namespace umbriel {
     const bool animationsActive = m_server->animationsActiveFor(this);
     // Persistent effects reading time keep an output drawing on their own timer, never through the animation
     // registry: settle, tearing, and the render lock keep their meanings.
-    const bool effectsEligible = !m_server->sessionLocked() && effectEligible() > 0;
     if (animationsActive != m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, animationsActive);
       m_animationRenderLocked = animationsActive;
@@ -1339,6 +1366,7 @@ namespace umbriel {
     // video players) block on wl_surface.frame before submitting their next buffer. If we skip frame_done on the
     // "nothing to render" path, they never commit again, damage stays clean, and the output stops producing frames.
     bool commitFailed = false;
+    bool audioSubmitted = false;
     const bool sceneChanged = wlr_scene_output_needs_frame(m_sceneOutput);
     if (sceneChanged) {
       // Scene motion under a stationary cursor must reach the client before its next press.
@@ -1400,7 +1428,16 @@ namespace umbriel {
           }
         }
 
-        commitOk = wlr_output_commit_state(m_output, &state);
+#ifdef UMBRIEL_TEST_IPC
+        if (hasBuffer && m_testCommitHeld) {
+          ++m_rejectedBufferCommits;
+          commitOk = false;
+        } else
+#endif
+        {
+          commitOk = wlr_output_commit_state(m_output, &state);
+        }
+        audioSubmitted = commitOk && hasBuffer;
         if (hasBuffer) {
           m_tearingRecovery.recordCommit(commitTearing, commitOk);
         }
@@ -1408,6 +1445,9 @@ namespace umbriel {
           m_gammaDirty = false;
         }
         if (commitOk && hasBuffer) {
+#ifdef UMBRIEL_TEST_IPC
+          ++m_successfulBufferCommits;
+#endif
           m_lastCommitTearing = commitTearing;
           m_trackingPresentation = true;
           m_trackedPresentationCommitSeq = m_output->commit_seq;
@@ -1434,6 +1474,8 @@ namespace umbriel {
       m_inFrame = false;
       commitFailed = !commitOk;
     }
+
+    effects.finishAudioFrame(this, audioSubmitted);
 
     // Screencopy drops its lock inside the commit; image-copy sessions ask for the release frame when they end.
     if (m_effectCaptureBuilt && !effectCapturePending(captureRenderLocks(externalRenderLocks()))) {
@@ -1468,7 +1510,7 @@ namespace umbriel {
       break;
     }
 
-    if (effectsEligible && !commitFailed) {
+    if (!m_server->sessionLocked() && effectEligible() > 0 && !commitFailed) {
       armEffectFrame(nowMsec);
     } else {
       disarmEffectFrame();
