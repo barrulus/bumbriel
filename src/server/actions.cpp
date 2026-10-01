@@ -11,6 +11,7 @@
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
 #include "scene/quit_confirm.h"
+#include "scene/workspace_presentation.h"
 #include "server/server.h"
 #include "view/view.h"
 #include "wlr.h"
@@ -1928,6 +1929,44 @@ namespace umbriel {
       return true;
     }
 
+    template <KeybindAction Action>
+    bool actionWorkspacePresentation(Server& server, const Keybind& bind, std::string* error) {
+      Output* output = server.outputFromWlr(server.preferredOutput());
+      Workspace* selected = nullptr;
+      if constexpr (Action == KeybindAction::WorkspacePresentationSelect) {
+        auto resolved = resolveWorkspaceSelector(server, bind);
+        if (!resolved) {
+          return reject(error, resolved.error());
+        }
+        selected = *resolved;
+        output = selected->group() != nullptr ? selected->group()->output() : nullptr;
+      }
+      if (output == nullptr) {
+        return reject(error, "no workspace presentation output");
+      }
+      if constexpr (Action == KeybindAction::WorkspacePresentationEnter) {
+        return output->enterWorkspacePresentation(config().workspacePresentation.effect)
+            || reject(error, "workspace presentation is unavailable");
+      }
+      auto* mode = output->workspacePresentation();
+      if (mode == nullptr || !mode->active()) {
+        return reject(error, "no active workspace presentation on this output");
+      }
+      bool accepted = false;
+      if constexpr (Action == KeybindAction::WorkspacePresentationSelect) {
+        accepted = mode->select(selected->id());
+      } else if constexpr (Action == KeybindAction::WorkspacePresentationNext) {
+        accepted = mode->step(1);
+      } else if constexpr (Action == KeybindAction::WorkspacePresentationPrevious) {
+        accepted = mode->step(-1);
+      } else if constexpr (Action == KeybindAction::WorkspacePresentationAccept) {
+        accepted = mode->accept();
+      } else if constexpr (Action == KeybindAction::WorkspacePresentationCancel) {
+        accepted = mode->dismiss();
+      }
+      return accepted || reject(error, "workspace presentation action is unavailable in the current phase");
+    }
+
     constexpr std::array<ActionHandlerFn, static_cast<size_t>(KeybindAction::Count)> kActionHandlers = {
         nullptr,
         &actionSpawn,
@@ -2085,6 +2124,12 @@ namespace umbriel {
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Cycle>,
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Toggle>,
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Reset>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationEnter>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationNext>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationPrevious>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationSelect>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationAccept>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationCancel>,
     };
 
     consteval bool everyActionHasHandler() {

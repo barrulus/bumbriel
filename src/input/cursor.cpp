@@ -15,6 +15,7 @@
 #include "scene/cheatsheet.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
+#include "scene/workspace_presentation.h"
 #include "server/server.h"
 #include "view/size_hints.h"
 #include "view/view.h"
@@ -1061,15 +1062,30 @@ namespace umbriel {
 
   void Cursor::handleButton(void* data) {
     auto* event = static_cast<wlr_pointer_button_event*>(data);
-    processButton(event->time_msec, event->button, event->state);
+    processButton(event->time_msec, event->button, event->state, &event->pointer->base);
   }
 
-  void Cursor::processButton(uint32_t timeMsec, uint32_t button, wl_pointer_button_state state) {
+  void Cursor::processButton(
+      uint32_t timeMsec, uint32_t button, wl_pointer_button_state state, [[maybe_unused]] const wlr_input_device* device
+  ) {
     noteActivity();
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
       m_server->notifyInputActivity();
     } else {
       m_server->notifyIdleActivity();
+    }
+    const bool presentationSequencePending = m_presentationInputGuard.pending();
+    if (m_presentationInputGuard.pointerButton(
+            reinterpret_cast<uintptr_t>(device), button, state == WL_POINTER_BUTTON_STATE_PRESSED,
+            !pointerFocusPinned() && sceneInputAt(m_cursor->x, m_cursor->y)
+        )) {
+      if (state == WL_POINTER_BUTTON_STATE_PRESSED && !presentationSequencePending) {
+        if (button != BTN_LEFT || !activateSceneInputAt(m_cursor->x, m_cursor->y)) {
+          dismissSceneInputAt(m_cursor->x, m_cursor->y);
+        }
+      }
+      refreshSceneInputHover();
+      return;
     }
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
       cancelHotCorner();
@@ -1311,6 +1327,32 @@ namespace umbriel {
     m_server->cancelModifierTap();
     cancelHotCorner();
 
+    if (sceneInputBlocked()) {
+      auto* output =
+          m_server->outputFromWlr(wlr_output_layout_output_at(m_server->outputLayout(), m_cursor->x, m_cursor->y));
+      auto* mode = output != nullptr ? output->workspacePresentation() : nullptr;
+      if (!sceneRestorationPending() && !m_presentationInputGuard.pending() && mode != nullptr && mode->active()) {
+        const bool vertical = event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL;
+        if (event->source == WL_POINTER_AXIS_SOURCE_FINGER) {
+          resetWheelAccumulation();
+          mode->handleTouchpadAxis(event->pointer, vertical, event->delta, event->time_msec);
+        } else {
+          mode->endNavigation(true, event->time_msec);
+          const int axis = vertical ? 0 : 1;
+          const double factor =
+              vertical ? config().overview.scrollFactorVertical : config().overview.scrollFactorHorizontal;
+          m_wheelAccum[axis] +=
+              (event->delta_discrete != 0 ? static_cast<double>(event->delta_discrete) / 120.0 : event->delta / 15.0)
+              * factor;
+          while (std::abs(m_wheelAccum[axis]) >= 1) {
+            (void)mode->step(m_wheelAccum[axis] > 0 ? 1 : -1);
+            m_wheelAccum[axis] -= std::copysign(1.0, m_wheelAccum[axis]);
+          }
+        }
+      }
+      return;
+    }
+
     const uint32_t modifiers = m_server->keyboardModifiers();
     const uint32_t effective = modifiers & ~(WLR_MODIFIER_CAPS | WLR_MODIFIER_MOD2);
 
@@ -1418,6 +1460,11 @@ namespace umbriel {
   }
 
   void Cursor::handleFrame() {
+    for (const auto& output : m_server->outputs()) {
+      if (auto* mode = output->workspacePresentation()) {
+        mode->handleTouchpadFrame();
+      }
+    }
     if (Overview* overview = m_server->overview()) {
       overview->handleTouchpadFrame();
     }
@@ -1459,10 +1506,18 @@ namespace umbriel {
     m_server->notifyInputActivity();
     m_server->cancelModifierTap();
     m_server->remapTouches();
-
     double lx = 0;
     double ly = 0;
     wlr_cursor_absolute_to_layout_coords(m_cursor, &event->touch->base, event->x, event->y, &lx, &ly);
+    const bool presentationSequencePending = m_presentationInputGuard.pending();
+    if (m_presentationInputGuard.touchDown(
+            reinterpret_cast<uintptr_t>(&event->touch->base), event->touch_id, sceneInputAt(lx, ly)
+        )) {
+      if (!presentationSequencePending && !activateSceneInputAt(lx, ly)) {
+        dismissSceneInputAt(lx, ly);
+      }
+      return;
+    }
 
     double sx = 0;
     double sy = 0;
@@ -1498,6 +1553,10 @@ namespace umbriel {
   void Cursor::handleTouchUp(void* data) {
     auto* event = static_cast<wlr_touch_up_event*>(data);
     m_server->notifyIdleActivity();
+    if (m_presentationInputGuard.touchUp(reinterpret_cast<uintptr_t>(&event->touch->base), event->touch_id)) {
+      refreshSceneInputHover();
+      return;
+    }
     wlr_seat_touch_notify_up(m_server->seat()->wlr(), event->time_msec, event->touch_id);
   }
 
@@ -1505,6 +1564,9 @@ namespace umbriel {
     auto* event = static_cast<wlr_touch_motion_event*>(data);
     m_server->notifyInputActivity();
 
+    if (m_presentationInputGuard.touchMotion(reinterpret_cast<uintptr_t>(&event->touch->base), event->touch_id)) {
+      return;
+    }
     wlr_seat* seat = m_server->seat()->wlr();
     wlr_touch_point* point = wlr_seat_touch_get_point(seat, event->touch_id);
     if (point == nullptr) {
@@ -1536,6 +1598,13 @@ namespace umbriel {
     auto* event = static_cast<wlr_touch_cancel_event*>(data);
     (void)event;
     m_server->notifyIdleActivity();
+    const bool consumed =
+        m_presentationInputGuard.touchMotion(reinterpret_cast<uintptr_t>(&event->touch->base), event->touch_id);
+    m_presentationInputGuard.touchCancel(reinterpret_cast<uintptr_t>(&event->touch->base));
+    if (consumed) {
+      refreshSceneInputHover();
+      return;
+    }
 
     wlr_seat* seat = m_server->seat()->wlr();
     // Find the first client with an active touch point, then cancel outside
@@ -1556,8 +1625,12 @@ namespace umbriel {
   void Cursor::handleTouchFrame() { wlr_seat_touch_notify_frame(m_server->seat()->wlr()); }
 
   void Cursor::processMotion(uint32_t timeMsec, double oldX, double oldY, bool allowFocusChange) {
-    updateHotCorner();
     forwardEffectPointer();
+    if (m_presentationInputGuard.suppressHover(!pointerFocusPinned() && sceneInputAt(m_cursor->x, m_cursor->y))) {
+      clearPointerFocus();
+      return;
+    }
+    updateHotCorner();
     if (auto* grab = std::get_if<ScrollDragGrab>(&m_grab)) {
       if (m_server->sessionLocked()) {
         m_server->gestures()->endPointerScroll(true, timeMsec);
@@ -2452,6 +2525,9 @@ namespace umbriel {
   }
 
   void Cursor::setPointerFocus(wlr_surface* surface, double sx, double sy, uint32_t timeMsec) {
+    if (m_presentationInputGuard.suppressHover(!pointerFocusPinned() && sceneInputAt(m_cursor->x, m_cursor->y))) {
+      return;
+    }
     if (surface == nullptr) {
       clearPointerFocus();
       return;
@@ -2476,6 +2552,240 @@ namespace umbriel {
 
   void Cursor::clearPointerFocusOverridingGrab() { wlr_seat_pointer_clear_focus(m_server->seat()->wlr()); }
 
+  bool Cursor::sceneInputAt(double x, double y) const {
+    const auto* output = wlr_output_layout_output_at(m_server->outputLayout(), x, y);
+    return std::ranges::any_of(m_sceneInputs, [output](const SceneInput& input) {
+      return input.output->wlr() == output && (input.active || input.restoring);
+    });
+  }
+
+  bool Cursor::sceneInputBlocked() const {
+    return sceneRestorationPending() || m_presentationInputGuard.pending() || sceneInputAt(m_cursor->x, m_cursor->y);
+  }
+
+  bool Cursor::sceneRestorationPending() const {
+    return std::ranges::any_of(m_sceneInputs, [](const SceneInput& input) { return input.restoring; });
+  }
+
+  void Cursor::refreshSceneInputHover() {
+    if (m_presentationInputGuard.pending()) {
+      return;
+    }
+    // Retain only stable map IDs across the displaced interval. Remove records
+    // before focus callbacks can arrange native geometry or re-enter the cursor.
+    std::vector<SceneInput> completed;
+    std::erase_if(m_sceneInputs, [&](const SceneInput& input) {
+      if (input.active || input.restoring) {
+        return false;
+      }
+      if (!input.restoreFocus.empty()) {
+        completed.push_back(input);
+      }
+      return true;
+    });
+    bool preserveFocus = false;
+    if (!m_server->sessionLocked()) {
+      for (const auto& input : completed) {
+        for (const auto& view : m_server->views()) {
+          if (view->mapped()
+              && view->onActiveWorkspace()
+              && view->currentOutput() == input.output
+              && view->extForeignIdentifier() != nullptr
+              && input.restoreFocus == view->extForeignIdentifier()
+              && (view->pinned()
+                  || (view->workspace() != nullptr && view->workspace()->id() == input.restoreWorkspace))) {
+            m_server->focusView(view.get(), FocusReason::PointerPress);
+            preserveFocus = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!sceneInputAt(m_cursor->x, m_cursor->y)) {
+      // The pointer's old projected position is not a new hover-focus gesture.
+      // Refresh client enter/coordinates without overriding explicit click focus.
+      invalidateHoverFocus();
+      processMotion(monotonicMsec(), m_cursor->x, m_cursor->y, !preserveFocus);
+    }
+  }
+
+  bool Cursor::activateSceneInputAt(double x, double y) {
+    auto* output = m_server->outputFromWlr(wlr_output_layout_output_at(m_server->outputLayout(), x, y));
+    auto* mode = output != nullptr ? output->workspacePresentation() : nullptr;
+    return mode != nullptr && mode->activateAt(x, y);
+  }
+
+  void Cursor::dismissSceneInputAt(double x, double y) {
+    const auto* output = wlr_output_layout_output_at(m_server->outputLayout(), x, y);
+    auto found = std::ranges::find_if(m_sceneInputs, [output](const SceneInput& input) {
+      return input.output->wlr() == output && input.active;
+    });
+    if (found == m_sceneInputs.end()) {
+      return;
+    }
+    found->active = false;
+    auto dismiss = std::move(found->dismiss);
+    // The callback may end the lease and erase this record. Never retain its
+    // address across the call; seat-owned swallowed sequence state survives.
+    if (dismiss) {
+      dismiss();
+    }
+  }
+
+  bool Cursor::beginSceneInput(Output& output, std::function<void()> dismiss) {
+    auto* seat = m_server->seat()->wlr();
+    if (!dismiss
+        || sceneRestorationPending()
+        || m_presentationInputGuard.pending()
+        || !isPassthrough()
+        || !m_swallowedButtons.empty()
+        || seat->drag != nullptr
+        || wlr_seat_pointer_has_grab(seat)
+        || wlr_seat_touch_has_grab(seat)
+        || seat->pointer_state.button_count != 0
+        || !wl_list_empty(&seat->touch_state.touch_points)
+        || m_server->sessionLocked()
+        || (m_server->overview() != nullptr && m_server->overview()->active())
+        || std::ranges::any_of(m_sceneInputs, [&output](const SceneInput& input) { return input.output == &output; })) {
+      return false;
+    }
+    resetWheelAccumulation();
+    m_sceneInputs.push_back(
+        {.output = &output,
+         .active = true,
+         .restoring = false,
+         .dismiss = std::move(dismiss),
+         .restoreFocus = {},
+         .restoreWorkspace = {}}
+    );
+    if (sceneInputAt(m_cursor->x, m_cursor->y)) {
+      cancelHotCorner();
+      clearPointerFocus();
+    }
+    return true;
+  }
+
+  void Cursor::endSceneInput(Output& output, bool requireRestore) {
+    auto found =
+        std::ranges::find_if(m_sceneInputs, [&output](const SceneInput& input) { return input.output == &output; });
+    if (found == m_sceneInputs.end()) {
+      return;
+    }
+    found->active = false;
+    found->restoring = found->restoring || requireRestore;
+    found->dismiss = {};
+    if (!found->restoring) {
+      m_sceneInputs.erase(found);
+    } else if (sceneInputAt(m_cursor->x, m_cursor->y)) {
+      clearPointerFocus();
+    }
+    if (wlr_output_layout_output_at(m_server->outputLayout(), m_cursor->x, m_cursor->y) == output.wlr()) {
+      refreshSceneInputHover();
+    }
+  }
+
+  void Cursor::setSceneRestoreFocus(Output& output, std::string_view viewId, std::string_view workspaceId) {
+    for (auto& input : m_sceneInputs) {
+      if (input.output == &output) {
+        input.restoreFocus = viewId;
+        input.restoreWorkspace = workspaceId;
+        return;
+      }
+    }
+  }
+
+  void Cursor::sceneRestoreCommitted(Output& output) {
+    bool completed = false;
+    bool restoreFocus = false;
+    for (auto& input : m_sceneInputs) {
+      if (input.output == &output && !input.active && input.restoring) {
+        input.restoring = false;
+        completed = true;
+        restoreFocus = !input.restoreFocus.empty();
+      }
+    }
+    if (completed
+        && (restoreFocus
+            || wlr_output_layout_output_at(m_server->outputLayout(), m_cursor->x, m_cursor->y) == output.wlr())) {
+      refreshSceneInputHover();
+    } else {
+      std::erase_if(m_sceneInputs, [](const SceneInput& input) {
+        return !input.active && !input.restoring && input.restoreFocus.empty();
+      });
+    }
+  }
+
+  void Cursor::forgetSceneInput(Output& output) {
+    std::erase_if(m_sceneInputs, [&output](const SceneInput& input) { return input.output == &output; });
+#ifdef UMBRIEL_TEST_IPC
+    if (m_probeInputOutput == &output) {
+      m_probeInputOutput = nullptr;
+    }
+#endif
+    // Output destruction can run inside native teardown; the next motion or
+    // paired release refreshes hover, without re-entering a dying output.
+  }
+
+  void Cursor::sceneInputDeviceRemoved(const wlr_input_device* device) {
+    const bool pending = m_presentationInputGuard.pending();
+    m_presentationInputGuard.deviceRemoved(reinterpret_cast<uintptr_t>(device));
+    if (pending) {
+      refreshSceneInputHover();
+    }
+  }
+
+  bool Output::beginSceneInput(std::function<void()> dismiss) {
+    return m_server->cursor() != nullptr && m_server->cursor()->beginSceneInput(*this, std::move(dismiss));
+  }
+  void Output::endSceneInput(bool requireRestore) {
+    if (m_server->cursor() != nullptr) {
+      m_server->cursor()->endSceneInput(*this, requireRestore);
+    }
+  }
+  void Output::sceneRestoreCommitted() {
+    if (m_server->cursor() != nullptr) {
+      m_server->cursor()->sceneRestoreCommitted(*this);
+    }
+  }
+
+#ifdef UMBRIEL_TEST_IPC
+  bool Cursor::presentationInputProbeActive() const {
+    return std::ranges::any_of(m_sceneInputs, [this](const SceneInput& input) {
+      return input.output == m_probeInputOutput && input.active;
+    });
+  }
+  bool Cursor::setPresentationInputProbe(bool enabled) {
+    if (!enabled) {
+      if (m_probeInputOutput != nullptr) {
+        endSceneInput(*m_probeInputOutput, false);
+      }
+      return true;
+    }
+    if (m_server->outputs().empty()) {
+      return false;
+    }
+    auto* output = m_server->outputs().front().get();
+    if (!beginSceneInput(*output, [this, output] {
+          output->cancelPresentationProbe(PresentationFallback::InputDismissal);
+          endSceneInput(*output, false);
+        })) {
+      return false;
+    }
+    m_probeInputOutput = output;
+    return true;
+  }
+  void Cursor::setPresentationRestorePending(bool pending) {
+    if (m_probeInputOutput == nullptr) {
+      return;
+    }
+    if (pending) {
+      endSceneInput(*m_probeInputOutput, true);
+    } else {
+      sceneRestoreCommitted(*m_probeInputOutput);
+    }
+  }
+#endif
+
   void Cursor::refreshPointerFocus() {
     double sx = 0;
     double sy = 0;
@@ -2489,6 +2799,9 @@ namespace umbriel {
   }
 
   void Cursor::refreshPointerContents(const Output* output) {
+    if (m_presentationInputGuard.suppressHover(!pointerFocusPinned() && sceneInputAt(m_cursor->x, m_cursor->y))) {
+      return;
+    }
     wlr_seat* seat = m_server->seat()->wlr();
     if (output == nullptr
         || m_cursorHidden

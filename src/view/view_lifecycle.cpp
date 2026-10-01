@@ -10,6 +10,7 @@
 #include "overview/overview.h"
 #include "scene/effect_registry.h"
 #include "scene/surface_blur.h"
+#include "scene/window_presentation.h"
 #include "server/server.h"
 #include "view/view.h"
 extern "C" {
@@ -396,8 +397,10 @@ namespace umbriel {
     if (m_onActiveWorkspace) {
       const auto& animation = config().animation;
       const auto& open = animation.windowsIn;
-      const bool customShader = effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
-      m_customFade = animation.enabled && open.enabled && customShader;
+      const bool legacyShader = effectRegistry().animationEffect(AnimationEvent::WindowsIn) != nullptr;
+      const bool sceneShader = effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsIn) != nullptr;
+      const bool customShader = legacyShader || sceneShader;
+      m_customFade = animation.enabled && open.enabled && legacyShader;
       const bool animates = animation.enabled && open.enabled && (open.style != "none" || customShader);
       const bool tiledMember =
           m_tiled && !layoutFullscreen() && m_workspace != nullptr && m_workspace->layout().columnOf(this) >= 0;
@@ -414,7 +417,7 @@ namespace umbriel {
         m_fade.retarget(1.0, open.durationMs, open.curve);
 
         // Floating and fullscreen windows tween themselves.
-        if (!m_customFade && (open.style == "popin" || open.style == "zoom")) {
+        if (!customShader && (open.style == "popin" || open.style == "zoom")) {
           const double scale = std::clamp(open.style == "zoom" ? 0.5 : open.scale, 0.0, 1.0);
           if (layoutFullscreen()) {
             // The output box this window rests in is assigned by the arrange that follows this map, so the inset is
@@ -441,7 +444,7 @@ namespace umbriel {
             m_posX.retarget(targetX, open.durationMs, open.curve);
             m_posY.retarget(targetY, open.durationMs, open.curve);
           }
-        } else if (!m_customFade && open.style == "slide") {
+        } else if (!customShader && open.style == "slide") {
           if (layoutFullscreen()) {
             m_openingSlide = kOpenSlidePx;
             const wlr_box area = fullscreenLayoutBox();
@@ -466,6 +469,13 @@ namespace umbriel {
     m_server->updateIdleInhibit();
     if (Output* output = currentOutput()) {
       output->updateHdr();
+#ifdef UMBRIEL_TEST_IPC
+      output->notePresentationLifecycle();
+#endif
+      output->notePresentationViewMapped(*this);
+      if (output->windowPresentation() || effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsIn)) {
+        output->ensureWindowPresentation().opening(*this);
+      }
     }
     if (m_displacedHome) {
       // Snapshot peers retain their member ids while this view is unmapped.
@@ -478,6 +488,12 @@ namespace umbriel {
   }
 
   void View::handleUnmap() {
+    if (Output* output = currentOutput()) {
+      output->notePresentationViewUnmapping(*this);
+#ifdef UMBRIEL_TEST_IPC
+      output->notePresentationLifecycle();
+#endif
+    }
     if (m_effectSelectionIdle != nullptr) {
       wl_event_source_remove(m_effectSelectionIdle);
       m_effectSelectionIdle = nullptr;
@@ -554,6 +570,10 @@ namespace umbriel {
       }
     }
     const CloseSnapshotId snapshot = beginCloseAnimation();
+    if (Output* output = currentOutput(); output != nullptr
+        && (output->windowPresentation() || effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsOut))) {
+      output->ensureWindowPresentation().closing(*this, snapshot);
+    }
     // The closing snapshot must retain any in-flight opening shader first.
     wlr_scene_node_clear_animations(&m_contentTree->node);
     m_dragSlotBound = false;

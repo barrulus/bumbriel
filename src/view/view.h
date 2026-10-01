@@ -25,6 +25,7 @@
 extern "C" {
 #include <wlr/util/box.h>
 }
+struct fx_scene_source_node_override;
 struct wlr_ext_foreign_toplevel_handle_v1;
 struct wlr_ext_image_capture_source_v1;
 struct wlr_foreign_toplevel_handle_v1;
@@ -102,6 +103,9 @@ namespace umbriel {
     // content tree (surfaces, borders, backdrop, blur, and animation effects) sits at (0, 0) inside it, above the
     // shadow.
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
+    [[nodiscard]] wlr_scene_tree* sourceContentTree() const { return m_contentTree; }
+    [[nodiscard]] wlr_scene_tree* sourceBorderTree() const { return m_decoration.borderTree(); }
+    [[nodiscard]] const AnimatedValue& nativeLifecycle() const { return m_fade; }
     // Refreshes the animation and persistent effect slots on the view's own trees, or on an overview card's `target`,
     // `border`, and `surface`, gated by `gate` and driven by `cardOutput`.
     void syncAnimationEffects(
@@ -124,6 +128,11 @@ namespace umbriel {
     // Effective optional window-rule override used by tearing diagnostics.
     [[nodiscard]] std::optional<bool> tearingRuleOverride();
     [[nodiscard]] bool onActiveWorkspace() const { return m_onActiveWorkspace; }
+    // Source occurrences prepare ordinary geometry while native nodes remain
+    // disabled on hidden workspaces; capture never arranges or configures.
+    void addPresentationSourceOccurrence();
+    void removePresentationSourceOccurrence();
+    [[nodiscard]] bool hasPresentationSourceOccurrence() const { return m_presentationSourceOccurrences != 0; }
     [[nodiscard]] bool tiled() const { return m_tiled; }
     [[nodiscard]] bool floating() const { return !m_tiled; }
     [[nodiscard]] bool isAloneInLayout() const;
@@ -157,6 +166,19 @@ namespace umbriel {
     // position and size transitions cannot diverge between the two render paths.
     [[nodiscard]] const wlr_box& presentedBox() const { return m_presentedBox; }
     [[nodiscard]] float presentedOpacity() const { return effectiveOpacity(); }
+    // Read-only participant inputs with only lifecycle opacity/stages removed.
+    // Keeps client alpha, window rule, focus, drag and overview attenuation,
+    // including when the native lifecycle has already reached zero opacity.
+    struct SourceMotion {
+      wlr_box source{};
+      wlr_box destination{};
+      float progress = 1;
+      float linearProgress = 1;
+    };
+    [[nodiscard]] SourceMotion sourceMotion() const;
+    [[nodiscard]] float sourceOpacityWithoutLifecycle() const;
+    [[nodiscard]] std::vector<fx_scene_source_node_override>
+    sourceOverridesWithoutLifecycle(uint32_t replacedSlots) const;
     // The drop shadow the scene draws for this view, and whether it sits in the workspace's tile shadow layer rather
     // than under the view's own frame. Overview cards mirror it so they match the window they swap with.
     [[nodiscard]] const wlr_scene_shadow* shadowNode() const { return m_decoration.shadowNode(); }
@@ -851,6 +873,7 @@ namespace umbriel {
     // compositor-driven fullscreen change clears the parked request.
     DeferredUnfullscreen m_deferredUnfullscreen;
     bool m_onActiveWorkspace = false;
+    uint32_t m_presentationSourceOccurrences = 0;
     bool m_inScratchpad = false;
     bool m_urgent = false;
     bool m_activated = false;

@@ -202,6 +202,10 @@ namespace umbriel {
     [[nodiscard]] double velocity() const { return m_velocity; }
     [[nodiscard]] double progress() const;
     [[nodiscard]] uint64_t durationMs() const { return m_durationMsec; }
+    [[nodiscard]] uint64_t startMsec() const { return m_startMsec; }
+#ifdef UMBRIEL_TEST_IPC
+    [[nodiscard]] uint64_t startMsecForTest() const { return startMsec(); }
+#endif
     [[nodiscard]] uint64_t transitionId() const { return m_transitionId; }
     [[nodiscard]] const std::array<float, 4>& shaderSeed() const { return m_shaderSeed; }
 

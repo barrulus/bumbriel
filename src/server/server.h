@@ -10,6 +10,8 @@
 #include "scene/border_rect.h"
 #include "scene/effect_registry.h"
 #include "scene/effect_selection.h"
+#include "scene/presentation.h"
+#include "scene/presentation_probe.h"
 #include "scene/surface_shadow.h"
 #include "server/focus.h"
 #include "view/registry.h"
@@ -27,6 +29,7 @@
 #include <vector>
 #include <wayland-server-core.h>
 
+struct wlr_touch;
 struct wlr_allocator;
 struct wlr_backend;
 struct wlr_box;
@@ -88,6 +91,7 @@ struct wlr_virtual_pointer_manager_v1;
 struct wlr_virtual_pointer_v1;
 
 namespace umbriel {
+  struct WindowCloseSource;
   enum class ContentType;
   struct ConfigEffects;
 
@@ -241,6 +245,9 @@ namespace umbriel {
     // Milliseconds on the clock every animation ticks from. It follows the monotonic clock unless a test build froze
     // it.
     [[nodiscard]] uint64_t animationClockMsec() const;
+    void cancelScenePresentations(PresentationFallback reason);
+    [[nodiscard]] std::vector<PresentationNativeLifecycle> nativePresentationLifecycles(const Output* output) const;
+    [[nodiscard]] std::optional<WindowCloseSource> closeSceneSource(CloseSnapshotId id) const;
 #ifdef UMBRIEL_TEST_IPC
     void freezeAnimationClock();
     // Moves a frozen clock forward and schedules a frame on every output. False when the clock is not frozen.
@@ -249,6 +256,8 @@ namespace umbriel {
     void resumeAnimationClock();
     [[nodiscard]] bool animationClockFrozen() const { return m_frozenAnimationClockMsec.has_value(); }
     void emitRendererLostForTest();
+    void cancelPresentationProbes(PresentationFallback reason);
+    bool presentationTouchProbe(std::string_view argument);
 #endif
     [[nodiscard]] Ipc* ipc() const { return m_ipc.get(); }
     [[nodiscard]] const ScreenCastCommand& screenCastCommand() const { return m_screenCastCommand; }
@@ -726,6 +735,9 @@ namespace umbriel {
       ~CloseSnapshot() override;
 
       [[nodiscard]] CloseSnapshotId id() const { return m_id; }
+      [[nodiscard]] const AnimatedValue& nativeAlpha() const { return m_alpha; }
+      [[nodiscard]] bool visible() const { return m_visible; }
+      [[nodiscard]] WindowCloseSource sceneSource() const;
       // Place the captured box at a canvas origin in output-root coordinates, or hide it while its workspace is not
       // showing.
       void present(int canvasX, int canvasY, bool visible);
@@ -878,6 +890,9 @@ namespace umbriel {
     ModifierTapState m_modifierTap;
     std::vector<std::unique_ptr<PointerDevice>> m_pointers;
     std::vector<std::unique_ptr<TouchDevice>> m_touchDevices;
+#ifdef UMBRIEL_TEST_IPC
+    wlr_touch* m_presentationTouch = nullptr;
+#endif
     std::vector<std::unique_ptr<TabletDevice>> m_tabletDevices;
     std::vector<std::unique_ptr<TabletPadDevice>> m_tabletPads;
     LidStateCoordinator m_lidState;

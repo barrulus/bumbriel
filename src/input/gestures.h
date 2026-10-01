@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <wayland-server-core.h>
 
+struct wlr_pointer;
+
 namespace umbriel {
 
   class Output;
@@ -49,7 +51,18 @@ namespace umbriel {
     }
 
   private:
-    enum class State { Idle, Forward, Pending, Scroll, Switch, Overview, OverviewSelect };
+    enum class State {
+      Idle,
+      Forward,
+      Pending,
+      Scroll,
+      Switch,
+      Overview,
+      OverviewSelect,
+      Carousel,
+      SceneSwitch,
+      Blocked
+    };
     enum class ScrollSource { None, Swipe, Pointer, OverviewPointer };
 
     static void onSwipeBegin(wl_listener* listener, void* data);
@@ -79,6 +92,9 @@ namespace umbriel {
     void updateScroll(double delta, uint32_t timeMsec);
     // Travel along the workspace axis, in the pixels libinput reports for it.
     void updateSwitch(double travel, uint32_t timeMsec);
+    void updateSceneSwitch(double travel, uint32_t timeMsec);
+    void finishSceneSwitch(bool cancelled, uint32_t timeMsec);
+    void clearSceneSwitchPointer();
     // Where a released workspace switch lands, and what the slide keeps of its speed. The release uses it, and so does
     // the overview when it takes a swipe that is still in flight.
     [[nodiscard]] GesturePhysics::StepRelease switchSettle(uint32_t timeMsec);
@@ -91,6 +107,8 @@ namespace umbriel {
 
     Server* m_server = nullptr;
     State m_state = State::Idle;
+    bool m_pinchForwarded = false;
+    bool m_holdForwarded = false;
     double m_accumX = 0;
     double m_accumY = 0;
     Output* m_output = nullptr;
@@ -115,6 +133,9 @@ namespace umbriel {
     // Where the slide was, in steps from its base, when the gesture took it over: nonzero only when the gesture started
     // while a settle was still running.
     double m_switchStart = 0;
+    int m_sceneSwitchDirection = 0;
+    wlr_pointer* m_sceneSwitchPointer = nullptr;
+    wl_listener m_sceneSwitchDeviceDestroy{};
     bool m_hasPrev = false;
     bool m_hasNext = false;
 

@@ -1,10 +1,14 @@
 #include "server/ipc_commands.h"
 
 #include "config/config.h"
+#include "input/cursor.h"
 #include "layer/layer_surface.h"
 #include "output/output.h"
 #include "scene/effect_registry.h"
 #include "scene/effect_selection.h"
+#include "scene/window_presentation.h"
+#include "scene/workspace_presentation.h"
+#include "scene/workspace_transition.h"
 #include "server/server.h"
 #include "view/view.h"
 #include "wlr.h"
@@ -524,6 +528,15 @@ namespace umbriel {
       owners.push_back(
           {{"type", "output"},
            {"name", output->wlr()->name},
+           {"workspace_presentation",
+            output->workspacePresentation() != nullptr ? output->workspacePresentation()->status()
+                                                       : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
+           {"workspace_transition",
+            output->workspaceTransition() != nullptr ? output->workspaceTransition()->status()
+                                                     : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
+           {"window_presentation",
+            output->windowPresentation() != nullptr ? output->windowPresentation()->status()
+                                                    : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
            {"slots", {{"screen", effectSlotJson(output->screenEffectSlot())}}}}
       );
     }
@@ -824,6 +837,86 @@ namespace umbriel {
   }
 
 #ifdef UMBRIEL_TEST_IPC
+  nlohmann::json IpcCommands::presentationInputProbe(Server& server, std::string_view arg) {
+    Cursor* cursor = server.cursor();
+    if (arg == "arm" || arg == "cancel") {
+      if (arg == "cancel") {
+        server.cancelPresentationProbes(PresentationFallback::BindingRemoved);
+      }
+      if (!cursor->setPresentationInputProbe(arg == "arm")) {
+        return {{"err", "C0 input probe admission rejected: active grab, dismissal, lock or overview"}};
+      }
+    } else if (arg != "status") {
+      return {{"err", "expected arm, cancel or status"}};
+    }
+    return {
+        {"ok",
+         {{"active", cursor->presentationInputProbeActive()},
+          {"pending", cursor->presentationInputProbePending()},
+          {"restore_pending", cursor->presentationRestorePending()}}}
+    };
+  }
+
+  nlohmann::json IpcCommands::presentationTouchProbe(Server& server, std::string_view arg) {
+    if (!server.presentationTouchProbe(arg)) {
+      return {{"err", "invalid C0 touch event or device state"}};
+    }
+    return {{"ok", nullptr}};
+  }
+
+  nlohmann::json IpcCommands::presentationInventoryProbe(Server& server, std::string_view arg) {
+    if (server.outputs().empty()) {
+      return {{"err", "workspace inventory requires an output"}};
+    }
+    return server.outputs().front()->workspaceInventoryProbe(arg);
+  }
+
+  nlohmann::json IpcCommands::presentationWorkspaceProbe(Server& server, std::string_view arg) {
+    if (server.outputs().empty()) {
+      return {{"err", "workspace source requires an output"}};
+    }
+    Output* selected = nullptr;
+    if (arg.starts_with("open ")) {
+      const auto identity = arg.substr(5);
+      for (const auto& output : server.outputs()) {
+        auto* group = output->workspaceGroup();
+        for (size_t i = 0; i < group->workspaceCount(); ++i) {
+          if (group->workspaceAt(i)->id() == identity) {
+            selected = output.get();
+          }
+        }
+      }
+    } else {
+      for (const auto& output : server.outputs()) {
+        if (output->workspaceSourceActive()) {
+          selected = output.get();
+          break;
+        }
+      }
+    }
+    if (selected == nullptr) {
+      selected = server.outputs().front().get();
+    }
+    return selected->workspaceSourceProbe(arg);
+  }
+
+  nlohmann::json IpcCommands::presentationSceneProbe(Server& server, std::string_view arg) {
+    Output* output = server.outputs().empty() ? nullptr : server.outputs().front().get();
+    if (output == nullptr) {
+      return {{"err", "C0 presentation probe requires an output"}};
+    }
+    if (arg == "arm") {
+      if (!output->armPresentationProbe()) {
+        return {{"err", "C0 presentation probe admission rejected"}, {"state", output->presentationProbeStatus()}};
+      }
+    } else if (arg == "cancel") {
+      output->cancelPresentationProbe(PresentationFallback::BindingRemoved);
+    } else if (arg != "status") {
+      return {{"err", "expected arm, cancel or status"}};
+    }
+    return {{"ok", output->presentationProbeStatus()}};
+  }
+
   nlohmann::json IpcCommands::rendererRecover(Server& server, std::string_view /*arg*/) {
     server.emitRendererLostForTest();
     server.emitRendererLostForTest();
@@ -958,6 +1051,8 @@ namespace umbriel {
       {"keyboard-layouts", "", "list keyboard layouts", IpcCommandGroup::Inspect, false, &IpcCommands::keyboardLayouts,
        &printKeyboardLayouts},
 #ifdef UMBRIEL_TEST_IPC
+      {"participant-admission-probe", "", "inspect experimental rigid participant admission", IpcCommandGroup::Harness,
+       false, &IpcCommands::participantAdmissionProbe, nullptr},
       {"settle", "", "wait until no layout or animation is pending and every output has drawn a frame",
        IpcCommandGroup::Harness, false, &IpcCommands::settle, nullptr, 35},
       {"clock-freeze", "", "stop animation time", IpcCommandGroup::Harness, false, &IpcCommands::clockFreeze, nullptr},
@@ -973,6 +1068,19 @@ namespace umbriel {
        IpcCommandGroup::Harness, true, &IpcCommands::outputCommitHold, nullptr},
       {"effect-frames", "", "count frames drawn for persistent effects per output", IpcCommandGroup::Harness, false,
        &IpcCommands::effectFrames, nullptr},
+      {"swipe-inject", "<begin fingers ms|update dx dy ms|end ms|cancel ms|remove>",
+       "test swipe device through the native cursor signal path", IpcCommandGroup::Harness, true,
+       &IpcCommands::swipeInject, nullptr},
+      {"presentation-touch-probe", "<create|destroy|down id x y|motion id x y|up id|cancel id>",
+       "C0 touch device injection", IpcCommandGroup::Harness, true, &IpcCommands::presentationTouchProbe, nullptr},
+      {"presentation-workspace-probe", "<open ID|select ID|cancel|status>", "C0 complete workspace source preview",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationWorkspaceProbe, nullptr},
+      {"presentation-inventory-probe", "<hold|release|status>", "C0 native workspace inventory ownership probe",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationInventoryProbe, nullptr},
+      {"presentation-scene-probe", "<arm|cancel|status>", "C0 output-local displaced native lifecycle probe",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationSceneProbe, nullptr},
+      {"presentation-input-probe", "<arm|cancel|status>", "C0 pointer dismissal probe without scene rendering",
+       IpcCommandGroup::Harness, true, &IpcCommands::presentationInputProbe, nullptr},
 #endif
   };
 

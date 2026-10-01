@@ -35,6 +35,8 @@ namespace umbriel {
     void present(int width, int height);
     // The view's own opacity, which the fade multiplies.
     void applyOpacity(float opacity);
+    // Source-only lifecycle bypass preserves this independent retained-buffer fade.
+    [[nodiscard]] float opacityFactor(const wlr_scene_buffer* buffer) const;
     void discard();
 
     [[nodiscard]] bool pending() const { return m_tree != nullptr && !m_fading; }

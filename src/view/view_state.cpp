@@ -711,6 +711,11 @@ namespace umbriel {
       m_presentation.setSize(presentedWidth, presentedHeight);
     }
     setFullscreenState(fullscreen);
+    if (fullscreen) {
+      // Transfer a tiled opening before its admitting arrange when fullscreen
+      // is requested in the same dispatch as map.
+      resumeTiledOpening();
+    }
     setFadeAlpha(m_fadeAlpha);
     updateFullscreenPresentation(0, 0);
     if (fullscreen) {

@@ -4,6 +4,7 @@
 #include "config/effects.h"
 #include "core/animation.h"
 #include "scene/effect_ledger.h"
+#include "scene/scene_program.h"
 
 #include <cstdint>
 #include <map>
@@ -42,10 +43,19 @@ namespace umbriel {
     void clear();
     [[nodiscard]] wlr_renderer* renderer() const { return m_renderer; }
 
+    // Internal scene experiment cache. Public bindings remain gated on scene
+    // source/lifecycle evidence; transactions retain bundles returned by find().
+    [[nodiscard]] scene_experiment::ScenePrograms& scenePrograms() { return m_scenePrograms; }
+
     // The program for `name`, or null when the preset is off, inert, of another kind, or failed to compile.
     [[nodiscard]] fx_effect_shader* preset(std::string_view name, EffectKind kind) const;
     [[nodiscard]] const EffectPreset* presetConfig(std::string_view name) const;
     [[nodiscard]] std::string_view programState(std::string_view name) const;
+    [[nodiscard]] std::shared_ptr<const scene_experiment::ProgramBundle>
+    scenePreset(std::string_view name, scene_experiment::Scope scope) const;
+    [[nodiscard]] std::shared_ptr<const scene_experiment::ProgramBundle>
+    sceneAnimationEffect(AnimationEvent event) const;
+    [[nodiscard]] scene_experiment::ProgramState sceneProgramState(std::string_view name) const;
     // The preset bound to an animation event through `effect =`, or null.
     [[nodiscard]] fx_effect_shader* animationEffect(AnimationEvent event) const;
     // The program a lifecycle fade composes through: the event's preset, or for windows_in and windows_out without
@@ -93,11 +103,24 @@ namespace umbriel {
     [[nodiscard]] const void* updateAnimationAudio(
         wlr_scene_node* node, unsigned slot, const EffectPreset* preset, const fx_effect_shader* shader
     );
+    void
+    updateSceneAudio(const void* owner, Output* output, const scene_experiment::ProgramBundle* bundle, bool eligible);
+    void clearSceneAudio(const void* owner);
+    void
+    fillSceneAudio(fx_scene_frame& frame, const scene_experiment::ProgramBundle& bundle, const Output* output) const;
+    void fillScenePalette(fx_scene_frame& frame, const scene_experiment::ProgramBundle& bundle) const;
     [[nodiscard]] uint64_t audioInputRevision(const void* output) const;
     [[nodiscard]] bool audioActive(const void* output) const;
     [[nodiscard]] bool audioDirty(const void* output) const;
     void beginAudioFrame(const Output* output, bool advance);
     void finishAudioFrame(const Output* output, bool success);
+    // Source sessions supplement the original view owners on their composing
+    // output. All faces and roles reuse that output's latch and final commit.
+    void setSourceOccurrences(
+        const void* session, Output* output, std::span<View* const> views, bool replacesNativeViews = false
+    );
+    void clearSourceOccurrences(const void* session);
+    void bindSourceAudio(const void* session);
     void registerAudioCapture(const void* capture, std::function<void()> schedule);
     void removeAudioCapture(const void* capture);
     void updateCaptureAudio(const void* owner, const void* capture, std::string_view source, bool eligible);
@@ -133,6 +156,7 @@ namespace umbriel {
     void referencedNames(std::vector<std::string>& names) const;
     void updateCursorActive();
     [[nodiscard]] bool audioNodeVisible(wlr_scene_node* node, const Output* output) const;
+    [[nodiscard]] bool sourceAudioVisible(wlr_scene_node* node, const Output* output) const;
     [[nodiscard]] std::vector<const void*> audioOutputs(wlr_scene_node* node) const;
     void refreshAudioOccurrences();
     void updateTimeOccurrence(const void* owner, const EffectInstanceState& state, wlr_scene_node* node);
@@ -143,6 +167,7 @@ namespace umbriel {
     Server* m_server = nullptr;
     wlr_renderer* m_renderer = nullptr;
     std::map<std::string, Entry, std::less<>> m_programs;
+    scene_experiment::ScenePrograms m_scenePrograms;
     std::shared_ptr<fx_effect_shader> m_builtinFade;
     std::shared_ptr<fx_effect_shader> m_deformation; // null once compilation failed
     bool m_deformationCompiled = false;
@@ -160,6 +185,11 @@ namespace umbriel {
     bool m_audioAdvance = false;
     std::map<const Output*, float> m_submittedEffectTimes;
     bool m_audioWasFrozen = false;
+    struct SourceOccurrence {
+      Output* output = nullptr;
+      std::vector<std::string> views;
+      bool replacesNativeViews = false;
+    };
     struct TimeInstance {
       wlr_scene_node* node = nullptr;
       EffectInstanceState state;
@@ -169,6 +199,14 @@ namespace umbriel {
       wlr_scene_node* node = nullptr;
       std::string source;
     };
+    struct SceneAudioOwner {
+      Output* output = nullptr;
+      bool readsTime = false;
+    };
+    // Heap tokens form a separate demand key namespace from original scene
+    // nodes and selection owners. Transactions own them without another draw.
+    std::map<const void*, std::unique_ptr<SceneAudioOwner>> m_sceneAudio;
+    std::map<const void*, SourceOccurrence> m_sourceOccurrences;
     std::map<const void*, AudioInstance> m_audioInstances;
     std::map<const void*, std::function<void()>> m_audioCaptures;
     wl_listener m_audioSessionActive{};

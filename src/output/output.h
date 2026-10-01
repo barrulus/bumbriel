@@ -3,8 +3,12 @@
 #include "core/dirty.h"
 #include "output/frame_schedule.h"
 #include "scene/effect_selection.h"
+#include "scene/presentation_probe.h"
+#include "scene/workspace_source_probe.h"
+#include "scene/workspace_sources.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,6 +28,10 @@ extern "C" {
 }
 
 namespace umbriel {
+  class WorkspaceInventoryHold;
+  class WorkspacePresentation;
+  class WorkspaceTransition;
+  class WindowPresentation;
 
   enum class FormatTier : uint8_t;
   enum class HdrMode;
@@ -45,6 +53,37 @@ namespace umbriel {
     [[nodiscard]] wlr_output* wlr() const { return m_output; }
     [[nodiscard]] OutputIdentity identity() const;
     [[nodiscard]] wlr_scene_output* sceneOutput() const { return m_sceneOutput; }
+    bool enterWorkspacePresentation(std::string_view preset);
+    [[nodiscard]] WorkspacePresentation* workspacePresentation() const { return m_workspacePresentation.get(); }
+    bool beginWorkspaceTransition(std::string_view destination, bool interactive = false);
+    [[nodiscard]] WorkspaceTransition* workspaceTransition() const { return m_workspaceTransition.get(); }
+    WindowPresentation& ensureWindowPresentation();
+    [[nodiscard]] WindowPresentation* windowPresentation() const { return m_windowPresentation.get(); }
+    void notePresentationSourceContent();
+    void notePresentationViewMapped(View& view);
+    void notePresentationViewUnmapping(View& view);
+    bool beginSceneInput(std::function<void()> dismiss);
+    void endSceneInput(bool requireRestore = true);
+    void sceneRestoreCommitted();
+    bool registerWorkspaceSources(WorkspaceSources* sources);
+    void unregisterWorkspaceSources(WorkspaceSources* sources);
+#ifdef UMBRIEL_TEST_IPC
+    [[nodiscard]] uint64_t successfulBufferCommits() const { return m_successfulBufferCommits; }
+    [[nodiscard]] uint64_t rejectedBufferCommits() const { return m_rejectedBufferCommits; }
+    [[nodiscard]] bool testCommitHeld() const { return m_testCommitHeld; }
+    void setTestCommitHold(bool held);
+    bool armPresentationProbe();
+    void cancelPresentationProbe(PresentationFallback reason);
+    void tickPresentationProbe(uint64_t nowMsec);
+    void notePresentationLifecycle();
+    void notePresentationTopologyChange();
+    void completePresentationRestore();
+    nlohmann::json workspaceInventoryProbe(std::string_view action);
+    nlohmann::json workspaceSourceProbe(std::string_view argument);
+    [[nodiscard]] bool workspaceSourceActive() const;
+    [[nodiscard]] bool presentationProbeActive() const;
+    [[nodiscard]] nlohmann::json presentationProbeStatus() const;
+#endif
     [[nodiscard]] wlr_scene_tree* layerTree(uint32_t layer) const;
     [[nodiscard]] wlr_scene_tree* popupTree() const { return m_popupTree; }
     // Clipped roots for this output's window content. Every descendant is scissored to the output's layout box, which
@@ -69,12 +108,6 @@ namespace umbriel {
     // Asks for a frame on behalf of persistent effects.
     void scheduleEffectFrame();
     void scheduleAudioFrame();
-#ifdef UMBRIEL_TEST_IPC
-    [[nodiscard]] uint64_t successfulBufferCommits() const { return m_successfulBufferCommits; }
-    [[nodiscard]] uint64_t rejectedBufferCommits() const { return m_rejectedBufferCommits; }
-    [[nodiscard]] bool testCommitHeld() const { return m_testCommitHeld; }
-    void setTestCommitHold(bool held);
-#endif
     // Pushes the effect capture policy and the screen and cursor presets to this output's scene. Detached while
     // effects are suspended; the instances are visible only while the output is enabled.
     void applyOutputEffects();
@@ -187,10 +220,18 @@ namespace umbriel {
     float m_defaultScale = 1.0F;
     wlr_scene_output* m_sceneOutput = nullptr;
 #ifdef UMBRIEL_TEST_IPC
+    std::unique_ptr<PresentationProbe> m_presentationProbe;
+    std::unique_ptr<WorkspaceSourceProbe> m_workspaceSourceProbe;
+    std::unique_ptr<WorkspaceInventoryHold> m_inventoryProbe;
+    uint64_t m_inventoryInvalidations = 0;
     uint64_t m_successfulBufferCommits = 0;
     uint64_t m_rejectedBufferCommits = 0;
     bool m_testCommitHeld = false;
 #endif
+    WorkspaceSources* m_activeWorkspaceSources = nullptr;
+    std::unique_ptr<WorkspacePresentation> m_workspacePresentation;
+    std::unique_ptr<WorkspaceTransition> m_workspaceTransition;
+    std::unique_ptr<WindowPresentation> m_windowPresentation;
     wlr_scene_tree* m_layerTrees[kLayerCount]{};
     wlr_scene_tree* m_popupTree = nullptr;
     wlr_scene_tree* m_viewRoot = nullptr;

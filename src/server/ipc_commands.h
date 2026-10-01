@@ -32,8 +32,15 @@ namespace umbriel {
 #ifdef UMBRIEL_TEST_IPC
     static nlohmann::json rendererRecover(Server& server, std::string_view arg);
     static nlohmann::json audioInject(Server& server, std::string_view arg);
-    static nlohmann::json outputCommitHold(Server& server, std::string_view arg);
     static nlohmann::json effectFrames(Server& server, std::string_view arg);
+    static nlohmann::json outputCommitHold(Server& server, std::string_view arg);
+    static nlohmann::json presentationInputProbe(Server& server, std::string_view arg);
+    static nlohmann::json swipeInject(Server& server, std::string_view arg);
+    static nlohmann::json presentationTouchProbe(Server& server, std::string_view arg);
+    static nlohmann::json presentationInventoryProbe(Server& server, std::string_view arg);
+    static nlohmann::json presentationWorkspaceProbe(Server& server, std::string_view arg);
+    static nlohmann::json presentationSceneProbe(Server& server, std::string_view arg);
+    static nlohmann::json participantAdmissionProbe(Server& server, std::string_view arg);
 #endif
   };
 

@@ -418,6 +418,12 @@ namespace {
     case A::WindowMoveToWorkspacePrevious:
     case A::WorkspaceNext:
     case A::WorkspacePrevious:
+    case A::WorkspacePresentationAccept:
+    case A::WorkspacePresentationCancel:
+    case A::WorkspacePresentationEnter:
+    case A::WorkspacePresentationNext:
+    case A::WorkspacePresentationPrevious:
+    case A::WorkspacePresentationSelect:
     case A::WorkspaceMoveDown:
     case A::WorkspaceMoveUp:
     case A::WorkspaceSetLayout:

@@ -5,7 +5,8 @@
 // prints the handle, so another client can parent a dialog to it. With
 // HOLD_RESIZE set it leaves any configure that resizes the mapped window
 // unanswered until a byte arrives on stdin, so the window keeps its size while
-// the resize stays pending.
+// the resize stays pending. HOLD_RESIZE_CONTROL instead starts normally and
+// accepts h/r commands to arm/release resize holds after a native settle.
 
 #include "keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h"
 #include "text-input-unstable-v3-client-protocol.h"
@@ -50,6 +51,7 @@ namespace {
     zwp_text_input_v3* textInput = nullptr;
     wl_pointer* pointer = nullptr;
     wl_keyboard* keyboard = nullptr;
+    wl_touch* touch = nullptr;
     wl_surface* surface = nullptr;
     xdg_surface* xdgSurface = nullptr;
     xdg_toplevel* toplevel = nullptr;
@@ -63,12 +65,16 @@ namespace {
     // A configure asked for a size the current buffer does not have.
     bool resizePending = true;
     bool holdResize = false;
+    bool resizeControl = false;
+    bool sourceUpdates = false;
+    uint32_t color = 0xFF3388CC;
     bool mapped = false;
     std::optional<uint32_t> heldSerial;
     PressAction pressAction = PressAction::None;
     bool actionRequested = false;
     bool useTextInput = false;
     bool logModifiers = false;
+    bool logOutputs = false;
     // Surface-local pointer position from the latest enter or motion.
     double pointerX = 0;
     double pointerY = 0;
@@ -229,6 +235,25 @@ namespace {
 #endif
   };
 
+  void touchDown(void*, wl_touch*, uint32_t, uint32_t, wl_surface*, int32_t id, wl_fixed_t, wl_fixed_t) {
+    std::println("touch-down id={}", id);
+  }
+  void touchUp(void*, wl_touch*, uint32_t, uint32_t, int32_t id) { std::println("touch-up id={}", id); }
+  void touchMotion(void*, wl_touch*, uint32_t, int32_t id, wl_fixed_t, wl_fixed_t) {
+    std::println("touch-motion id={}", id);
+  }
+  void touchFrame(void*, wl_touch*) { std::println("touch-frame"); }
+  void touchCancel(void*, wl_touch*) { std::println("touch-cancel"); }
+  constexpr wl_touch_listener kTouchListener = {
+      .down = touchDown,
+      .up = touchUp,
+      .motion = touchMotion,
+      .frame = touchFrame,
+      .cancel = touchCancel,
+      .shape = nullptr,
+      .orientation = nullptr,
+  };
+
   // The harness creates and destroys virtual input devices while the client
   // runs, so capabilities appear and disappear rather than staying constant.
   void seatCapabilities(void* data, wl_seat* seat, uint32_t capabilities) {
@@ -240,6 +265,14 @@ namespace {
     } else if (!hasPointer && state.pointer != nullptr) {
       wl_pointer_release(state.pointer);
       state.pointer = nullptr;
+    }
+    const bool hasTouch = (capabilities & WL_SEAT_CAPABILITY_TOUCH) != 0;
+    if (hasTouch && state.touch == nullptr) {
+      state.touch = wl_seat_get_touch(seat);
+      wl_touch_add_listener(state.touch, &kTouchListener, &state);
+    } else if (!hasTouch && state.touch != nullptr) {
+      wl_touch_release(state.touch);
+      state.touch = nullptr;
     }
     const bool hasKeyboard = (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0;
     if (hasKeyboard && state.keyboard == nullptr) {
@@ -272,7 +305,7 @@ namespace {
       close(fd);
       return false;
     }
-    std::fill_n(static_cast<uint32_t*>(pixels), size / sizeof(uint32_t), 0xFF3388CC);
+    std::fill_n(static_cast<uint32_t*>(pixels), size / sizeof(uint32_t), state.color);
     wl_shm_pool* pool = wl_shm_create_pool(state.shm, fd, static_cast<int>(size));
     wl_buffer* buffer = wl_shm_pool_create_buffer(pool, 0, state.width, state.height, stride, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
@@ -299,6 +332,18 @@ namespace {
   void exportedHandle(void*, zxdg_exported_v2*, const char* handle) { std::println("exported handle={}", handle); }
   constexpr zxdg_exported_v2_listener kExportedListener = {.handle = exportedHandle};
 
+  constexpr wl_callback_listener kFrameListener = {
+      .done = [](void*, wl_callback* callback, uint32_t) {
+        std::println("source frame done");
+        wl_callback_destroy(callback);
+      },
+  };
+
+  void requestSourceFrame(State& state) {
+    wl_callback_add_listener(wl_surface_frame(state.surface), &kFrameListener, nullptr);
+    std::println("source frame requested");
+  }
+
   void answerConfigure(State& state, uint32_t serial) {
     xdg_surface_ack_configure(state.xdgSurface, serial);
     if (state.resizePending && !createBuffer(state)) {
@@ -308,6 +353,9 @@ namespace {
     state.mapped = true;
     wl_surface_attach(state.surface, state.buffer, 0, 0);
     wl_surface_damage_buffer(state.surface, 0, 0, state.width, state.height);
+    if (state.sourceUpdates) {
+      requestSourceFrame(state);
+    }
     wl_surface_commit(state.surface);
   }
 
@@ -315,6 +363,10 @@ namespace {
     auto& state = *static_cast<State*>(data);
     if (state.holdResize && state.mapped && state.resizePending) {
       state.heldSerial = serial;
+      if (state.resizeControl) {
+        std::puts("resize-configure-held");
+        std::fflush(stdout);
+      }
       return;
     }
     answerConfigure(state, serial);
@@ -343,10 +395,30 @@ namespace {
       .wm_capabilities = toplevelWmCapabilities,
   };
 
+  const wl_output_listener kOutputListener = {
+      .geometry = [](void*, wl_output*, int32_t, int32_t, int32_t, int32_t, int32_t, const char*, const char*,
+                     int32_t) {},
+      .mode = [](void*, wl_output*, uint32_t, int32_t, int32_t, int32_t) {},
+      .done = [](void*, wl_output*) {},
+      .scale = [](void*, wl_output*, int32_t) {},
+      .name = nullptr,
+      .description = nullptr,
+  };
+  const wl_surface_listener kSurfaceListener = {
+      .enter = [](void*, wl_surface*, wl_output*) { std::println("surface-output-enter"); },
+      .leave = [](void*, wl_surface*, wl_output*) { std::println("surface-output-leave"); },
+      .preferred_buffer_scale = nullptr,
+      .preferred_buffer_transform = nullptr,
+  };
+
   void registryGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
     auto& state = *static_cast<State*>(data);
     if (std::strcmp(interface, wl_compositor_interface.name) == 0) {
       state.compositor = static_cast<wl_compositor*>(wl_registry_bind(registry, name, &wl_compositor_interface, 4));
+    } else if (state.logOutputs && std::strcmp(interface, wl_output_interface.name) == 0) {
+      auto* output =
+          static_cast<wl_output*>(wl_registry_bind(registry, name, &wl_output_interface, std::min(version, 2U)));
+      wl_output_add_listener(output, &kOutputListener, nullptr);
     } else if (std::strcmp(interface, wl_shm_interface.name) == 0) {
       state.shm = static_cast<wl_shm*>(wl_registry_bind(registry, name, &wl_shm_interface, 1));
     } else if (std::strcmp(interface, wl_seat_interface.name) == 0) {
@@ -389,8 +461,10 @@ int main(int argc, char** argv) {
 
   State state;
   state.holdResize = std::getenv("HOLD_RESIZE") != nullptr;
+  state.resizeControl = std::getenv("HOLD_RESIZE_CONTROL") != nullptr;
   state.useTextInput = std::getenv("ENABLE_TEXT_INPUT") != nullptr;
   state.logModifiers = std::getenv("LOG_MODIFIERS") != nullptr;
+  state.logOutputs = std::getenv("LOG_OUTPUTS") != nullptr;
   if (mode == "move-on-press") {
     state.pressAction = PressAction::Move;
   } else if (mode == "resize-on-press") {
@@ -417,7 +491,11 @@ int main(int argc, char** argv) {
     zwp_text_input_v3_add_listener(state.textInput, &kTextInputListener, &state);
   }
 
+  state.sourceUpdates = std::getenv("SOURCE_UPDATES") != nullptr;
   state.surface = wl_compositor_create_surface(state.compositor);
+  if (state.logOutputs) {
+    wl_surface_add_listener(state.surface, &kSurfaceListener, nullptr);
+  }
   state.xdgSurface = xdg_wm_base_get_xdg_surface(state.wmBase, state.surface);
   xdg_surface_add_listener(state.xdgSurface, &kXdgListener, &state);
   state.toplevel = xdg_surface_get_toplevel(state.xdgSurface);
@@ -449,7 +527,9 @@ int main(int argc, char** argv) {
     wl_display_flush(state.display);
     pollfd sources[2] = {
         {.fd = displayFd, .events = POLLIN, .revents = 0},
-        {.fd = state.holdResize ? STDIN_FILENO : -1, .events = POLLIN, .revents = 0},
+        {.fd = (state.holdResize || state.sourceUpdates || state.resizeControl) ? STDIN_FILENO : -1,
+         .events = POLLIN,
+         .revents = 0},
     };
     if (poll(sources, 2, -1) < 0) {
       if (errno == EINTR) {
@@ -466,6 +546,26 @@ int main(int argc, char** argv) {
     if ((sources[1].revents & (POLLIN | POLLHUP)) != 0) {
       char command = 0;
       [[maybe_unused]] const ssize_t bytes = read(STDIN_FILENO, &command, 1);
+      if (state.resizeControl && bytes > 0 && command == 'h') {
+        state.holdResize = true;
+        std::puts("resize-hold-armed");
+        std::fflush(stdout);
+        continue;
+      }
+      if (state.sourceUpdates && bytes > 0 && command == 'n') {
+        state.color = 0xFF00CC33;
+        if (!createBuffer(state)) {
+          return EXIT_FAILURE;
+        }
+        requestSourceFrame(state);
+        wl_surface_attach(state.surface, state.buffer, 0, 0);
+        wl_surface_damage_buffer(state.surface, 0, 0, state.width, state.height);
+        wl_surface_commit(state.surface);
+      }
+      if (bytes <= 0) {
+        state.sourceUpdates = false;
+        state.resizeControl = false;
+      }
       state.holdResize = false;
       if (state.heldSerial) {
         answerConfigure(state, *state.heldSerial);

@@ -139,6 +139,17 @@ namespace umbriel {
     applyBufferOpacity();
   }
 
+  float ResizeCrossfade::opacityFactor(const wlr_scene_buffer* buffer) const {
+    if (active()) {
+      for (const auto& retained : m_buffers) {
+        if (retained.node == buffer) {
+          return std::clamp(static_cast<float>(m_fade.current()), 0.0F, 1.0F);
+        }
+      }
+    }
+    return 1.0F;
+  }
+
   void ResizeCrossfade::applyBufferOpacity() {
     if (!active()) {
       return;
