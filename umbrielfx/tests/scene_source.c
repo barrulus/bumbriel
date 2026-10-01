@@ -5,6 +5,27 @@
 #include "render/fx_renderer/scene_program.h"
 #include "umbrielfx/render/effect.h"
 
+static struct fx_scene_source_view native_view(struct wlr_scene_output *output,
+    struct wlr_scene_node *first, struct wlr_scene_node *last) {
+  struct fx_scene_source_view view = {.first = first, .last = last,
+      .scale = output->output->scale, .extent = {.x = output->x, .y = output->y}};
+  wlr_output_effective_resolution(output->output, &view.extent.width, &view.extent.height);
+  return view;
+}
+
+static uint64_t native_pair_bytes(struct wlr_scene_output *output,
+    struct wlr_scene_node *first, struct wlr_scene_node *last) {
+  struct fx_scene_source_view view = native_view(output, first, last);
+  return fx_scene_source_frozen_pair_bytes(output, &view);
+}
+
+static bool native_pair_capture(struct wlr_scene_output *output,
+    struct wlr_scene_node *first, struct wlr_scene_node *last,
+    uint64_t bytes, struct fx_scene_source_pair_for_test *pair) {
+  struct fx_scene_source_view view = native_view(output, first, last);
+  return fx_scene_source_pair_capture_for_test(output, &view, bytes, pair);
+}
+
 struct sample_counter {
 	struct wl_listener listener;
 	unsigned count;
@@ -137,14 +158,14 @@ static bool test_source(struct fixture *fixture) {
 		ok &= check(fx_scene_capture_range_for_test(output, &backdrop->node, &pinned->node, unfiltered, true), "unfiltered source capture");
 		if (mode <= 1 && fixture->output->transform == WL_OUTPUT_TRANSFORM_NORMAL && fixture->output->scale == 1) {
 			struct fx_scene_source_pair_for_test pair = {0};
-			uint64_t bytes = fx_scene_source_frozen_pair_bytes(output, &backdrop->node, &pinned->node);
-			ok &= check(bytes > 0 && !fx_scene_source_pair_capture_for_test(output, &backdrop->node,
+			uint64_t bytes = native_pair_bytes(output, &backdrop->node, &pinned->node);
+			ok &= check(bytes > 0 && !native_pair_capture(output, &backdrop->node,
 				&pinned->node, bytes - 1, &pair) && !pair.display && !pair.unfiltered,
 				"insufficient paired reservation allocates no retained source");
-			ok &= check(!fx_scene_source_pair_capture_for_test(output, &pinned->node,
+			ok &= check(!native_pair_capture(output, &pinned->node,
 				&backdrop->node, bytes, &pair) && !pair.display && !pair.unfiltered,
 				"failed paired acquisition rolls back both candidates");
-			ok &= check(fx_scene_source_pair_capture_for_test(output, &backdrop->node, &pinned->node, bytes, &pair),
+			ok &= check(native_pair_capture(output, &backdrop->node, &pinned->node, bytes, &pair),
 				"owned paired source acquisition succeeds atomically");
 			ok &= check((pair.display == pair.unfiltered) == (mode == 0), "equivalent roles alias; excluded stages retain separate roles");
 			ok &= pair.display && pair.unfiltered && compare(fixture, display, pair.display, "paired display role") &&
@@ -367,7 +388,7 @@ static bool test_working_source(struct fixture *fixture) {
 	output->combined_color_transform = wlr_color_transform_ref(encoding);
 	struct fx_scene_source_pair_for_test pair = {0};
 	uint64_t pair_bytes = fx_scene_source_pair_bytes_for_test(output);
-	ok &= check(pair_bytes > 0 && fx_scene_source_pair_capture_for_test(output,
+	ok &= check(pair_bytes > 0 && native_pair_capture(output,
 		&rect->node, &rect->node, pair_bytes, &pair) && pair.working_space,
 		"paired helper preserves managed working format");
 	if (pair.display) {
@@ -425,7 +446,7 @@ static bool test_source_history(struct fixture *fixture) {
 	ok &= check(source_native_feedback(fixture, output), "native history promotes after acquisition");
 	struct fx_scene_source_pair_for_test frozen = {0};
 	uint64_t frozen_bytes = fx_scene_source_pair_bytes_for_test(output);
-	ok &= check(fx_scene_source_pair_capture_for_test(output, &rect->node, &rect->node,
+	ok &= check(native_pair_capture(output, &rect->node, &rect->node,
 		frozen_bytes, &frozen), "freeze already rendered feedback stage");
 	if (frozen.display && frozen.unfiltered) {
 		uint8_t shown[4], plain[4];
@@ -477,7 +498,7 @@ static bool test_frozen_replacement_roles(struct fixture *fixture) {
 	wlr_scene_node_set_animation(&client->node, FX_SLOT_WINDOW, green, &parameters);
 	struct fx_scene_source_pair_for_test pair = {0};
 	uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
-	bool ok = check(green && fx_scene_source_pair_capture_for_test(output,
+	bool ok = check(green && native_pair_capture(output,
 		&desktop->node, &desktop->node, bytes, &pair), "acquire distinct frozen presentation roles");
 	struct wlr_scene_buffer *picture = pair.display ? wlr_scene_buffer_create(&scene->tree, pair.display) : NULL;
 	ok &= check(picture && fx_scene_output_replace_range_for_test(output, &desktop->node, &desktop->node)
@@ -659,7 +680,7 @@ static bool test_working_replacement(struct fixture *fixture) {
 	output->combined_color_transform = wlr_color_transform_ref(encoding);
 	struct fx_scene_source_pair_for_test pair = {0};
 	uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
-	bool ok = check(shader && encoding && bytes && fx_scene_source_pair_capture_for_test(output,
+	bool ok = check(shader && encoding && bytes && native_pair_capture(output,
 		&desktop->node, &desktop->node, bytes, &pair) && pair.working_space,
 		"capture working-space replacement pair");
 	struct wlr_scene_buffer *picture = pair.display ? wlr_scene_buffer_create(&scene->tree, pair.display) : NULL;
@@ -738,7 +759,7 @@ static bool test_frozen_feedback_light(struct fixture *fixture, bool split) {
 		ok &= check(wlr_output_commit_state(fixture->output, &state), "commit feedback emission before freeze admission");
 		struct fx_scene_source_pair_for_test pair = {0};
 		uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
-		ok &= check(bytes && fx_scene_source_pair_capture_for_test(output,
+		ok &= check(bytes && native_pair_capture(output,
 			&background->node, &lights->node, bytes, &pair), "freeze completed border history and exact emission");
 		ok &= check((pair.display == pair.unfiltered) == !split,
 			"border-only native capture aliases displayed history; excluded stages retain independent roles");
@@ -796,7 +817,7 @@ static bool test_working_history(struct fixture *fixture) {
 	wlr_output_state_finish(&state);
 	struct fx_scene_source_pair_for_test pair = {0};
 	uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
-	ok &= check(bytes > 0 && fx_scene_source_pair_capture_for_test(output, &rect->node, &rect->node, bytes, &pair),
+	ok &= check(bytes > 0 && native_pair_capture(output, &rect->node, &rect->node, bytes, &pair),
 		"freeze FP16 feedback roles");
 	uint16_t pixels[16 * 16 * 4];
 	if (pair.display && pair.unfiltered) {
@@ -806,6 +827,22 @@ static bool test_working_history(struct fixture *fixture) {
 			&& fabsf(source_half(pixels[0]) - 2) < 0.002f, "frozen capture feedback retains own FP16 value");
 	}
 	fx_scene_source_pair_finish_for_test(&pair);
+  // A native slide offset must not leak into a frozen feedback endpoint.
+  wlr_scene_node_set_position(&rect->node, 8, 0);
+  struct fx_scene_source_root_override root = {.root = &rect->node, .offset_x = -8};
+  struct fx_scene_source_view view = native_view(output, &rect->node, &rect->node);
+  view.roots = &root;
+  view.root_count = 1;
+  bytes = fx_scene_source_frozen_pair_bytes(output, &view);
+  ok &= check(bytes && fx_scene_source_pair_capture_for_test(output, &view, bytes, &pair),
+      "freeze feedback with resting workspace coordinates");
+  if (pair.display) {
+    ok &= check(read_buffer(fixture, pair.display, DRM_FORMAT_ABGR16161616F, 16 * 8, pixels)
+        && fabsf(source_half(pixels[0]) - 2) < 0.002f,
+        "frozen feedback ignores native slide offset");
+  }
+  fx_scene_source_pair_finish_for_test(&pair);
+  wlr_scene_node_set_position(&rect->node, 0, 0);
 	struct fx_scene_source_session *session = fx_scene_source_session_create_for_test(output,
 		&rect->node, &rect->node, fx_scene_source_session_bytes_for_test(output, &rect->node, &rect->node));
 	struct wlr_buffer *target = create_output_buffer(fixture, DRM_FORMAT_ABGR16161616F, 16, 16);
@@ -892,9 +929,9 @@ static bool test_frozen_output_locality(struct fixture *fixture) {
 	struct fx_animation_parameters parameters = {.progress=1,.linear_progress=1,.direction=1,
 		.light={.enabled=true,.spread=2,.intensity=1,.threshold=0}};
 	wlr_scene_node_set_animation(&border->node,FX_SLOT_BORDER_EFFECT,feedback,&parameters);
-	uint64_t bytes = fx_scene_source_frozen_pair_bytes(output,&local->node,&lights->node);
+	uint64_t bytes = native_pair_bytes(output,&local->node,&lights->node);
 	struct fx_scene_source_pair_for_test pair={0};
-	bool ok = check(feedback && bytes && fx_scene_source_pair_capture_for_test(output,&local->node,&lights->node,bytes,&pair),
+	bool ok = check(feedback && bytes && native_pair_capture(output,&local->node,&lights->node,bytes,&pair),
 		"foreign uncommitted feedback light does not reject local native freeze");
 	if(pair.display) {
 		uint8_t pixel[4]; ok &= fixture_read_pixel(fixture,pair.display,8,8,pixel);
@@ -902,7 +939,7 @@ static bool test_frozen_output_locality(struct fixture *fixture) {
 	}
 	fx_scene_source_pair_finish_for_test(&pair);
 	wlr_scene_node_set_position(&foreign->node,0,0);
-	ok &= check(fx_scene_source_frozen_pair_bytes(output,&local->node,&lights->node)==0,
+	ok &= check(native_pair_bytes(output,&local->node,&lights->node)==0,
 		"same uncommitted feedback light reaching this output correctly rejects freeze");
 	wlr_scene_node_destroy(&scene->tree.node);
 	fx_effect_shader_unref(feedback);

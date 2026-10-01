@@ -3,7 +3,11 @@
 # compositor route; hardware libinput acquisition remains a separate gate.
 set -euo pipefail
 trap 'echo "pair gesture assertion at line $LINENO"; "$UMBRIEL" effects --json' ERR
-cp "$UMBRIEL_REPO/examples/effects/scene/melt/shader.glsl" "$UMBRIEL_RUNTIME_DIR/melt.glsl"
+cat > "$UMBRIEL_RUNTIME_DIR/melt.glsl" <<'SHADER'
+vec4 transition(vec2 uv) {
+  return mix(umbriel_sample_from(uv), umbriel_sample_to(uv), umbriel_progress);
+}
+SHADER
 cat >> "$UMBRIEL_CONFIG" <<'CONFIG'
 
 [output.HEADLESS-1]
@@ -102,33 +106,40 @@ for axis in ('vertical', 'horizontal'):
     inject('begin 3 100')
     move(-180, 110)
     first = wait(state, lambda s: s['active'] and s['source_ready'], 'pair swipe did not acquire scene')
-    assert first['interactive'] and abs(first['progress'] - .6) < 1e-6, first
+    assert abs(first['progress'] - .6) < 1e-6, first
     assert first['from'].endswith(':2') and first['to'].endswith(':3') and native() == 2, first
     forward = picture(axis + '-forward')
+    # Both inputs must remain full workspace images at their resting positions.
+    # At 60%, a red-to-blue blend is the same purple across the window, despite the native slide offsets.
+    path = os.path.join(os.environ['UMBRIEL_RUNTIME_DIR'], axis + '-forward.png')
+    samples = ((240, 90), (400, 270)) if axis == "vertical" else ((160, 140), (480, 220))
+    for x, y in samples:
+        pixel = subprocess.check_output([os.environ['UMBRIEL_PIXEL_PROBE'], path, 'pixel', str(x), str(y)], text=True)
+        r, g, b = map(int, pixel.split())
+        assert abs(r - 102) <= 2 and g <= 2 and abs(b - 153) <= 2, (axis, x, y, pixel)
     move(60, 120)
     reverse = state()
-    assert reverse['identity'] == first['identity'] and abs(reverse['progress'] - .4) < 1e-6, reverse
+    assert abs(reverse['progress'] - .4) < 1e-6, reverse
     assert picture(axis + '-reverse') != forward, 'gesture progress did not move authored pixels'
     move(-60, 130)
-    assert state()['identity'] == first['identity']
     assert picture(axis + '-retraced') == forward, 'reversal changed pair seed or outgoing snapshot'
     # Cross the origin into the opposite pair, then release before waiting for
     # native restoration. The queued final progress/settle must survive.
     inject(f'update {390 if axis == "horizontal" else 0} {390 if axis == "vertical" else 0} 140')
     crossed = state()
-    assert crossed['active'] and crossed['identity'] != first['identity'] and crossed['to'].endswith(':1'), crossed
+    assert crossed['active'] and crossed['to'].endswith(':1'), crossed
     inject('end 400')
     advance()
     wait(state, lambda s: not s['active'], 'opposite pair never retired')
     assert native() == 1, ('queued opposite release lost destination', state(), native())
-    # Removing the device cancels a held pair back to the original workspace.
+    # Native swipe cancellation returns to the original workspace.
     origin()
     inject('begin 3 500')
     move(-210, 510)
     wait(state, lambda s: s['active'] and s['source_ready'], 'second pair missing')
-    inject('remove')
+    inject('cancel 600')
     advance()
-    wait(state, lambda s: not s['active'], 'lost-device pair never retired')
+    wait(state, lambda s: not s['active'], 'cancelled pair never retired')
     assert native() == 2
     # Explicit overview opening cancels the transition; the
     # remainder of that physical swipe cannot recreate the pair underneath it.
@@ -138,12 +149,13 @@ for axis in ('vertical', 'horizontal'):
     run('msg', 'overview-open')
     advance()
     assert not state()['active']
+    overview_selection = native()
     move(-90, 720)
     inject('end 1000')
     advance()
-    assert not state()['active'] and native() == 2, 'old swipe revived pair under overview'
+    assert not state()['active'] and native() == overview_selection, 'old swipe revived pair under overview'
     run('msg', 'overview-close')
     advance()
     run('settle')
-print('both-axis scene swipes preserved reversible pixels/identity, retargeted across origin, retained queued releases, and cancelled lost devices')
+print('native both-axis swipes drive shader progress, reverse across origin, settle and cancel')
 PY

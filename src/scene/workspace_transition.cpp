@@ -29,11 +29,11 @@ namespace umbriel {
     }
   }
 
-  bool Output::beginWorkspaceTransition(std::string_view destination, bool interactive) {
-    if (!m_workspaceTransition) {
+  void
+  Output::updateWorkspaceTransition(Workspace& from, Workspace& to, double progress, const AnimatedValue& animation) {
+    if (!m_workspaceTransition)
       m_workspaceTransition = std::make_unique<WorkspaceTransition>(*m_server, *this);
-    }
-    return m_workspaceTransition->begin(destination, interactive);
+    m_workspaceTransition->update(from, to, progress, animation);
   }
   namespace {
     std::array<float, 9> sourceMatrix(wl_output_transform transform) {
@@ -56,7 +56,8 @@ namespace umbriel {
     std::unique_ptr<WorkspaceSources> sources;
     std::unique_ptr<SceneComposition> composition;
     bool sourceReady = false;
-    AnimatedValue progress;
+    double progress = 0;
+    const AnimatedValue* animation = nullptr;
     std::array<float, 4> seed{};
     uint64_t identity = 0;
     wlr_scene_tree* tree = nullptr;
@@ -66,10 +67,9 @@ namespace umbriel {
     float scale = 1;
     int width = 0, height = 0;
     std::string original, destination;
-    bool active = false, interactive = false, released = false, commit = true;
-    bool workingSpace = false, pendingEnd = false, activated = false;
+    bool active = false;
+    bool workingSpace = false;
     bool floatingPoint = false;
-    bool awaitNative = false;
     float direction = 1;
     bool horizontal = false;
     uint64_t lastSources = 0;
@@ -114,61 +114,28 @@ namespace umbriel {
   };
 
   WorkspaceTransition::WorkspaceTransition(Server& server, Output& output)
-      : m_state(std::make_unique<State>(server, output)) {
-    server.registerAnimatable(this);
-  }
-  WorkspaceTransition::~WorkspaceTransition() {
-    cancel(PresentationFallback::OutputRemoved);
-    m_state->server.unregisterAnimatable(this);
-  }
-  bool WorkspaceTransition::begin(std::string_view destination, bool interactive) {
-    const std::string requested(destination);
-    destination = requested;
+      : m_state(std::make_unique<State>(server, output)) {}
+  WorkspaceTransition::~WorkspaceTransition() { cancel(PresentationFallback::OutputRemoved); }
+  bool WorkspaceTransition::begin(Workspace& from, Workspace& to) {
     auto& state = *m_state;
-    state.awaitNative = state.awaitNative || state.tree != nullptr;
-    if (state.active) {
-      cancel(PresentationFallback::None);
-    }
-    auto* group = state.output.workspaceGroup();
-    if (group == nullptr
-        || group->active() == nullptr
-        || group->active()->id() == destination
-        || group->slideActive()
-        || state.server.sessionLocked()
-        || (state.server.overview() && state.server.overview()->active())) {
-      return false;
-    }
+    cancel(PresentationFallback::None);
+    state.original = from.id();
+    state.destination = to.id();
     auto bundle = state.server.effects().sceneAnimationEffect(AnimationEvent::Workspaces);
     if (!bundle) {
       return false;
     }
-    Workspace* target = nullptr;
-    for (size_t i = 0; i < group->workspaceCount(); ++i) {
-      if (group->workspaceAt(i)->id() == destination)
-        target = group->workspaceAt(i);
-    }
-    if (!target)
-      return false;
     state.bundle = std::move(bundle);
     state.box = state.output.layoutBox();
     state.transform = state.output.wlr()->transform;
     state.scale = state.output.wlr()->scale;
     state.width = state.output.wlr()->width;
     state.height = state.output.wlr()->height;
-    state.original = group->active()->id();
-    state.destination = destination;
-    state.direction = target->index() > group->active()->index() ? 1 : -1;
-    state.horizontal = group->workspaceAxis() == WorkspaceAxis::Horizontal;
-    state.interactive = interactive;
-    state.released = !interactive;
-    state.commit = true;
-    state.activated = false;
-    state.pendingEnd = false;
+    state.direction = to.index() > from.index() ? 1 : -1;
+    state.horizontal = from.group()->workspaceAxis() == WorkspaceAxis::Horizontal;
     state.lastProgress = -1;
     state.lastSources = 0;
-    state.sources = std::make_unique<WorkspaceSources>(state.server, state.output, [this](PresentationFallback reason) {
-      cancel(reason);
-    });
+    state.sources = std::make_unique<WorkspaceSources>(state.server, state.output);
     state.workingSpace = fx_scene_source_working_space(state.output.sceneOutput());
     state.floatingPoint = fx_scene_source_floating_point(state.output.sceneOutput());
     state.composition = SceneComposition::create(
@@ -179,7 +146,7 @@ namespace umbriel {
       cancel(PresentationFallback::ResourceBudget);
       return false;
     }
-    if (!state.sources->beginPair(state.original, destination) || !state.sources->freezeOutgoing()) {
+    if (!state.sources->beginPair(state.original, state.destination) || !state.sources->freezeOutgoing()) {
       cancel(
           state.sources->lastFallback() == PresentationFallback::ResourceBudget
               ? PresentationFallback::ResourceBudget
@@ -187,54 +154,27 @@ namespace umbriel {
       );
       return false;
     }
-    state.progress.snap(0);
-    state.progress.retarget(1, config().animation.workspaces.durationMs, config().animation.workspaces.curve);
-    state.identity = state.progress.transitionId();
-    state.seed = state.progress.shaderSeed();
-    state.progress.snap(0);
     state.fallback = PresentationFallback::None;
     state.active = true;
     wlr_output_schedule_frame(state.output.wlr());
     return true;
   }
-  bool WorkspaceTransition::gestureProgress(double progress) {
+  void WorkspaceTransition::update(Workspace& from, Workspace& to, double progress, const AnimatedValue& animation) {
     auto& state = *m_state;
-    if (!state.active || !state.interactive || state.released || !std::isfinite(progress))
-      return false;
-    state.progress.snap(std::clamp(progress, 0.0, 1.0));
-    wlr_output_schedule_frame(state.output.wlr());
-    return true;
-  }
-  bool WorkspaceTransition::retargetInteractive(std::string_view destination, double progress) {
-    if (!std::isfinite(progress))
-      return false;
-    return begin(destination, true) && gestureProgress(progress);
-  }
-  bool WorkspaceTransition::settle(bool commit, double velocity) {
-    auto& state = *m_state;
-    if (!state.active || !state.interactive || state.released || !std::isfinite(velocity))
-      return false;
-    state.commit = commit;
-    state.released = true;
-    const double target = commit ? 1 : 0;
-    const auto& settings = config().animation.workspaces;
-    if (settings.curve.easing == Easing::Spring)
-      state.progress.settleSpring(target, settings.curve.spring, velocity);
-    else
-      state.progress.retarget(target, settings.durationMs, settings.curve);
-    state.progress.tick(state.server.animationClockMsec());
-    if (state.sourceReady && commit) {
-      state.activated = state.sources->activateSelection(state.destination);
-      state.server.refocus(&state.output);
+    if (state.original != from.id() || state.destination != to.id()) {
+      (void)begin(from, to);
     }
-    wlr_output_schedule_frame(state.output.wlr());
-    return true;
+    state.progress = progress * state.direction;
+    state.animation = &animation;
+  }
+  void WorkspaceTransition::finish() {
+    cancel(PresentationFallback::None);
+    m_state->original.clear();
+    m_state->destination.clear();
   }
   void WorkspaceTransition::prepareFrame(bool animate) {
     auto& state = *m_state;
     if (!state.active)
-      return;
-    if (state.awaitNative)
       return;
     const auto box = state.output.layoutBox();
     if (state.server.sessionLocked()) {
@@ -282,25 +222,15 @@ namespace umbriel {
     }
     if (!state.sourceReady) {
       state.sourceReady = true;
-      if (!state.interactive) {
-        state.progress.retarget(1, config().animation.workspaces.durationMs, config().animation.workspaces.curve);
-        state.progress.tick(state.server.animationClockMsec());
-      }
-      if (state.released && state.commit) {
-        state.activated = state.sources->activateSelection(state.destination);
-        if (!state.activated) {
-          cancel(PresentationFallback::SourceUnavailable);
-          return;
-        }
-        state.server.refocus(&state.output);
-      }
       state.server.effects().updateSceneTime(this, &state.output, state.bundle.get(), true);
     }
+    state.identity = state.animation->transitionId();
+    state.seed = state.animation->shaderSeed();
     fx_scene_frame frame{};
     state.server.effects().fillScenePalette(frame, *state.bundle);
     const auto revision = state.sources->revision();
     if (revision == state.lastSources
-        && state.lastProgress == state.progress.current()
+        && state.lastProgress == state.progress
         && (!state.bundle->readsTime || state.lastTime == state.output.effectSeconds())
         && frame.palette_count == state.lastPaletteCount
         && std::ranges::equal(frame.palette, state.lastPalette))
@@ -310,8 +240,9 @@ namespace umbriel {
     frame.scale = state.scale;
     frame.output_transform = state.transform;
     frame.time = state.output.effectSeconds();
-    frame.progress = static_cast<float>(state.progress.current());
-    frame.linear_progress = state.interactive ? frame.progress : static_cast<float>(state.progress.progress());
+    frame.progress = static_cast<float>(state.progress);
+    frame.linear_progress =
+        static_cast<float>(state.animation->animating() ? state.animation->progress() : state.progress);
     frame.direction = state.direction;
     frame.axis[state.horizontal ? 0 : 1] = 1;
     frame.scene_count = 2;
@@ -326,27 +257,19 @@ namespace umbriel {
       cancel(PresentationFallback::CompositionFailure);
       return;
     }
-    state.pendingEnd = state.released && !state.progress.animating();
     state.lastSources = revision;
-    state.lastProgress = state.progress.current();
+    state.lastProgress = state.progress;
     state.lastTime = frame.time;
     state.lastPaletteCount = frame.palette_count;
     std::ranges::copy(frame.palette, state.lastPalette.begin());
   }
   void WorkspaceTransition::frameSubmitted(bool success) {
     auto& state = *m_state;
-    if (success && state.awaitNative) {
-      state.awaitNative = false;
-      if (state.active)
-        wlr_output_schedule_frame(state.output.wlr());
-      return;
-    }
+
     if (!state.active || !state.composition->pending())
       return;
     state.composition->submitted(success);
     state.sources->frameSubmitted(success);
-    if (success && state.pendingEnd)
-      cancel(PresentationFallback::None);
   }
   void WorkspaceTransition::sendFrameDone(const timespec& when) {
     if (m_state->active)
@@ -355,23 +278,6 @@ namespace umbriel {
   void WorkspaceTransition::cancel(PresentationFallback reason) {
     auto& state = *m_state;
     const bool visible = state.tree != nullptr;
-    state.awaitNative = state.awaitNative || visible;
-    const bool finishRequestedSwitch = state.active
-        && !state.activated
-        && state.released
-        && state.commit
-        && reason != PresentationFallback::TopologyChanged
-        && reason != PresentationFallback::OutputRemoved;
-    // A requested timed switch remains authoritative even if source preparation
-    // fails. Inventory invalidation has already selected its own new target.
-    if (state.active
-        && state.sources
-        && !state.activated
-        && state.released
-        && state.commit
-        && reason != PresentationFallback::OutputRemoved) {
-      state.activated = state.sources->activateSelection(state.destination);
-    }
     state.active = false;
     state.fallback = reason;
     state.sourceReady = false;
@@ -386,34 +292,11 @@ namespace umbriel {
     state.composition.reset();
     if (state.sources)
       state.sources->cancel(reason);
-    if (finishRequestedSwitch && !state.activated) {
-      auto* group = state.output.workspaceGroup();
-      if (group != nullptr) {
-        for (size_t i = 0; i < group->workspaceCount(); ++i) {
-          auto* target = group->workspaceAt(i);
-          if (target->id() == state.destination) {
-            group->activate(target, false);
-            state.server.refocus(&state.output);
-            break;
-          }
-        }
-      }
-    }
-    state.progress.snap(state.commit ? 1 : 0);
 
     if (visible)
       wlr_output_schedule_frame(state.output.wlr());
   }
   bool WorkspaceTransition::active() const { return m_state->active; }
-  bool WorkspaceTransition::interactive() const { return m_state->interactive && !m_state->released; }
-  bool WorkspaceTransition::tickAnimations(uint64_t nowMsec) {
-    if (!m_state->active || !m_state->sourceReady)
-      return false;
-    m_state->progress.tick(nowMsec);
-    return hasActiveAnimations();
-  }
-  bool WorkspaceTransition::hasActiveAnimations() const { return m_state->active && m_state->progress.animating(); }
-  bool WorkspaceTransition::animatesOn(const Output* output) const { return &m_state->output == output; }
   nlohmann::json WorkspaceTransition::status() const {
     const auto& state = *m_state;
     constexpr std::array reasons{
@@ -434,12 +317,10 @@ namespace umbriel {
         {"identity", state.identity},
         {"from", state.original},
         {"to", state.destination},
-        {"progress", state.progress.current()},
-        {"interactive", interactive()},
+        {"progress", state.progress},
         {"source_ready", state.sourceReady},
         {"memory_bytes", state.sources ? state.sources->reservedBytes() : 0},
         {"fallback", reasons[static_cast<size_t>(state.fallback)]},
-        {"sources", state.sources ? state.sources->status() : nlohmann::json()}
     };
   }
 } // namespace umbriel

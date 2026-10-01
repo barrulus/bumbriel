@@ -29,6 +29,8 @@ namespace umbriel {
   enum class FormatTier : uint8_t;
   enum class HdrMode;
   class Server;
+  class AnimatedValue;
+  class Workspace;
   class WorkspaceTransition;
   class View;
   class WorkspaceGroup;
@@ -47,7 +49,7 @@ namespace umbriel {
     [[nodiscard]] wlr_output* wlr() const { return m_output; }
     [[nodiscard]] OutputIdentity identity() const;
     [[nodiscard]] wlr_scene_output* sceneOutput() const { return m_sceneOutput; }
-    bool beginWorkspaceTransition(std::string_view destination, bool interactive = false);
+    void updateWorkspaceTransition(Workspace& from, Workspace& to, double progress, const AnimatedValue& animation);
     [[nodiscard]] WorkspaceTransition* workspaceTransition() const { return m_workspaceTransition.get(); }
     void notePresentationSourceContent();
     void notePresentationViewMapped(View& view);

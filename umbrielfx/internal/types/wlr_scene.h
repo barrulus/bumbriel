@@ -60,11 +60,6 @@ enum fx_scene_participant_reason {
 enum fx_scene_participant_reason fx_scene_participant_admit_for_test(struct wlr_scene_node *node);
 bool fx_scene_capture_participant_for_test(struct wlr_scene_output *output,
 	struct wlr_scene_node *node, struct wlr_buffer *target);
-// Expanded logical layout extent retains off-output companion pixels which
-// deformation may bring back into view. Target dimensions must match scale.
-bool fx_scene_capture_participant_extent_for_test(struct wlr_scene_output *output,
-	struct wlr_scene_node *node, struct wlr_buffer *target, const struct wlr_box *extent);
-
 struct fx_scene_source_pair_for_test {
 	struct wlr_buffer *display;
 	struct wlr_buffer *unfiltered;
@@ -79,12 +74,13 @@ struct fx_scene_source_pair_for_test {
 // against output and aggregate pools before calling capture, and retains the
 // reservation until finish. 0 means unsupported dimensions/budget.
 uint64_t fx_scene_source_pair_bytes_for_test(struct wlr_scene_output *output);
-// Exact native range freeze: feature-sensitive scratch and copied committed
+struct fx_scene_source_view;
+// Exact source view freeze: feature-sensitive scratch and copied committed
 // histories only (no writable history images for a frozen frame).
 uint64_t fx_scene_source_frozen_pair_bytes(struct wlr_scene_output *output,
-    struct wlr_scene_node *first, struct wlr_scene_node *last);
+    const struct fx_scene_source_view *view);
 bool fx_scene_source_pair_capture_for_test(struct wlr_scene_output *output,
-	struct wlr_scene_node *first, struct wlr_scene_node *last,
+	const struct fx_scene_source_view *view,
 	uint64_t reserved_bytes, struct fx_scene_source_pair_for_test *pair);
 void fx_scene_source_pair_finish_for_test(struct fx_scene_source_pair_for_test *pair);
 

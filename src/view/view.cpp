@@ -339,18 +339,6 @@ namespace umbriel {
     }
   }
 
-  void View::addPresentationSourceOccurrence() {
-    ++m_presentationSourceOccurrences;
-    if (m_workspace != nullptr) {
-      m_workspace->markArrange(false);
-    }
-  }
-
-  void View::removePresentationSourceOccurrence() {
-    assert(m_presentationSourceOccurrences > 0);
-    --m_presentationSourceOccurrences;
-  }
-
   void View::setWorkspace(Workspace* workspace, bool attachToLayout) {
     setWorkspace(workspace, attachToLayout, LayoutAttachOrigin::ExistingView);
   }

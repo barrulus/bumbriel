@@ -3,9 +3,7 @@
 #include "scene/presentation.h"
 
 #include <array>
-#include <functional>
 #include <memory>
-#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -30,28 +28,21 @@ namespace umbriel {
   // Borrowed immutable role images. Valid until the next prepareFrame,
   // frameSubmitted(true), or cancellation; the provider owns their buffers.
   struct WorkspaceSourceFace {
-    std::string identity;
     wlr_buffer* display = nullptr;
     wlr_buffer* unfiltered = nullptr;
-    int width = 0;
-    int height = 0;
-    bool workingSpace = false;
-    bool floatingPoint = false;
   };
 
   enum class WorkspaceSourceResult { Preparing, Ready, Failed };
 
-  // Internal native workspace inventory and paired source owner. The caller
+  // Paired source images borrowed from the native workspace transition. The caller
   // owns composition and final output replacement.
   class WorkspaceSources {
   public:
-    WorkspaceSources(Server& server, Output& output, std::function<void(PresentationFallback)> invalidated = {});
+    WorkspaceSources(Server& server, Output& output);
     ~WorkspaceSources();
-    // Retains complete native identity ownership, but captures exactly the two
-    // native-resolution faces required by a workspace transition.
+    // The native slide retains both workspaces until this source owner is released.
     bool beginPair(std::string_view from, std::string_view to);
     bool freezeOutgoing();
-    bool activateSelection(std::string_view identity);
     WorkspaceSourceResult prepareFrame(bool animate);
     [[nodiscard]] std::span<const WorkspaceSourceFace> faces() const;
     void frameSubmitted(bool success);
@@ -61,7 +52,6 @@ namespace umbriel {
     void viewMapped(View& view);
     void viewWillUnmap(View& view);
     [[nodiscard]] bool active() const;
-    [[nodiscard]] bool preparing() const;
     [[nodiscard]] bool renderLocked() const;
     [[nodiscard]] uint64_t reservedBytes() const;
     [[nodiscard]] uint64_t revision() const;
@@ -73,10 +63,9 @@ namespace umbriel {
 
     void tick(bool animate);
     void frameCommitted();
-    [[nodiscard]] nlohmann::json status() const;
 
   private:
-    bool open(std::string_view identity);
+    bool open(std::string_view from, std::string_view to);
     struct State;
     std::unique_ptr<State> m_state;
   };

@@ -677,9 +677,6 @@ namespace umbriel {
       const bool requested = output->tearingRequested();
       nlohmann::json entry = {
           {"name", output->wlr()->name},
-          {"workspace_transition",
-           output->workspaceTransition() ? output->workspaceTransition()->status()
-                                         : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
           {"allowed", output->configuredTearingAllowed()},
           {"requested", requested},
           {"last_commit_tearing", output->lastCommitTearing()},
@@ -815,9 +812,6 @@ namespace umbriel {
     for (const auto& output : server.outputs()) {
       outputs.push_back({
           {"name", output->wlr()->name},
-          {"workspace_transition",
-           output->workspaceTransition() ? output->workspaceTransition()->status()
-                                         : nlohmann::json{{"active", false}, {"memory_bytes", 0}}},
           {"effect_frames", output->effectFrames()},
           {"eligible", output->effectEligible()},
       });
@@ -880,7 +874,7 @@ namespace umbriel {
       {"keyboard-layouts", "", "list keyboard layouts", IpcCommandGroup::Inspect, false, &IpcCommands::keyboardLayouts,
        &printKeyboardLayouts},
 #ifdef UMBRIEL_TEST_IPC
-      {"swipe-inject", "<begin fingers ms|update dx dy ms|end ms|cancel ms|remove>",
+      {"swipe-inject", "<begin 3 ms|update dx dy ms|end ms|cancel ms>",
        "test swipe device through the native cursor signal path", IpcCommandGroup::Harness, true,
        &IpcCommands::swipeInject, nullptr},
       {"settle", "", "wait until no layout or animation is pending and every output has drawn a frame",

@@ -480,7 +480,7 @@ namespace umbriel {
     const ScratchpadManager* scratchpad = m_server->scratchpadManager();
     const bool presentedInScratchpad = scratchpad != nullptr && scratchpad->contains(this);
     if (!m_mapped
-        || (!m_onActiveWorkspace && !presentedInOverview && !hasPresentationSourceOccurrence())
+        || (!m_onActiveWorkspace && !presentedInOverview)
         || (m_workspace == nullptr && !presentedInScratchpad && !allowFullscreen)
         || (!allowFullscreen && (scheduledFullscreen() || currentFullscreen()))
         || width <= 0
@@ -682,9 +682,7 @@ namespace umbriel {
     // across the layout on open. The fade-in covers the appear instead.
     const Overview* overview = m_server->overview();
     const bool presentedInOverview = overview != nullptr && overview->active() && m_workspace != nullptr;
-    if (!m_mapped
-        || (!m_onActiveWorkspace && !presentedInOverview && !hasPresentationSourceOccurrence())
-        || !m_positioned) {
+    if (!m_mapped || (!m_onActiveWorkspace && !presentedInOverview) || !m_positioned) {
       setPosition(x, y);
       return;
     }

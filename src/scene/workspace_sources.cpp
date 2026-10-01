@@ -1,9 +1,7 @@
 #include "scene/workspace_sources.h"
 
-#include "input/cursor.h"
 #include "output/output.h"
 #include "scene/effect_registry.h"
-#include "scene/workspace_inventory.h"
 #include "server/server.h"
 #include "view/view.h"
 #include "wlr.h"
@@ -19,7 +17,6 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <nlohmann/json.hpp>
 #include <sstream>
 #include <unordered_set>
 
@@ -77,7 +74,6 @@ namespace umbriel {
     struct Sources {
       fx_scene_reservation reservation{};
       std::vector<fx_scene_source_pair_for_test> pairs;
-      uint64_t retained = 0;
       ~Sources() {
 
         for (auto& pair : pairs) {
@@ -123,32 +119,26 @@ namespace umbriel {
       fx_scene_source_view_plan plan{};
       History* history = nullptr;
     };
-    WorkspaceSources& owner;
-    std::function<void(PresentationFallback)> invalidated;
     Server& server;
     Output& output;
     fx_scene_resource_pool pool{.limit = FX_SCENE_OUTPUT_BUDGET, .used = 0};
-    std::unique_ptr<WorkspaceInventoryHold> inventory;
+    bool opened = false;
     std::vector<View*> owners;
     std::vector<std::unique_ptr<SurfaceWatch>> watches;
     std::unique_ptr<Sources> current;
     std::unique_ptr<Sources> candidate;
     std::unique_ptr<Sources> frozen;
-    // Live source histories outlive image refreshes, but never their native inventory.
+    // Histories survive image refreshes until the native transition ends.
     std::vector<std::unique_ptr<History>> histories;
     WorkspaceSourceFace frozenMetadata;
     wlr_box box{};
-    std::string selected;
     std::vector<std::string> visible;
     std::vector<std::string> captureIdentities;
     std::vector<WorkspaceSourceFace> metadata;
     uint64_t revision = 1;
     uint64_t capturedRevision = 0;
     uint64_t committedRevision = 0;
-    uint64_t captures = 0;
-    uint64_t callbacks = 0;
     bool pending = false;
-    wl_event_source* preparationTimeout = nullptr;
     bool callbacksPending = false;
     bool renderLocked = false;
     PresentationFallback fallback = PresentationFallback::None;
@@ -176,8 +166,7 @@ namespace umbriel {
             && (view->workspace() == nullptr || !std::ranges::contains(visible, view->workspace()->id()))) {
           continue;
         }
-        wlr_xdg_surface_for_each_surface(
-            view->toplevel()->base,
+        view->forEachSurface(
             [](wlr_surface* surface, int, int, void* data) {
               auto& iteration = *static_cast<Iteration*>(data);
               if (!iteration.seen.insert(surface).second) {
@@ -214,6 +203,14 @@ namespace umbriel {
       }
       std::erase_if(watches, [&](const auto& watch) { return !seen.contains(watch->surface); });
     }
+    size_t indexOf(std::string_view id) const {
+      auto& group = *output.workspaceGroup();
+      for (size_t i = 0; i < group.workspaceCount(); ++i) {
+        if (group.workspaceAt(i)->id() == id)
+          return i;
+      }
+      return group.workspaceCount();
+    }
     Descriptor describe(size_t index, float scale) {
       Descriptor result;
       auto& group = *output.workspaceGroup();
@@ -228,7 +225,6 @@ namespace umbriel {
           .root_count = 0,
           .extent = box,
           .scale = scale,
-          .transparent = false,
           .session = nullptr
       };
       const auto add = [&](wlr_scene_node* node, fx_scene_source_visibility visibility) {
@@ -288,8 +284,9 @@ namespace umbriel {
           continue;
         }
         const auto& identity = captureIdentities[i];
-        const auto sourceIndex =
-            static_cast<size_t>(std::ranges::find(inventory->identities(), identity) - inventory->identities().begin());
+        const auto sourceIndex = indexOf(identity);
+        if (sourceIndex == output.workspaceGroup()->workspaceCount())
+          return false;
         auto& descriptor = descriptors.emplace_back(describe(sourceIndex, output.wlr()->scale));
         descriptor.view.roots = descriptor.roots.data();
         descriptor.view.root_count = descriptor.roots.size();
@@ -363,7 +360,6 @@ namespace umbriel {
         descriptor.view.session = history->session;
         histories.push_back(std::move(history));
       }
-      next->retained = retained;
       next->pairs.resize(descriptors.size());
 
       server.effects().bindSourceTime(this);
@@ -382,7 +378,6 @@ namespace umbriel {
             )) {
           return false;
         }
-        ++captures;
       }
 
       // Capture scratch has been released; retain only the owned images and
@@ -403,13 +398,8 @@ namespace umbriel {
           face = frozenMetadata;
           continue;
         }
-        face.identity = captureIdentities[faceIndex];
         face.display = facePair.display;
         face.unfiltered = facePair.unfiltered;
-        face.width = descriptors[faceIndex].plan.width;
-        face.height = descriptors[faceIndex].plan.height;
-        face.workingSpace = facePair.working_space;
-        face.floatingPoint = facePair.floating_point;
       }
 
       pending = false;
@@ -417,64 +407,30 @@ namespace umbriel {
     }
   };
 
-  WorkspaceSources::WorkspaceSources(
-      Server& server, Output& output, std::function<void(PresentationFallback)> invalidated
-  )
-      : m_state(std::make_unique<State>(*this, std::move(invalidated), server, output)) {}
+  WorkspaceSources::WorkspaceSources(Server& server, Output& output)
+      : m_state(std::make_unique<State>(server, output)) {}
   WorkspaceSources::~WorkspaceSources() { cancel(PresentationFallback::OutputRemoved); }
-  bool WorkspaceSources::open(std::string_view identity) {
+  bool WorkspaceSources::open(std::string_view from, std::string_view to) {
     auto& state = *m_state;
-    if (state.inventory != nullptr) {
+    if (state.opened) {
       return false;
     }
-    state.inventory = state.output.workspaceGroup()->holdPresentationInventory([this] {
-      cancel(PresentationFallback::TopologyChanged);
-      if (m_state->invalidated) {
-        m_state->invalidated(PresentationFallback::TopologyChanged);
-      }
-    });
-    if (!state.inventory) {
-      return false;
-    }
-    if (std::ranges::find(state.inventory->identities(), identity) == state.inventory->identities().end()) {
-      state.inventory.reset();
-      return false;
-    }
-    // Reserve dismissal ownership during preparation too. No displaced image is
-    // published until normal layout/configure readiness and all sources succeed.
     if (!state.output.registerWorkspaceSources(this)) {
-
-      state.inventory.reset();
       return false;
     }
-    state.selected = identity;
-    state.captureIdentities = state.inventory->identities();
-    state.visible = {std::string(identity)};
+    state.opened = true;
+    state.captureIdentities = {std::string(from), std::string(to)};
+    state.visible = state.captureIdentities;
     state.box = state.output.layoutBox();
     state.fallback = PresentationFallback::None;
     state.pending = true;
-    state.preparationTimeout = wl_event_loop_add_timer(
-        wl_display_get_event_loop(state.server.display()),
-        [](void* data) {
-          auto& state = *static_cast<State*>(data);
-          auto invalidated = state.invalidated;
-          state.owner.cancel(PresentationFallback::SourceUnavailable);
-          if (invalidated) {
-            invalidated(PresentationFallback::SourceUnavailable);
-          }
-          return 0;
-        },
-        &state
-    );
-    if (state.preparationTimeout == nullptr || wl_event_source_timer_update(state.preparationTimeout, 2000) != 0) {
-      cancel(PresentationFallback::SourceUnavailable);
-      return false;
-    }
     ++state.revision;
     for (const auto& view : state.server.views()) {
-      if (view->mapped() && view->animatesOn(&state.output) && (view->workspace() != nullptr || view->pinned())) {
+      if (view->mapped()
+          && view->animatesOn(&state.output)
+          && (view->pinned()
+              || (view->workspace() && std::ranges::contains(state.captureIdentities, view->workspace()->id())))) {
         state.owners.push_back(view.get());
-        view->addPresentationSourceOccurrence();
       }
     }
     state.watchSurfaces();
@@ -486,32 +442,24 @@ namespace umbriel {
   }
 
   bool WorkspaceSources::beginPair(std::string_view from, std::string_view to) {
-    if (from == to || !open(from)) {
+    if (from == to || !open(from, to)) {
       return false;
     }
     auto& state = *m_state;
-    if (!std::ranges::contains(state.inventory->identities(), to)) {
+    if (state.indexOf(to) == state.output.workspaceGroup()->workspaceCount()) {
       cancel(PresentationFallback::SourceUnavailable);
       return false;
     }
-    state.captureIdentities = {std::string(from), std::string(to)};
-    state.visible = state.captureIdentities;
-    state.registerOccurrences();
     return true;
   }
 
-  bool WorkspaceSources::activateSelection(std::string_view identity) {
-    return m_state->inventory && m_state->inventory->activateSelection(identity);
-  }
   bool WorkspaceSources::freezeOutgoing() {
     auto& state = *m_state;
-    if (state.frozen || !state.inventory) {
+    if (state.frozen || !state.opened) {
       return false;
     }
     const auto& identity = state.captureIdentities.front();
-    const size_t index = static_cast<size_t>(
-        std::ranges::find(state.inventory->identities(), identity) - state.inventory->identities().begin()
-    );
+    const size_t index = state.indexOf(identity);
     auto descriptor = state.describe(index, state.output.wlr()->scale);
     descriptor.view.roots = descriptor.roots.data();
     descriptor.view.root_count = descriptor.roots.size();
@@ -523,7 +471,7 @@ namespace umbriel {
     // visibly restart it at progress zero before the workspace even moves.
     const bool replayHistory = descriptor.plan.history_bytes != 0;
     const uint64_t captureBytes = replayHistory
-        ? fx_scene_source_frozen_pair_bytes(state.output.sceneOutput(), descriptor.view.first, descriptor.view.last)
+        ? fx_scene_source_frozen_pair_bytes(state.output.sceneOutput(), &descriptor.view)
         : descriptor.plan.total_bytes;
     if (captureBytes == 0) {
       state.fallback = PresentationFallback::ResourceBudget;
@@ -538,8 +486,7 @@ namespace umbriel {
     state.server.effects().bindSourceTime(&state);
     const bool captured = replayHistory
         ? fx_scene_source_pair_capture_for_test(
-              state.output.sceneOutput(), descriptor.view.first, descriptor.view.last, captureBytes,
-              &frozen->pairs.front()
+              state.output.sceneOutput(), &descriptor.view, captureBytes, &frozen->pairs.front()
           )
         : fx_scene_source_view_pair_capture_for_test(
               state.output.sceneOutput(), &descriptor.view, captureBytes, &frozen->pairs.front()
@@ -558,20 +505,12 @@ namespace umbriel {
     if (!fx_scene_reserve(&frozen->reservation, &state.pool, &presentationAggregatePool(), retainedBytes)) {
       return false;
     }
-    frozen->retained = retainedBytes;
     state.frozenMetadata = {
-        .identity = identity,
         .display = pair.display,
         .unfiltered = pair.unfiltered,
-        .width = descriptor.plan.width,
-        .height = descriptor.plan.height,
-        .workingSpace = pair.working_space,
-        .floatingPoint = pair.floating_point,
     };
     state.frozen = std::move(frozen);
-    ++state.captures;
     state.visible = {state.captureIdentities.back()};
-    state.selected = state.visible.front();
     ++state.revision;
     state.registerOccurrences();
     return true;
@@ -579,7 +518,7 @@ namespace umbriel {
 
   WorkspaceSourceResult WorkspaceSources::prepareFrame(bool animate) {
     tick(animate);
-    if (!m_state->inventory) {
+    if (!m_state->opened) {
       return WorkspaceSourceResult::Failed;
     }
     return m_state->pending ? WorkspaceSourceResult::Preparing : WorkspaceSourceResult::Ready;
@@ -597,14 +536,11 @@ namespace umbriel {
   PresentationFallback WorkspaceSources::lastFallback() const { return m_state->fallback; }
   void WorkspaceSources::cancel(PresentationFallback reason) {
     auto& state = *m_state;
-    if (!state.inventory) {
+    if (!state.opened) {
       return;
     }
     state.fallback = reason;
-    if (state.preparationTimeout != nullptr) {
-      wl_event_source_remove(state.preparationTimeout);
-      state.preparationTimeout = nullptr;
-    }
+
     state.pending = false;
     state.visible.clear();
     state.captureIdentities.clear();
@@ -612,16 +548,14 @@ namespace umbriel {
     state.server.effects().clearSourceOccurrences(&state);
 
     state.watches.clear();
-    for (View* view : state.owners) {
-      view->removePresentationSourceOccurrence();
-    }
+
     state.owners.clear();
     state.candidate.reset();
     state.current.reset();
     state.frozen.reset();
     state.histories.clear();
     state.frozenMetadata = {};
-    state.inventory.reset();
+    state.opened = false;
     state.callbacksPending = false;
     if (state.renderLocked) {
       wlr_output_lock_attach_render(state.output.wlr(), false);
@@ -632,15 +566,15 @@ namespace umbriel {
   }
   void WorkspaceSources::viewMapped(View& view) {
     auto& state = *m_state;
-    if (!state.inventory
+    if (!state.opened
         || !view.mapped()
         || !view.animatesOn(&state.output)
-        || (view.workspace() == nullptr && !view.pinned())
+        || (!view.pinned()
+            && (!view.workspace() || !std::ranges::contains(state.captureIdentities, view.workspace()->id())))
         || std::ranges::contains(state.owners, &view)) {
       return;
     }
     state.owners.push_back(&view);
-    view.addPresentationSourceOccurrence();
     state.watchSurfaces();
     state.registerOccurrences();
     contentChanged();
@@ -651,7 +585,6 @@ namespace umbriel {
       return;
     }
     std::erase(state.owners, &view);
-    view.removePresentationSourceOccurrence();
     // Drop every listener before the native unmap can destroy a surface; the
     // retained paired images own their buffers independently of this View.
     state.watchSurfaces();
@@ -659,14 +592,14 @@ namespace umbriel {
     contentChanged();
   }
   void WorkspaceSources::contentChanged() {
-    if (m_state->inventory) {
+    if (m_state->opened) {
       ++m_state->revision;
       wlr_output_schedule_frame(m_state->output.wlr());
     }
   }
   void WorkspaceSources::tick(bool animate) {
     auto& state = *m_state;
-    if (!state.inventory) {
+    if (!state.opened) {
       return;
     }
     const auto box = state.output.layoutBox();
@@ -686,15 +619,13 @@ namespace umbriel {
           && (view->workspace() == nullptr || !std::ranges::contains(state.visible, view->workspace()->id()))) {
         continue;
       }
-      const auto* surface = view->toplevel()->base;
-      if (surface->configure_idle != nullptr || surface->current.configure_serial != surface->scheduled_serial) {
-        return;
+      if (const auto* toplevel = view->toplevel()) {
+        const auto* surface = toplevel->base;
+        if (surface->configure_idle != nullptr || surface->current.configure_serial != surface->scheduled_serial)
+          return;
       }
     }
-    if (state.preparationTimeout != nullptr) {
-      wl_event_source_remove(state.preparationTimeout);
-      state.preparationTimeout = nullptr;
-    }
+
     if (animate) {
       ++state.revision;
     }
@@ -723,27 +654,24 @@ namespace umbriel {
   }
   void WorkspaceSources::sendFrameDone(const timespec& when) {
     auto& state = *m_state;
-    if (!state.callbacksPending || !state.inventory) {
+    if (!state.callbacksPending || !state.opened) {
       return;
     }
     state.callbacksPending = false;
     std::unordered_set<wlr_surface*> sent;
     struct Delivery {
-      State& state;
       const timespec& when;
       std::unordered_set<wlr_surface*>& sent;
-    } delivery{state, when, sent};
+    } delivery{when, sent};
     for (View* view : state.owners) {
       if (!view->pinned() && !std::ranges::contains(state.visible, view->workspace()->id())) {
         continue; // Only contributors to the displayed face are paced.
       }
-      wlr_xdg_surface_for_each_surface(
-          view->toplevel()->base,
+      view->forEachSurface(
           [](wlr_surface* surface, int, int, void* data) {
             auto& delivery = *static_cast<Delivery*>(data);
             if (delivery.sent.insert(surface).second && !wl_list_empty(&surface->current.frame_callback_list)) {
               wlr_surface_send_frame_done(surface, &delivery.when);
-              ++delivery.state.callbacks;
             }
           },
           &delivery
@@ -763,32 +691,8 @@ namespace umbriel {
     }
   }
 
-  bool WorkspaceSources::active() const { return m_state->inventory && (m_state->candidate || m_state->current); }
-  bool WorkspaceSources::preparing() const { return m_state->pending; }
+  bool WorkspaceSources::active() const { return m_state->opened && (m_state->candidate || m_state->current); }
+
   bool WorkspaceSources::renderLocked() const { return m_state->renderLocked; }
-  nlohmann::json WorkspaceSources::status() const {
-    const auto& state = *m_state;
-    nlohmann::json faces = nlohmann::json::array();
-    for (const auto& face : state.metadata) {
-      faces.push_back({{"identity", face.identity}, {"width", face.width}, {"height", face.height}});
-    }
-    return {
-        {"faces", std::move(faces)},
-        {"active", active()},
-        {"preparing", preparing()},
-        {"selected", state.selected},
-        {"ids", state.inventory ? state.inventory->identities() : std::vector<std::string>{}},
-        {"capture_ids", state.captureIdentities},
-        {"revision", state.revision},
-        {"captured_revision", state.capturedRevision},
-        {"committed_revision", state.committedRevision},
-        {"reserved_bytes", state.pool.used},
-        {"retained_bytes", state.current ? state.current->retained : 0},
-        {"face_width", state.metadata.empty() ? 0 : state.metadata.front().width},
-        {"face_height", state.metadata.empty() ? 0 : state.metadata.front().height},
-        {"captures", state.captures},
-        {"callbacks", state.callbacks},
-        {"fallback", static_cast<int>(state.fallback)}
-    };
-  }
+
 } // namespace umbriel

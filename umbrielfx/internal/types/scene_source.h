@@ -34,17 +34,9 @@ struct fx_scene_source_view {
   // Bounded face canvas, in layout coordinates. Uses the output viewport.
   struct wlr_box extent;
   float scale;
-  // Participant capture may select nested same-parent roots, with transparent
-  // outside coverage. Overrides never write native slots or visual properties.
-  bool transparent;
   // One live occurrence owns independent role histories; never shared by faces.
   struct fx_scene_source_session *session;
 };
-
-// Native light-stratum discovery. Existing occurrences retain native child
-// order; a cold owner would append its proxy at the end of this layer.
-struct wlr_scene_tree *fx_scene_source_light_layer(struct wlr_scene *scene);
-struct wlr_scene_node *fx_scene_source_light_owner(struct wlr_scene_node *occurrence);
 
 // Read-only source working-space selection, before reserving any role targets.
 bool fx_scene_source_working_space(struct wlr_scene_output *output);

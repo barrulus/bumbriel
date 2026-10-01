@@ -104,9 +104,6 @@ namespace umbriel {
     [[nodiscard]] wlr_scene_tree* sceneTree() const { return m_sceneTree; }
     // Refreshes the animation and persistent effect slots on the view's own trees, or on an overview card's `target`,
     // `border`, and `surface`, gated by `gate` and driven by `cardOutput`.
-    void addPresentationSourceOccurrence();
-    void removePresentationSourceOccurrence();
-    bool hasPresentationSourceOccurrence() const { return m_presentationSourceOccurrences != 0; }
     void syncAnimationEffects(
         wlr_scene_tree* target = nullptr, wlr_scene_node* border = nullptr, wlr_scene_node* surface = nullptr,
         const BorderEffectGate* gate = nullptr, Output* cardOutput = nullptr, float scale = 1.0F
@@ -809,7 +806,6 @@ namespace umbriel {
     // The workspace's layout motion currently drives the presented box.
     bool m_layoutMotion = false;
     // A completed layout motion keeps its final logical size until the client commit for that configure arrives.
-    uint32_t m_presentationSourceOccurrences = 0;
     bool m_layoutPresentationHeld = false;
     struct TiledSizeRequest {
       uint32_t serial = 0;
