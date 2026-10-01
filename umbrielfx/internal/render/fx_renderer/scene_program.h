@@ -14,12 +14,8 @@ struct fx_scene_program;
 struct fx_scene_target;
 struct fx_effect_light;
 
-enum fx_scene_profile {
-	FX_SCENE_PAIR,
-};
-
 #define FX_SCENE_PARAMETERS 32
-#define FX_SCENE_VERTEX_VECTORS 19u
+#define FX_SCENE_VERTEX_VECTORS 3u
 #define FX_SCENE_FRAGMENT_VECTORS 28u
 struct fx_scene_limits {
 	unsigned texture_size, vertex_vectors, fragment_vectors, fragment_texture_units;
@@ -49,10 +45,10 @@ struct fx_scene_sources {
 // The registry is the only compilation/cache owner. These functions perform
 // no file access, selection, subscription, or render-time compilation.
 struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *renderer,
-	enum fx_scene_profile profile, const struct fx_scene_sources *sources,
+	const struct fx_scene_sources *sources,
 	const struct fx_scene_parameter *parameters, unsigned parameter_count);
-struct fx_scene_program *fx_scene_program_ref(struct fx_scene_program *program);
 void fx_scene_program_unref(struct fx_scene_program *program);
+bool fx_scene_program_reads_role(const struct fx_scene_program *program);
 bool fx_scene_program_reads_time(const struct fx_scene_program *program);
 
 // Caller owns one buffer reference; returns NULL for unsupported formats/size.

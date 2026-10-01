@@ -16,11 +16,14 @@ namespace umbriel {
     struct Target {
       wlr_buffer* buffer = nullptr;
       fx_scene_target* target = nullptr;
-      ~Target() {
+      ~Target() { reset(); }
+      void reset() {
         fx_scene_target_destroy(target);
         if (buffer != nullptr) {
           wlr_buffer_drop(buffer);
         }
+        buffer = nullptr;
+        target = nullptr;
       }
       bool prepare(
           wlr_renderer* renderer, wlr_allocator* allocator, int width, int height, bool workingSpace, bool floatingPoint
@@ -32,10 +35,16 @@ namespace umbriel {
     };
     struct Version {
       std::array<Target, 2> output;
+      bool alias = false;
     };
     // Declare the reservation first so every GPU object dies before its bytes
     // are released. Destruction is explicit because pools are externally owned.
     fx_scene_reservation reservation{};
+    fx_scene_reservation extraReservation{};
+    wlr_allocator* allocator = nullptr;
+    int width = 0, height = 0;
+    bool workingSpace = false, floatingPoint = false;
+    uint64_t imageBytes = 0;
     wlr_renderer* renderer = nullptr;
     wl_listener rendererDestroy{};
     std::shared_ptr<const scene_experiment::ProgramBundle> bundle;
@@ -52,9 +61,11 @@ namespace umbriel {
     // Keep the external pool pointers until all targets have released their
     // renderer/buffer references, including a failed unsubmitted candidate.
     auto reservation = m_state->reservation;
+    auto extraReservation = m_state->extraReservation;
     m_state->reservation = {};
     m_state.reset();
     fx_scene_release(&reservation);
+    fx_scene_release(&extraReservation);
   }
 
   std::unique_ptr<SceneComposition> SceneComposition::create(
@@ -79,6 +90,11 @@ namespace umbriel {
     }
     auto state = std::make_unique<State>();
     state->renderer = renderer;
+    state->allocator = allocator;
+    state->width = width;
+    state->height = height;
+    state->workingSpace = workingSpace;
+    state->floatingPoint = floatingPoint;
     state->rendererDestroy.notify = [](wl_listener* listener, void*) {
       State* state;
       state = wl_container_of(listener, state, rendererDestroy);
@@ -94,7 +110,8 @@ namespace umbriel {
     // role targets. No independent budget.
     const uint64_t stride = (static_cast<uint64_t>(width) * (floatingPoint ? 8 : 4) + 255) & ~uint64_t{255};
     const uint64_t image = (stride * static_cast<uint64_t>(height) + 4095) & ~uint64_t{4095};
-    const uint64_t count = 4;
+    const uint64_t count = state->bundle->readsRole ? 4 : 2;
+    state->imageBytes = image;
     if (image > (std::numeric_limits<uint64_t>::max() - sizeof(State)) / count
         || !fx_scene_reserve(&state->reservation, &outputPool, &aggregatePool, sizeof(State) + count * image)) {
       return nullptr;
@@ -102,8 +119,8 @@ namespace umbriel {
     auto composition = std::unique_ptr<SceneComposition>(new SceneComposition(std::move(state)));
 
     for (auto& version : composition->m_state->versions) {
-      for (auto& output : version.output) {
-        if (!output.prepare(renderer, allocator, width, height, workingSpace, floatingPoint)) {
+      for (unsigned role = 0; role < count / 2; ++role) {
+        if (!version.output[role].prepare(renderer, allocator, width, height, workingSpace, floatingPoint)) {
           return nullptr;
         }
       }
@@ -139,8 +156,27 @@ namespace umbriel {
           return false;
       }
     }
+    const bool alias = !state.bundle->readsRole
+        && std::ranges::all_of(sources, [](const auto& source) { return source.display == source.unfiltered; });
+    if (!alias && !state.versions[0].output[1].target) {
+      if (!fx_scene_reserve(
+              &state.extraReservation, state.reservation.output, state.reservation.aggregate, 2 * state.imageBytes
+          ))
+        return false;
+      for (auto& version : state.versions) {
+        if (!version.output[1].prepare(
+                state.renderer, state.allocator, state.width, state.height, state.workingSpace, state.floatingPoint
+            )) {
+          for (auto& failedVersion : state.versions)
+            failedVersion.output[1].reset();
+          fx_scene_release(&state.extraReservation);
+          return false;
+        }
+      }
+    }
     auto& version = state.versions[state.candidate];
-    for (unsigned role = 0; role < 2; ++role) {
+    version.alias = alias;
+    for (unsigned role = 0; role < (alias ? 1U : 2U); ++role) {
       auto roleFrame = frame;
       roleFrame.role = static_cast<int>(role);
       std::array<fx_scene_input, 2> inputs{};
@@ -171,16 +207,18 @@ namespace umbriel {
       return {};
     }
     const auto& version = m_state->versions[m_state->candidate];
-    return {version.output[0].buffer, version.output[1].buffer};
+    return {version.output[0].buffer, version.output[version.alias ? 0 : 1].buffer};
   }
   SceneComposition::Source SceneComposition::committed() const {
     if (m_state->committed < 0) {
       return {};
     }
     const auto& version = m_state->versions[static_cast<unsigned>(m_state->committed)];
-    return {version.output[0].buffer, version.output[1].buffer};
+    return {version.output[0].buffer, version.output[version.alias ? 0 : 1].buffer};
   }
   bool SceneComposition::pending() const { return m_state->pending; }
 
-  uint64_t SceneComposition::reservedBytes() const { return m_state->reservation.bytes; }
+  uint64_t SceneComposition::reservedBytes() const {
+    return m_state->reservation.bytes + m_state->extraReservation.bytes;
+  }
 } // namespace umbriel

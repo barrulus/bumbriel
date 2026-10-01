@@ -192,6 +192,7 @@ bool wlr_render_timer_is_fx(struct wlr_render_timer *timer);
 
 struct fx_renderer {
 	struct wlr_renderer wlr_renderer;
+	unsigned scene_limits[4];
 
 	struct wlr_egl *egl;
 	int drm_fd;

@@ -50,7 +50,7 @@ static bool experiment(struct fixture *fixture, const char *name, bool melt) {
 		return false;
 	}
 	struct fx_scene_sources sources = {.fragment = source};
-	struct fx_scene_program *program = fx_scene_program_create(fixture->renderer, FX_SCENE_PAIR, &sources, NULL, 0);
+	struct fx_scene_program *program = fx_scene_program_create(fixture->renderer, &sources, NULL, 0);
 	free(source);
 	struct wlr_buffer *buffer = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, WIDTH, HEIGHT);
 	struct fx_scene_target *target = buffer ? fx_scene_target_create(fixture->renderer, buffer) : NULL;
@@ -74,6 +74,7 @@ static bool experiment(struct fixture *fixture, const char *name, bool melt) {
 		WIDTH * 4, WIDTH, HEIGHT, to);
 	struct fx_scene_input pair[2] = {{.texture = from_texture}, {.texture = to_texture}};
 	bool ok = check(program && target && from_texture && to_texture, "prepare authored pair resources");
+  ok &= check(program && !fx_scene_program_reads_role(program), "bundled pair shader permits role aliasing");
 	struct fx_scene_frame frame = {.output_size = {WIDTH, HEIGHT}, .scale = 1, .scene_count = 2,
 		.random_seed = {0.21f, 0.67f, 0.13f, 0.89f}};
 	for (unsigned axis = 0; ok && axis < 2; axis++) {
@@ -120,6 +121,18 @@ static bool experiment(struct fixture *fixture, const char *name, bool melt) {
 				check(!same_pixels(pixels, to), "distinct-scene endpoint assertion detects aliased inputs");
 		}
 	}
+  const struct fx_scene_sources role_sources = {
+    .common = "vec4 sample_role(vec2 uv){return umbriel_role==0 ? umbriel_sample_from(uv) : umbriel_sample_to(uv);}",
+    .fragment = "vec4 transition(vec2 uv){return sample_role(uv);}",
+  };
+  struct fx_scene_program *role_program = fx_scene_program_create(fixture->renderer, &role_sources, NULL, 0);
+  ok &= check(role_program && fx_scene_program_reads_role(role_program), "role-aware common shader requires independent outputs");
+  for (int role = 0; ok && role < 2; role++) {
+    frame.role = role;
+    ok &= render(fixture, role_program, target, buffer, &frame, pair, pixels)
+        && check(same_pixels(pixels, role ? to : from), "role-aware shader preserves distinct capture output");
+  }
+  fx_scene_program_unref(role_program);
 	if (from_texture) {
 		wlr_texture_destroy(from_texture);
 	}

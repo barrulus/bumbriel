@@ -37,14 +37,7 @@ bool fx_scene_capture_range_for_test(struct wlr_scene_output *output,
 // begin_frame drops cached role images. finish_frame promotes only after the
 // caller's final output submission succeeded; failed frames retain old history.
 struct fx_scene_source_session;
-uint64_t fx_scene_source_session_bytes_for_test(struct wlr_scene_output *output,
-	struct wlr_scene_node *first, struct wlr_scene_node *last);
-struct fx_scene_source_session *fx_scene_source_session_create_for_test(
-	struct wlr_scene_output *output, struct wlr_scene_node *first,
-	struct wlr_scene_node *last, uint64_t reserved_bytes);
 bool fx_scene_source_session_begin_frame_for_test(struct fx_scene_source_session *session);
-bool fx_scene_source_session_capture_for_test(struct fx_scene_source_session *session,
-	struct wlr_buffer *target, bool unfiltered);
 void fx_scene_source_session_finish_frame_for_test(struct fx_scene_source_session *session, bool submitted);
 void fx_scene_source_session_destroy_for_test(struct fx_scene_source_session *session);
 
@@ -69,11 +62,6 @@ struct fx_scene_source_pair_for_test {
 	bool floating_point;
 };
 
-// Conservative C0 peak budget, including both frozen roles and full-sized
-// scratch up to the legacy capture-depth bound. The lease owner reserves this
-// against output and aggregate pools before calling capture, and retains the
-// reservation until finish. 0 means unsupported dimensions/budget.
-uint64_t fx_scene_source_pair_bytes_for_test(struct wlr_scene_output *output);
 struct fx_scene_source_view;
 // Exact source view freeze: feature-sensitive scratch and copied committed
 // histories only (no writable history images for a frozen frame).

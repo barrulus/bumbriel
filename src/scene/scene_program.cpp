@@ -31,13 +31,6 @@ namespace umbriel::scene_experiment {
       return total <= kAggregateSourceLimit;
     }
 
-    fx_scene_profile profile(Scope scope) {
-      switch (scope) {
-      case Scope::WorkspacePair:
-        return FX_SCENE_PAIR;
-      }
-      return FX_SCENE_PAIR;
-    }
   } // namespace
 
   void ScenePrograms::clear() {
@@ -86,7 +79,7 @@ namespace umbriel::scene_experiment {
     if (!fx_scene_program_get_limits(m_renderer, &limits)
         || limits.fragment_texture_units < 2
         || limits.fragment_vectors < FX_SCENE_FRAGMENT_VECTORS + count
-        || limits.vertex_vectors < FX_SCENE_VERTEX_VECTORS + count) {
+        || limits.vertex_vectors < FX_SCENE_VERTEX_VECTORS) {
       entry.state = ProgramState::Unsupported;
       return;
     }
@@ -105,8 +98,7 @@ namespace umbriel::scene_experiment {
       parameters[i].components = parameter.components;
       std::ranges::copy(parameter.values, parameters[i].value);
     }
-    auto* program =
-        fx_scene_program_create(m_renderer, profile(definition.sources.scope), &sources, parameters.data(), count);
+    auto* program = fx_scene_program_create(m_renderer, &sources, parameters.data(), count);
     if (program == nullptr) {
       entry.state = ProgramState::CompileFailed;
       return;
@@ -114,6 +106,7 @@ namespace umbriel::scene_experiment {
     auto bundle = std::make_shared<ProgramBundle>();
     bundle->definition = definition;
     bundle->program = std::shared_ptr<fx_scene_program>(program, fx_scene_program_unref);
+    bundle->readsRole = fx_scene_program_reads_role(program);
     bundle->readsTime = fx_scene_program_reads_time(program);
     entry.bundle = std::move(bundle);
     entry.state = ProgramState::Ready;

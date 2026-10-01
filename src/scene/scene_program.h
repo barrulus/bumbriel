@@ -25,6 +25,7 @@ namespace umbriel::scene_experiment {
     ProgramDefinition definition;
     std::shared_ptr<fx_scene_program> program;
     bool readsTime = false;
+    bool readsRole = false;
   };
 
   enum class ProgramState { Unreferenced, Invalid, Unsupported, CompileFailed, Ready };

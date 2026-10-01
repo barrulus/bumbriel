@@ -12,6 +12,7 @@
 #include <wlr/util/log.h>
 #include <wlr/util/transform.h>
 #include "render/egl.h"
+#include "render/fx_renderer/glsl_common.h"
 #include "render/fx_renderer/effect.h"
 #include "umbrielfx/render/fx_renderer/fx_offscreen_buffers.h"
 #include "render/fx_renderer/fx_renderer.h"
@@ -28,8 +29,6 @@ struct scene_stage {
 struct fx_scene_program {
 	struct fx_renderer *renderer;
 	struct wl_listener destroy;
-	unsigned references;
-	enum fx_scene_profile profile;
 	struct scene_stage main;
 };
 
@@ -46,20 +45,14 @@ static const char preamble[] =
 	// GLES gives vertex and fragment integers different default precision.
 	// Shared uniforms must have identical precision to link on strict drivers.
 	"precision highp int;\n"
-	"#define sin(x) sin(mod((x), 6.283185307179586))\n"
-	"#define cos(x) cos(mod((x), 6.283185307179586))\n"
+	FX_GLSL_TRIG
 	"uniform vec2 umbriel_output_size;\n"
-	"uniform float umbriel_scale, umbriel_time, umbriel_progress, umbriel_linear_progress, umbriel_direction;\n"
-	"uniform vec4 umbriel_random_seed;\n"
+	"uniform float umbriel_scale, umbriel_time;\n"
+	FX_GLSL_ANIMATION
 	"uniform int umbriel_scene_count, umbriel_role;\n"
 	"uniform vec4 umbriel_palette[4]; uniform int umbriel_palette_count;\n"
-	"vec4 umbriel_palette_at(float t){ if(umbriel_palette_count<=0)return vec4(0.0);"
-	"float p=fract(t)*float(umbriel_palette_count); float a=floor(p);"
-	"float b=mod(a+1.0,float(umbriel_palette_count));vec4 x=umbriel_palette[0],y=x;"
-	"for(int i=0;i<4;i++){if(float(i)==a)x=umbriel_palette[i];if(float(i)==b)y=umbriel_palette[i];}"
-	"return mix(x,y,p-a);}\n"
-	"uniform vec2 umbriel_axis; uniform vec4 umbriel_viewport;\n"
-	"#define umbriel_clamped_progress clamp(umbriel_progress, 0.0, 1.0)\n";
+	FX_GLSL_PALETTE
+	"uniform vec2 umbriel_axis; uniform vec4 umbriel_viewport;\n";
 
 static const char fragment_preamble[] =
 	"uniform vec2 _fx_target_size;\n"
@@ -77,68 +70,27 @@ static const char fragment_preamble[] =
 	" if (any(lessThan(p,vec2(0.0))) || any(greaterThan(p,vec2(1.0)))) return vec4(0.0);\n"
 	" return texture2D(_fx_input1,p); }\n";
 
-static const char default_vertex[] =
-	"vec4 transition_vertex(vec2 uv) { return vec4(uv*2.0-1.0,0.0,1.0); }\n";
+static const char vertex_source[] =
+  "attribute vec2 pos; uniform mat3 _fx_clip_matrix;\n"
+  "void main(){vec3 p=_fx_clip_matrix*vec3(pos*2.0-1.0,1.0);gl_Position=vec4(p.xy,0.0,p.z); }\n";
 
-static GLuint shader_create(GLenum type, const char *common, const char *body, const char *suffix,
-		const char *sampling) {
-	const char *varying = type == GL_VERTEX_SHADER
-		? "attribute vec2 _fx_mesh_uv; varying vec2 _fx_item_uv; uniform mat3 _fx_clip_matrix;\n"
-		: "varying vec2 _fx_item_uv;\n";
-	const char *parts[] = {preamble, varying, sampling, common ? common : "", body, suffix};
-	size_t size = 1;
-	for (unsigned i = 0; i < 6; i++) {
-		size += strlen(parts[i]) + 1;
-	}
-	char *source = malloc(size);
-	if (!source) {
-		return 0;
-	}
-	source[0] = '\0';
-	for (unsigned i = 0; i < 6; i++) {
-		strcat(source, parts[i]);
-		strcat(source, "\n");
-	}
-	GLuint shader = compile_shader(type, source);
-	free(source);
-	return shader;
-}
-
-static bool stage_create(struct scene_stage *stage, const char *common, const char *vertex,
-		const char *fragment, const char *suffix, const char *helpers,
-		const struct fx_scene_parameter *parameters, unsigned parameter_count) {
-	size_t sampling_size = strlen(fragment_preamble) + strlen(helpers) + 1;
-	char *sampling = malloc(sampling_size);
-	if (!sampling) {
-		return false;
-	}
-	strcpy(sampling, fragment_preamble);
-	strcat(sampling, helpers);
-	GLuint vert = shader_create(GL_VERTEX_SHADER, common, vertex,
-		"void main(){_fx_item_uv=_fx_mesh_uv;vec4 p=transition_vertex(_fx_mesh_uv);"
-		"vec3 h=_fx_clip_matrix*vec3(p.xy,p.w);gl_Position=vec4(h.xy,p.z,h.z);}\n", "");
-	GLuint frag = shader_create(GL_FRAGMENT_SHADER, common, fragment, suffix, sampling);
-	free(sampling);
-	if (!vert || !frag) {
-		glDeleteShader(vert);
-		glDeleteShader(frag);
-		return false;
-	}
-	stage->program = glCreateProgram();
-	glAttachShader(stage->program, vert);
-	glAttachShader(stage->program, frag);
-	glBindAttribLocation(stage->program, 0, "_fx_mesh_uv");
-	glLinkProgram(stage->program);
-	glDeleteShader(vert);
-	glDeleteShader(frag);
-	GLint linked = 0;
-	glGetProgramiv(stage->program, GL_LINK_STATUS, &linked);
-	if (!linked) {
-		char log[1024];
-		glGetProgramInfoLog(stage->program, sizeof(log), NULL, log);
-		wlr_log(WLR_ERROR, "Experimental scene stage failed to link: %s", log);
-		return false;
-	}
+static bool stage_create(struct scene_stage *stage, const struct fx_scene_sources *sources,
+    const struct fx_scene_parameter *parameters, unsigned parameter_count) {
+  const char *parts[] = {preamble, fragment_preamble,
+      "vec4 umbriel_sample_from(vec2 uv){return _fx_sample0(uv); }\n"
+      "vec4 umbriel_sample_to(vec2 uv){return _fx_sample1(uv); }\n",
+      sources->common ? sources->common : "", sources->fragment, "void main(){gl_FragColor=transition(_fx_output_uv());}\n"};
+  size_t size = 1;
+  for (unsigned i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) size += strlen(parts[i]) + 1;
+  char *fragment = calloc(size, 1);
+  if (!fragment) return false;
+  for (unsigned i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+    strcat(fragment, parts[i]);
+    strcat(fragment, "\n");
+  }
+  stage->program = link_program_sources(vertex_source, fragment, "pos");
+  free(fragment);
+  if (!stage->program) return false;
 	GLint active = 0;
 	glGetProgramiv(stage->program, GL_ACTIVE_UNIFORMS, &active);
 	for (GLint i = 0; i < active; i++) {
@@ -191,14 +143,9 @@ static void program_renderer_destroy(struct wl_listener *listener, void *data) {
 	program->renderer = NULL;
 }
 
-struct fx_scene_program *fx_scene_program_ref(struct fx_scene_program *program) {
-	if (program) {
-		program->references++;
-	}
-	return program;
+bool fx_scene_program_reads_role(const struct fx_scene_program *program) {
+  return program && program->renderer && program->main.location[ROLE] >= 0;
 }
-
-
 
 bool fx_scene_program_reads_time(const struct fx_scene_program *program) {
  return program && program->renderer && program->main.location[TIME] >= 0;
@@ -322,7 +269,7 @@ static void transform_uv_matrix(enum wl_output_transform transform, float matrix
 }
 
 static void bind_frame(const struct scene_stage *stage, const struct fx_scene_frame *frame,
-		const struct fx_scene_target *target, unsigned padding) {
+		const struct fx_scene_target *target) {
 	const GLint *l = stage->location;
 	glUseProgram(stage->program);
 	float raster[9], clip[9];
@@ -330,24 +277,10 @@ static void bind_frame(const struct scene_stage *stage, const struct fx_scene_fr
 	transform_uv_matrix(wlr_output_transform_invert(frame->output_transform), clip);
 	clip[6] = clip[0] + clip[3] + 2 * clip[6] - 1;
 	clip[7] = clip[1] + clip[4] + 2 * clip[7] - 1;
-	if (padding) {
-		float sx = (float)target->buffer->width / (target->buffer->width + 2 * padding);
-		float sy = (float)target->buffer->height / (target->buffer->height + 2 * padding);
-		for (unsigned column = 0; column < 3; column++) {
-			clip[column * 3] *= sx;
-			clip[column * 3 + 1] *= sy;
-		}
-		float tx = -(float)padding / target->buffer->width;
-		float ty = -(float)padding / target->buffer->height;
-		raster[6] += raster[0] * tx + raster[3] * ty;
-		raster[7] += raster[1] * tx + raster[4] * ty;
-		raster[0] /= sx; raster[1] /= sx;
-		raster[3] /= sy; raster[4] /= sy;
-	}
 	glUniformMatrix3fv(l[CLIP_MATRIX], 1, GL_FALSE, clip);
 	glUniformMatrix3fv(l[RASTER_MATRIX], 1, GL_FALSE, raster);
 	glUniform2fv(l[OUTPUT_SIZE], 1, frame->output_size);
-	glUniform2f(l[TARGET_SIZE], target->buffer->width + 2 * padding, target->buffer->height + 2 * padding);
+	glUniform2f(l[TARGET_SIZE], target->buffer->width, target->buffer->height);
 	glUniform1f(l[SCALE], frame->scale);
 	glUniform1f(l[TIME], frame->time);
 	glUniform1f(l[PROGRESS], frame->progress);
@@ -361,8 +294,6 @@ static void bind_frame(const struct scene_stage *stage, const struct fx_scene_fr
 	glUniform4fv(l[PALETTE], 4, frame->palette);
 	glUniform1i(l[PALETTE_COUNT], frame->palette_count);
 }
-
-
 
 static bool render_stage(struct fx_scene_program *program, const struct scene_stage *stage,
 		struct fx_scene_target *target, const struct fx_scene_frame *frame,
@@ -390,7 +321,7 @@ static bool render_stage(struct fx_scene_program *program, const struct scene_st
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 	glEnableVertexAttribArray(0);
-	bind_frame(stage, frame, target, 0);
+	bind_frame(stage, frame, target);
 	static float uv[] = {0, 0, 1, 0, 0, 1, 1, 1};
 	static uint16_t indices[] = {0, 1, 2, 2, 1, 3};
 	bind_input(stage, &pair[0], 0);
@@ -428,7 +359,7 @@ bool fx_scene_program_render(struct fx_scene_program *program,
 }
 
 void fx_scene_program_unref(struct fx_scene_program *program) {
-	if (!program || --program->references) {
+	if (!program) {
 		return;
 	}
 	if (program->renderer) {
@@ -443,20 +374,14 @@ void fx_scene_program_unref(struct fx_scene_program *program) {
 }
 
 struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_renderer,
-		enum fx_scene_profile profile, const struct fx_scene_sources *sources,
+		const struct fx_scene_sources *sources,
 		const struct fx_scene_parameter *parameters, unsigned parameter_count) {
 	if (!wlr_renderer || !wlr_renderer_is_fx(wlr_renderer) || !sources || !sources->fragment ||
-			profile != FX_SCENE_PAIR || parameter_count > FX_SCENE_PARAMETERS ||
+			parameter_count > FX_SCENE_PARAMETERS ||
 			(parameter_count && !parameters)) {
 		return NULL;
 	}
-	size_t source_size = strlen(sources->fragment);
-	const char *extra[] = {sources->common};
-	for (unsigned i = 0; i < 1; i++) {
-		if (extra[i]) {
-			source_size += strlen(extra[i]);
-		}
-	}
+	size_t source_size = strlen(sources->fragment) + (sources->common ? strlen(sources->common) : 0);
 	if (source_size > 512u * 1024) {
 		return NULL;
 	}
@@ -489,7 +414,7 @@ struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_render
 	struct fx_scene_program *program = NULL;
 	// Reserve every declared built-in, including palette, independently
 	// for each stage. Do not rely on optimizer-specific uniform elimination.
-	if (vertex_limit < (int)FX_SCENE_VERTEX_VECTORS + (int)parameter_count
+	if (vertex_limit < (int)FX_SCENE_VERTEX_VECTORS
 			|| fragment_limit < (int)FX_SCENE_FRAGMENT_VECTORS + (int)parameter_count || texture_units < 2) {
 		goto out;
 	}
@@ -498,13 +423,9 @@ struct fx_scene_program *fx_scene_program_create(struct wlr_renderer *wlr_render
 		goto out;
 	}
 	program->renderer = renderer;
-	program->references = 1;
-	program->profile = profile;
 	program->destroy.notify = program_renderer_destroy;
 	wl_signal_add(&wlr_renderer->events.destroy, &program->destroy);
-	const char *helpers = "vec4 umbriel_sample_from(vec2 uv){return _fx_sample0(uv); }\nvec4 umbriel_sample_to(vec2 uv){return _fx_sample1(uv); }\n";
-	const char *suffix = "void main(){gl_FragColor=transition(_fx_output_uv());}\n";
-	bool ok = stage_create(&program->main, sources->common, default_vertex, sources->fragment, suffix, helpers, parameters, parameter_count);
+	bool ok = stage_create(&program->main, sources, parameters, parameter_count);
 	if (!ok) {
 		fx_scene_program_unref(program);
 		program = NULL;
@@ -523,6 +444,12 @@ bool fx_scene_program_get_limits(struct wlr_renderer *wlr_renderer, struct fx_sc
 	if (!wlr_renderer || !wlr_renderer_is_fx(wlr_renderer)) {
 		return false;
 	}
+  struct fx_renderer *renderer = fx_get_renderer(wlr_renderer);
+  if (renderer->scene_limits[0]) {
+    *limits = (struct fx_scene_limits){renderer->scene_limits[0], renderer->scene_limits[1],
+        renderer->scene_limits[2], renderer->scene_limits[3]};
+    return true;
+  }
 	struct wlr_egl_context previous;
 	if (!wlr_egl_make_current(fx_get_renderer(wlr_renderer)->egl, &previous)) {
 		return false;
@@ -535,6 +462,8 @@ bool fx_scene_program_get_limits(struct wlr_renderer *wlr_renderer, struct fx_sc
 	bool ok = glGetError() == GL_NO_ERROR && texture > 0 && vertex > 0 && fragment > 0 && units > 0;
 	if (ok) {
 		*limits = (struct fx_scene_limits){texture, vertex, fragment, units};
+    unsigned values[] = {texture, vertex, fragment, units};
+    memcpy(renderer->scene_limits, values, sizeof(values));
 	}
 	wlr_egl_restore_context(&previous);
 	return ok;

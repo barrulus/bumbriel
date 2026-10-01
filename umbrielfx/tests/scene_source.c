@@ -26,6 +26,13 @@ static bool native_pair_capture(struct wlr_scene_output *output,
   return fx_scene_source_pair_capture_for_test(output, &view, bytes, pair);
 }
 
+static uint64_t output_pair_bytes(struct wlr_scene_output *output) {
+  if (wl_list_empty(&output->scene->tree.children)) return 0;
+  struct wlr_scene_node *first = wl_container_of(output->scene->tree.children.next, first, link);
+  struct wlr_scene_node *last = wl_container_of(output->scene->tree.children.prev, last, link);
+  return native_pair_bytes(output, first, last);
+}
+
 struct sample_counter {
 	struct wl_listener listener;
 	unsigned count;
@@ -283,7 +290,7 @@ static bool test_unmanaged_ten_bit(struct fixture *fixture) {
 		struct wlr_texture *texture = pair.display ? wlr_texture_from_buffer(fixture->renderer, pair.display) : NULL;
 		struct fx_scene_input input = {.texture = texture, .sample_matrix = (float[]){1,0,0,0,1,0,0,0,1}};
 		struct fx_scene_sources stages = {.fragment = "vec4 transition(vec2 uv) { return mix(umbriel_sample_from(uv), umbriel_sample_to(uv), umbriel_progress); }"};
-        struct fx_scene_program *program = fx_scene_program_create(fixture->renderer, FX_SCENE_PAIR, &stages, NULL, 0);
+        struct fx_scene_program *program = fx_scene_program_create(fixture->renderer, &stages, NULL, 0);
         struct fx_scene_frame frame = {.output_size = {16, 16}, .scale = 1, .progress = 0.5f, .scene_count = 2};
         struct fx_scene_input inputs[2] = {input, input};
         ok &= check(target && texture && program && fx_scene_program_render(program, target, &frame, inputs), "encoded FP16 pair composition");
@@ -387,7 +394,7 @@ static bool test_working_source(struct fixture *fixture) {
 	// the working source back into an eight-bit snapshot.
 	output->combined_color_transform = wlr_color_transform_ref(encoding);
 	struct fx_scene_source_pair_for_test pair = {0};
-	uint64_t pair_bytes = fx_scene_source_pair_bytes_for_test(output);
+	uint64_t pair_bytes = output_pair_bytes(output);
 	ok &= check(pair_bytes > 0 && native_pair_capture(output,
 		&rect->node, &rect->node, pair_bytes, &pair) && pair.working_space,
 		"paired helper preserves managed working format");
@@ -436,16 +443,17 @@ static bool test_source_history(struct fixture *fixture) {
 	struct wlr_buffer *capture = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, 16, 16);
 	bool ok = check(accumulate && green && display && capture, "source history fixture resources");
 	ok &= check(source_native_feedback(fixture, output), "seed both native role histories");
-	uint64_t bytes = fx_scene_source_session_bytes_for_test(output, &rect->node, &rect->node);
-	ok &= check(bytes > 0 && bytes == fx_scene_source_pair_bytes_for_test(output), "copied histories included in reservation");
-	ok &= check(!fx_scene_source_session_create_for_test(output, &rect->node, &rect->node, bytes - 1),
+	struct fx_scene_source_view view = native_view(output, &rect->node, &rect->node);
+	uint64_t bytes = fx_scene_source_view_history_bytes(output, &view);
+	ok &= check(bytes > 0, "live histories included in reservation");
+	ok &= check(!fx_scene_source_view_session_create(output, &view, bytes - 1),
 		"history acquisition rejects insufficient reservation");
-	struct fx_scene_source_session *session = fx_scene_source_session_create_for_test(
-		output, &rect->node, &rect->node, bytes);
-	ok &= check(session != NULL, "snapshot paired native histories atomically");
+	struct fx_scene_source_session *session = fx_scene_source_view_session_create(output, &view, bytes);
+	view.session = session;
+	ok &= check(session != NULL, "create independent live histories");
 	ok &= check(source_native_feedback(fixture, output), "native history promotes after acquisition");
 	struct fx_scene_source_pair_for_test frozen = {0};
-	uint64_t frozen_bytes = fx_scene_source_pair_bytes_for_test(output);
+	uint64_t frozen_bytes = output_pair_bytes(output);
 	ok &= check(native_pair_capture(output, &rect->node, &rect->node,
 		frozen_bytes, &frozen), "freeze already rendered feedback stage");
 	if (frozen.display && frozen.unfiltered) {
@@ -459,17 +467,17 @@ static bool test_source_history(struct fixture *fixture) {
 
 	for (unsigned frame = 0; ok && frame < 3; frame++) {
 		ok &= check(fx_scene_source_session_begin_frame_for_test(session), "begin source history frame");
-		ok &= check(fx_scene_source_session_capture_for_test(session, display, false), "render isolated display history");
+		ok &= check(fx_scene_capture_view_for_test(output, &view, display, false, fx_scene_source_view_bytes_for_test(output, &view)), "render isolated display history");
 		uint8_t before[4], after[4], plain[4];
 		ok &= fixture_read_pixel(fixture, display, 8, 8, before);
-		ok &= check(fx_scene_source_session_capture_for_test(session, display, false), "same instant replays retained image");
+		ok &= check(fx_scene_capture_view_for_test(output, &view, display, false, fx_scene_source_view_bytes_for_test(output, &view)), "same instant replays retained image");
 		ok &= fixture_read_pixel(fixture, display, 8, 8, after);
 		ok &= check(!memcmp(before, after, 4), "replay does not advance feedback");
 		// A native promotion between role captures cannot alter the pinned role.
 		ok &= check(source_native_feedback(fixture, output), "interleaved native promotion");
-		ok &= check(fx_scene_source_session_capture_for_test(session, capture, true), "render isolated capture history");
+		ok &= check(fx_scene_capture_view_for_test(output, &view, capture, true, fx_scene_source_view_bytes_for_test(output, &view)), "render isolated capture history");
 		ok &= fixture_read_pixel(fixture, capture, 8, 8, plain);
-		int red = frame < 2 ? 128 : 192;
+		int red = frame < 2 ? 64 : 128;
 		ok &= check(abs(before[2] - red) <= 2 && abs(plain[2] - red) <= 2,
 			"source history advances only after successful final output submit");
 		ok &= check(before[0] < 2 && before[1] < 2 && plain[0] > 253 && plain[1] > 253,
@@ -497,7 +505,7 @@ static bool test_frozen_replacement_roles(struct fixture *fixture) {
 	struct fx_animation_parameters parameters = {.progress = 1, .linear_progress = 1, .direction = 1};
 	wlr_scene_node_set_animation(&client->node, FX_SLOT_WINDOW, green, &parameters);
 	struct fx_scene_source_pair_for_test pair = {0};
-	uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
+	uint64_t bytes = output_pair_bytes(output);
 	bool ok = check(green && native_pair_capture(output,
 		&desktop->node, &desktop->node, bytes, &pair), "acquire distinct frozen presentation roles");
 	struct wlr_scene_buffer *picture = pair.display ? wlr_scene_buffer_create(&scene->tree, pair.display) : NULL;
@@ -679,7 +687,7 @@ static bool test_working_replacement(struct fixture *fixture) {
 		WLR_COLOR_TRANSFER_FUNCTION_SRGB);
 	output->combined_color_transform = wlr_color_transform_ref(encoding);
 	struct fx_scene_source_pair_for_test pair = {0};
-	uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
+	uint64_t bytes = output_pair_bytes(output);
 	bool ok = check(shader && encoding && bytes && native_pair_capture(output,
 		&desktop->node, &desktop->node, bytes, &pair) && pair.working_space,
 		"capture working-space replacement pair");
@@ -745,7 +753,7 @@ static bool test_frozen_feedback_light(struct fixture *fixture, bool split) {
 	struct wlr_swapchain *swapchain = wlr_swapchain_create(fixture->allocator, 16, 16,
 		get_render_format(fixture, DRM_FORMAT_ARGB8888));
 	bool ok = check(feedback && identity && swapchain, "feedback light resources");
-	ok &= check(fx_scene_source_pair_bytes_for_test(output) == 0,
+	ok &= check(output_pair_bytes(output) == 0,
 		"feedback light without represented emission explicitly declines freeze");
 	for (unsigned frame = 0; ok && frame < 2; frame++) {
 		struct wlr_output_state state;
@@ -754,11 +762,11 @@ static bool test_frozen_feedback_light(struct fixture *fixture, bool split) {
 		ok &= check(wlr_scene_output_build_state(output, &state,
 			&(struct wlr_scene_output_state_options){.swapchain = swapchain, .effect_capture_pending = true})
 			&& state.buffer, "present native feedback border and its emission");
-		ok &= check(fx_scene_source_pair_bytes_for_test(output) == 0,
+		ok &= check(output_pair_bytes(output) == 0,
 			"uncommitted feedback emission cannot be acquired as a displayed freeze");
 		ok &= check(wlr_output_commit_state(fixture->output, &state), "commit feedback emission before freeze admission");
 		struct fx_scene_source_pair_for_test pair = {0};
-		uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
+		uint64_t bytes = output_pair_bytes(output);
 		ok &= check(bytes && native_pair_capture(output,
 			&background->node, &lights->node, bytes, &pair), "freeze completed border history and exact emission");
 		ok &= check((pair.display == pair.unfiltered) == !split,
@@ -816,7 +824,7 @@ static bool test_working_history(struct fixture *fixture) {
 			.color_transform = encoding, .effect_capture_pending = true}), "seed managed role histories");
 	wlr_output_state_finish(&state);
 	struct fx_scene_source_pair_for_test pair = {0};
-	uint64_t bytes = fx_scene_source_pair_bytes_for_test(output);
+	uint64_t bytes = output_pair_bytes(output);
 	ok &= check(bytes > 0 && native_pair_capture(output, &rect->node, &rect->node, bytes, &pair),
 		"freeze FP16 feedback roles");
 	uint16_t pixels[16 * 16 * 4];
@@ -843,14 +851,16 @@ static bool test_working_history(struct fixture *fixture) {
   }
   fx_scene_source_pair_finish_for_test(&pair);
   wlr_scene_node_set_position(&rect->node, 0, 0);
-	struct fx_scene_source_session *session = fx_scene_source_session_create_for_test(output,
-		&rect->node, &rect->node, fx_scene_source_session_bytes_for_test(output, &rect->node, &rect->node));
+	view.roots = NULL;
+  view.root_count = 0;
+  struct fx_scene_source_session *session = fx_scene_source_view_session_create(output, &view, fx_scene_source_view_history_bytes(output, &view));
+  view.session = session;
 	struct wlr_buffer *target = create_output_buffer(fixture, DRM_FORMAT_ABGR16161616F, 16, 16);
 	ok &= check(session && target && fx_scene_source_session_begin_frame_for_test(session)
-		&& fx_scene_source_session_capture_for_test(session, target, false), "advance isolated FP16 feedback source");
+		&& fx_scene_capture_view_for_test(output, &view, target, false, fx_scene_source_view_bytes_for_test(output, &view)), "advance isolated FP16 feedback source");
 	if (target) {
 		ok &= check(read_buffer(fixture, target, DRM_FORMAT_ABGR16161616F, 16 * 8, pixels)
-			&& fabsf(source_half(pixels[0]) - 4) < 0.002f, "cloned FP16 history is raw working data");
+			&& fabsf(source_half(pixels[0]) - 2) < 0.002f, "live FP16 history starts independently in working space");
 	}
 	fx_scene_source_session_finish_frame_for_test(session, false);
 	fx_scene_source_session_destroy_for_test(session);

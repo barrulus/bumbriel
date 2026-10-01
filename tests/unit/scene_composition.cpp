@@ -45,6 +45,7 @@ namespace {
       allocations = renders = 0;
       failAllocation = 0;
       failRole = -1;
+      bundle->readsRole = true;
       wl_signal_init(&renderer.events.destroy);
       bundle->program = std::shared_ptr<fx_scene_program>(reinterpret_cast<fx_scene_program*>(this), [](auto*) {});
     }
@@ -186,6 +187,54 @@ UMBRIEL_TEST(sceneCompositionReservationAndAllocationFailAtomically) {
     CHECK_EQ(targets, 0U);
     CHECK_EQ(fixture.output.used, 0U);
     CHECK_EQ(fixture.aggregate.used, 0U);
+  }
+}
+
+UMBRIEL_TEST(sceneCompositionSharesIdenticalRolesAndSplitsWhenInputsChange) {
+  Fixture fixture;
+  fixture.bundle->readsRole = false;
+  auto composition = fixture.create();
+  CHECK(composition != nullptr);
+  CHECK_EQ(buffers, 2U);
+  wlr_buffer sourceA{}, sourceB{}, unfiltered{};
+  std::array<umbriel::SceneComposition::Source, 2> sources{{{&sourceA, &sourceA}, {&sourceB, &sourceB}}};
+  fx_scene_frame frame{};
+  CHECK(composition->render(frame, sources));
+  CHECK_EQ(renders, 1U);
+  CHECK(composition->candidate().display == composition->candidate().unfiltered);
+  composition->submitted(true);
+  const auto committed = composition->committed();
+  sources[1].unfiltered = &unfiltered;
+  CHECK(composition->render(frame, sources));
+  CHECK_EQ(buffers, 4U);
+  CHECK_EQ(renders, 3U);
+  CHECK(composition->candidate().display != composition->candidate().unfiltered);
+  composition->submitted(false);
+  CHECK(composition->committed().display == committed.display);
+  CHECK_EQ(fixture.output.used, composition->reservedBytes());
+}
+
+UMBRIEL_TEST(sceneCompositionRoleSplitFailurePreservesCommittedImageAndBudget) {
+  for (unsigned index = 1; index <= 2; ++index) {
+    Fixture fixture;
+    fixture.bundle->readsRole = false;
+    auto composition = fixture.create();
+    wlr_buffer source{}, unfiltered{};
+    std::array<umbriel::SceneComposition::Source, 2> sources{{{&source, &source}, {&source, &source}}};
+    fx_scene_frame frame{};
+    CHECK(composition->render(frame, sources));
+    composition->submitted(true);
+    const auto committed = composition->committed();
+    const auto budget = fixture.output.used;
+    sources[1].unfiltered = &unfiltered;
+    failAllocation = allocations + index;
+    CHECK(!composition->render(frame, sources));
+    CHECK(composition->committed().display == committed.display);
+    CHECK_EQ(buffers, 2U);
+    CHECK_EQ(fixture.output.used, budget);
+    failAllocation = 0;
+    CHECK(composition->render(frame, sources));
+    CHECK_EQ(buffers, 4U);
   }
 }
 

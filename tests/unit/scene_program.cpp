@@ -19,7 +19,6 @@ namespace {
   bool fail = false;
   bool readsTime = false;
   fx_scene_limits limits{8192, 256, 256, 8};
-  fx_scene_profile lastProfile = FX_SCENE_PAIR;
   std::array<std::string, 2> lastSources;
   std::vector<fx_scene_parameter> lastParameters;
   int rendererStorage[2]{};
@@ -60,11 +59,9 @@ bool __wrap_fx_scene_program_get_limits(wlr_renderer*, fx_scene_limits* result) 
 }
 
 fx_scene_program* __wrap_fx_scene_program_create(
-    wlr_renderer*, fx_scene_profile profile, const fx_scene_sources* sources, const fx_scene_parameter* parameters,
-    unsigned count
+    wlr_renderer*, const fx_scene_sources* sources, const fx_scene_parameter* parameters, unsigned count
 ) {
   ++compiles;
-  lastProfile = profile;
   lastSources = {sources->common ? sources->common : "", sources->fragment ? sources->fragment : ""};
   lastParameters.assign(parameters, parameters + count);
   if (fail) {
@@ -79,6 +76,7 @@ void __wrap_fx_scene_program_unref(fx_scene_program* program) {
   delete program;
 }
 
+bool __wrap_fx_scene_program_reads_role(const fx_scene_program*) { return false; }
 bool __wrap_fx_scene_program_reads_time(const fx_scene_program* program) { return program->time; }
 }
 
@@ -96,7 +94,6 @@ UMBRIEL_TEST(sceneProgramsOnlyPrepareReferencedDefinitionsAndInspectionIsPure) {
   fixture.prepare();
   CHECK(fixture.cache.find("water") == bundle);
   CHECK_EQ(compiles, 1U);
-  CHECK_EQ(lastProfile, FX_SCENE_PAIR);
   for (std::size_t i = 0; i < lastSources.size(); ++i) {
     CHECK_EQ(lastSources[i], "stage " + std::to_string(i));
   }
@@ -173,7 +170,7 @@ UMBRIEL_TEST(sceneProgramsRendererReplacementAndRemovalReleaseCacheOwnership) {
 
 UMBRIEL_TEST(sceneProgramsRejectLimitsAndInvalidBundlesBeforeCompiler) {
   Fixture fixture;
-  limits.vertex_vectors = FX_SCENE_VERTEX_VECTORS;
+  limits.vertex_vectors = FX_SCENE_VERTEX_VECTORS - 1;
   fixture.prepare();
   CHECK_EQ(fixture.cache.state("water"), ProgramState::Unsupported);
   CHECK_EQ(compiles, 0U);

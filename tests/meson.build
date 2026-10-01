@@ -3,7 +3,7 @@
 unit_tests = [
   ['scene-program-cache', ['unit/scene_program.cpp'], [umbriel_core_dep], [], [
     '-Wl,--wrap=fx_scene_program_get_limits', '-Wl,--wrap=fx_scene_program_create',
-    '-Wl,--wrap=fx_scene_program_unref', '-Wl,--wrap=fx_scene_program_reads_time',
+    '-Wl,--wrap=fx_scene_program_unref', '-Wl,--wrap=fx_scene_program_reads_time', '-Wl,--wrap=fx_scene_program_reads_role',
   ]],
   ['scene-composition', ['unit/scene_composition.cpp'], [umbriel_core_dep], [], [
     '-Wl,--wrap=fx_scene_program_get_limits', '-Wl,--wrap=fx_scene_buffer_create',

@@ -71,6 +71,17 @@ namespace umbriel {
         fx_scene_release(&reservation);
       }
     };
+    struct Scratch {
+      std::unique_ptr<fx_scene_scratch, decltype(&fx_scene_source_scratch_destroy)> buffers{
+          nullptr, fx_scene_source_scratch_destroy
+      };
+      fx_scene_reservation reservation{};
+      unsigned signature = 0;
+      ~Scratch() {
+        buffers.reset();
+        fx_scene_release(&reservation);
+      }
+    };
     struct Sources {
       fx_scene_reservation reservation{};
       std::vector<fx_scene_source_pair_for_test> pairs;
@@ -117,6 +128,9 @@ namespace umbriel {
       std::vector<fx_scene_source_root_override> roots;
       fx_scene_source_view view{};
       fx_scene_source_view_plan plan{};
+      std::unique_ptr<fx_scene_capture_plan, decltype(&fx_scene_source_plan_destroy)> prepared{
+          nullptr, fx_scene_source_plan_destroy
+      };
       History* history = nullptr;
     };
     Server& server;
@@ -126,6 +140,8 @@ namespace umbriel {
     std::vector<View*> owners;
     std::vector<std::unique_ptr<SurfaceWatch>> watches;
     std::unique_ptr<Sources> current;
+    std::unique_ptr<Sources> spare;
+    std::unique_ptr<Scratch> scratch;
     std::unique_ptr<Sources> candidate;
     std::unique_ptr<Sources> frozen;
     // Histories survive image refreshes until the native transition ends.
@@ -221,6 +237,8 @@ namespace umbriel {
       result.view = {
           .first = first,
           .last = &server.pinnedTree()->node,
+          .plan = nullptr,
+          .scratch = nullptr,
           .roots = nullptr,
           .root_count = 0,
           .extent = box,
@@ -290,14 +308,38 @@ namespace umbriel {
         auto& descriptor = descriptors.emplace_back(describe(sourceIndex, output.wlr()->scale));
         descriptor.view.roots = descriptor.roots.data();
         descriptor.view.root_count = descriptor.roots.size();
-        if (!fx_scene_source_view_plan_for_test(output.sceneOutput(), &descriptor.view, &descriptor.plan)
-            || descriptor.plan.retained_bytes > std::numeric_limits<uint64_t>::max() - retained) {
+        descriptor.prepared.reset(fx_scene_source_prepare(output.sceneOutput(), &descriptor.view, &descriptor.plan));
+        descriptor.view.plan = descriptor.prepared.get();
+        if (!descriptor.prepared || descriptor.plan.retained_bytes > std::numeric_limits<uint64_t>::max() - retained) {
           valid = false;
           break;
         }
         retained += descriptor.plan.retained_bytes;
 
-        peak = std::max(peak, descriptor.plan.capture_bytes);
+        // The destination reuses one scratch set across both back buffers.
+        if (descriptor.plan.scratch_bytes == 0) {
+          scratch.reset();
+        } else if (
+            !scratch
+            || scratch->signature != descriptor.plan.scratch_signature
+            || scratch->reservation.bytes != descriptor.plan.scratch_bytes
+        ) {
+          scratch.reset();
+          auto nextScratch = std::make_unique<Scratch>();
+          if (!fx_scene_reserve(
+                  &nextScratch->reservation, &pool, &presentationAggregatePool(), descriptor.plan.scratch_bytes
+              )) {
+            fallback = PresentationFallback::ResourceBudget;
+            return false;
+          }
+          nextScratch->buffers.reset(fx_scene_source_scratch_create(output.sceneOutput()));
+          if (!nextScratch->buffers)
+            return false;
+          nextScratch->signature = descriptor.plan.scratch_signature;
+          scratch = std::move(nextScratch);
+        }
+        descriptor.view.scratch = scratch ? scratch->buffers.get() : nullptr;
+        peak = std::max(peak, descriptor.plan.capture_bytes - descriptor.plan.scratch_bytes);
         auto existing =
             std::ranges::find_if(histories, [&](const auto& history) { return history->identity == identity; });
         if (existing != histories.end()
@@ -326,7 +368,8 @@ namespace umbriel {
           || retained > std::numeric_limits<uint64_t>::max() - peak - newHistoryBytes) {
         return false;
       }
-      auto next = std::make_unique<Sources>();
+      auto next = spare ? std::move(spare) : std::make_unique<Sources>();
+      fx_scene_release(&next->reservation);
       const uint64_t imageBytes = retained + peak;
       if (!fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), imageBytes + newHistoryBytes)) {
         fallback = PresentationFallback::ResourceBudget;
@@ -380,8 +423,7 @@ namespace umbriel {
         }
       }
 
-      // Capture scratch has been released; retain only the owned images and
-      // images while this candidate awaits output submission.
+      // Release transient capture overhead while retaining the source images.
       fx_scene_release(&next->reservation);
       const bool reserved = fx_scene_reserve(&next->reservation, &pool, &presentationAggregatePool(), retained);
       if (!reserved) {
@@ -552,6 +594,8 @@ namespace umbriel {
     state.owners.clear();
     state.candidate.reset();
     state.current.reset();
+    state.spare.reset();
+    state.scratch.reset();
     state.frozen.reset();
     state.histories.clear();
     state.frozenMetadata = {};
@@ -644,6 +688,7 @@ namespace umbriel {
       for (auto& history : state.histories) {
         history->finish(true);
       }
+      state.spare = std::move(state.current);
       state.current = std::move(state.candidate);
       state.committedRevision = state.capturedRevision;
       state.callbacksPending = true;

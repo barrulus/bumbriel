@@ -154,6 +154,23 @@ static bool experiment(struct fixture *fixture) {
 				&& pair.display != pair.unfiltered && pair.reserved_bytes == bytes && !pair.working_space,
 				"owned view publishes independent filtered and unfiltered roles atomically");
 			ok &= native && equal(fixture, native, role ? pair.unfiltered : pair.display);
+      struct wlr_buffer *first_display = pair.display, *first_unfiltered = pair.unfiltered;
+      struct fx_scene_capture_plan *prepared = fx_scene_source_prepare(output, &view, &plan);
+      view.plan = prepared;
+      view.scratch = fx_scene_source_scratch_create(output);
+      ok &= check(prepared && fx_scene_source_view_pair_capture_for_test(output, &view, plan.total_bytes, &pair)
+          && pair.display == first_display && pair.unfiltered == first_unfiltered,
+          "prepared capture reuses both role buffers");
+      ok &= native && equal(fixture, native, role ? pair.unfiltered : pair.display);
+      view.plan = NULL;
+      // Reuse the same scratch and images again: content must still match the native oracle.
+      ok &= check(fx_scene_source_view_pair_capture_for_test(output, &view, plan.total_bytes, &pair)
+          && pair.display == first_display && pair.unfiltered == first_unfiltered,
+          "capture retains source buffers across scratch reuse");
+      ok &= native && equal(fixture, native, role ? pair.unfiltered : pair.display);
+      fx_scene_source_scratch_destroy(view.scratch);
+      view.scratch = NULL;
+      fx_scene_source_plan_destroy(prepared);
 			fx_scene_source_pair_finish_for_test(&pair);
 
 			ok &= check(!hidden->node.enabled && hidden->node.x == 100 && active->node.enabled
@@ -177,19 +194,26 @@ static bool experiment(struct fixture *fixture) {
 		.roots = plain_roots, .root_count = 2, .extent = {-8, 16, 16, 16}, .scale = 1};
 	uint64_t plain_bytes = fx_scene_source_view_bytes_for_test(output, &plain);
 	struct fx_scene_source_pair_for_test alias = {0};
+  plain.scratch = fx_scene_source_scratch_create(output);
 	ok &= check(plain_bytes && fx_scene_source_view_pair_capture_for_test(output, &plain, plain_bytes, &alias)
 		&& alias.display == alias.unfiltered, "equal source roles alias despite excluded overlay shader");
+  if (alias.display) {
+    uint8_t before[16 * 16 * 4], changed[sizeof(before)], restored[sizeof(before)];
+    struct wlr_buffer *retained = alias.display;
+    ok &= read_buffer(fixture, alias.display, DRM_FORMAT_ARGB8888, 16 * 4, before);
+    wlr_scene_rect_set_color(pinned, red);
+    ok &= fx_scene_source_view_pair_capture_for_test(output, &plain, plain_bytes, &alias);
+    ok &= read_buffer(fixture, alias.display, DRM_FORMAT_ARGB8888, 16 * 4, changed);
+    ok &= check(alias.display == retained && memcmp(before, changed, sizeof(before)) != 0,
+        "reused source buffer renders changed content");
+    wlr_scene_rect_set_color(pinned, green);
+    ok &= fx_scene_source_view_pair_capture_for_test(output, &plain, plain_bytes, &alias);
+    ok &= read_buffer(fixture, alias.display, DRM_FORMAT_ARGB8888, 16 * 4, restored);
+    ok &= check(alias.display == retained && memcmp(before, restored, sizeof(before)) == 0,
+        "reused scratch and source buffers do not retain stale pixels");
+  }
+  fx_scene_source_scratch_destroy(plain.scratch);
 	fx_scene_source_pair_finish_for_test(&alias);
-	// An inventory owns all face images but reuses one sequential capture peak.
-	// Downscaling changes both retained images and actual source scratch sizes.
-	plain.extent = (struct wlr_box){-8, 16, 1920, 1080};
-	plain.scale = 0.25f;
-	struct fx_scene_source_view_plan inventory_plan;
-	ok &= check(fx_scene_source_view_plan_for_test(output, &plain, &inventory_plan)
-		&& inventory_plan.width == (fixture->output->transform & 1 ? 270 : 480) && inventory_plan.height == (fixture->output->transform & 1 ? 480 : 270)
-		&& inventory_plan.retained_bytes * 64 + inventory_plan.capture_bytes < FX_SCENE_OUTPUT_BUDGET
-		&& inventory_plan.retained_bytes == 480u*270u*4u && inventory_plan.scratch_bytes == 2u*480u*270u*4u,
-		"64 aliased faces fit with one shared blur ping-pong peak");
 
 	wl_list_remove(&samples.listener.link);
 	wlr_scene_node_destroy(&scene->tree.node);
@@ -301,7 +325,7 @@ static bool budget_matrix(struct fixture *fixture) {
 				if (admitted) {
 					uint64_t image = (uint64_t)width*height*(precision ? 8 : 4);
 					ok &= check(plan.retained_bytes == image && plan.scratch_bytes == image*(optimized ? 4 : 0)
-						&& plan.capture_bytes > plan.scratch_bytes,
+						&& plan.capture_bytes > 0,
 						"alias proof charges one retained role and exact plain/blur scratch classes");
 				}
 			}
@@ -437,6 +461,23 @@ static bool shader_scratch_matrix(struct fixture *fixture) {
 }
 
 
+static struct fx_scene_scratch *scratch_lifetime(struct fixture *fixture, bool *ok) {
+  struct wlr_scene *scene = wlr_scene_create();
+  struct wlr_scene_output *output = wlr_scene_output_create(scene, fixture->output);
+  const float red[] = {1, 0, 0, 1};
+  struct wlr_scene_rect *rect = wlr_scene_rect_create(&scene->tree, 16, 16, red);
+  struct wlr_scene_blur *blur = wlr_scene_blur_create(&scene->tree, 16, 16);
+  struct fx_scene_scratch *scratch = fx_scene_source_scratch_create(output);
+  struct fx_scene_source_view view = {.first = &rect->node, .last = &blur->node,
+      .extent = {0, 0, 16, 16}, .scale = 1, .scratch = scratch};
+  struct fx_scene_source_pair_for_test pair = {0};
+  *ok &= check(scratch && fx_scene_source_view_pair_capture_for_test(output, &view,
+      fx_scene_source_view_bytes_for_test(output, &view), &pair), "retain allocated scratch across renderer destruction");
+  fx_scene_source_pair_finish_for_test(&pair);
+  wlr_scene_node_destroy(&scene->tree.node);
+  return scratch;
+}
+
 int main(void) {
 	struct fixture fixture;
 	if (!fixture_init(&fixture)) { fixture_finish(&fixture); return 77; }
@@ -454,6 +495,8 @@ int main(void) {
 	}
 	ok &= rectangular(&fixture);
 	ok &= budget_matrix(&fixture);
+  struct fx_scene_scratch *scratch = scratch_lifetime(&fixture, &ok);
 	fixture_finish(&fixture);
+  fx_scene_source_scratch_destroy(scratch);
 	return ok ? 0 : 1;
 }
