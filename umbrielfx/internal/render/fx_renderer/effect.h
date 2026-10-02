@@ -78,6 +78,12 @@ void fx_render_pass_add_effect_light(
     const struct wlr_box* box, const pixman_region32_t* clip
 );
 
+// Long cursor paths are dedicated draw inputs, not generic per-node uniforms.
+struct fx_cursor_path {
+  unsigned count;
+  float points[64][4]; // uv, age seconds, stable birth phase
+};
+
 struct fx_effect_composite {
   struct fx_effect_shader* shader;
   const struct fx_animation_parameters* parameters;
@@ -96,6 +102,7 @@ struct fx_effect_composite {
   unsigned role;                             // selects the history: 0 display, 1 unfiltered capture
   const float* corner_radius;                // tl, tr, br, bl logical px for umbriel_corner_radius; may be NULL
   const float* pointer;                      // umbriel_pointer, uv in the drawn box; NULL unless a cursor kind
+  const struct fx_cursor_path* pointer_path;
 };
 
 // Pops the capture begun by fx_render_pass_begin_animation and draws it

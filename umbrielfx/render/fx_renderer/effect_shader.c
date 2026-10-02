@@ -105,7 +105,11 @@ static const char kWindowSuffix[] =
     "\nvoid main() { gl_FragColor = mix(umbriel_sample(v_texcoord), window(v_texcoord), umbriel_mask(v_texcoord)); }\n";
 static const char kScreenSuffix[] = "\nvoid main() { gl_FragColor = screen(v_texcoord); }\n";
 // The cursor kind is in place too, so it needs the mask helper before its own uniform.
-static const char kCursorSection[] = "uniform vec2 umbriel_pointer;\n";
+static const char kCursorSection[] =
+    "uniform vec2 umbriel_pointer;\n"
+    "uniform int umbriel_pointer_count;\n"
+    "uniform vec4 umbriel_pointer_history[8];\n"
+    "uniform vec4 umbriel_pointer_path[64];\n";
 static const char kCursorSuffix[] =
     "\nvoid main() { gl_FragColor = mix(umbriel_sample(v_texcoord), cursor(v_texcoord), umbriel_mask(v_texcoord)); }\n";
 
