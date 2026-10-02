@@ -817,10 +817,11 @@ static void draw_animation_texture(
       memcpy(at.floats, pointer, 2 * sizeof(*pointer));
     }
     fx_effect_shader_bind_uniform(shader, &at);
-    const struct fx_effect_uniform* path = fx_effect_shader_uniform(shader, "umbriel_pointer_path");
-    if (path != NULL && path->type == GL_FLOAT_VEC4 && pointer_path != NULL && pointer_path->count > 0) {
-      glUniform4fv(path->location, pointer_path->count < (unsigned)path->size ? pointer_path->count : (unsigned)path->size,
-          &pointer_path->points[0][0]);
+    if (pointer_path != NULL && pointer_path->count > 0) {
+      fx_effect_shader_bind_uniform_data(
+          shader, "umbriel_pointer_path", FX_UNIFORM_VEC4, pointer_path->count,
+          pointer_path->points, sizeof(pointer_path->points)
+      );
     }
   }
   glUniform1f(shader->scale, animation_box_scale(box, logical_box) * effect_scale);

@@ -307,6 +307,26 @@ static bool test_uniforms(struct fixture *fixture) {
 	too_many_floats.uniforms[1].floats[0] = 0.0f; too_many_floats.uniforms[1].floats[1] = 1.0f; // green
 	ok &= render_animation(fixture, bounded, &too_many_floats, 0, pixel)
 		&& check(pixel[2] > 250 && pixel[1] < 5, "a float entry past FX_UNIFORM_FLOATS_MAX is rejected");
+	// Dedicated arrays share the same checks without enlarging every fx_uniform.
+	struct wlr_egl_context previous;
+	struct fx_renderer *renderer = fx_get_renderer(fixture->renderer);
+	if (check(wlr_egl_make_current(renderer->egl, &previous), "external uniform context")) {
+		float values[9][4] = {{0.0f, 1.0f, 0.0f, 1.0f}};
+		float actual[4] = {0};
+		glUseProgram(bounded->program);
+		fx_effect_shader_bind_uniform_data(bounded, "tints", FX_UNIFORM_VEC4, 9, values, sizeof(values));
+		glGetUniformfv(bounded->program, glGetUniformLocation(bounded->program, "tints[0]"), actual);
+		ok &= check(actual[1] == 1.0f && actual[0] == 0.0f, "external array larger than inline storage binds and clamps to active size");
+		values[0][0] = 1.0f; values[0][1] = 0.0f;
+		fx_effect_shader_bind_uniform_data(bounded, "tints", FX_UNIFORM_VEC4, 9, values, sizeof(values)-sizeof(values[0]));
+		fx_effect_shader_bind_uniform_data(bounded, "tints", FX_UNIFORM_VEC4, 1, NULL, sizeof(values));
+		fx_effect_shader_bind_uniform_data(bounded, "tints", FX_UNIFORM_VEC3, 1, values, sizeof(values));
+		glGetUniformfv(bounded->program, glGetUniformLocation(bounded->program, "tints[0]"), actual);
+		ok &= check(actual[1] == 1.0f && actual[0] == 0.0f, "short storage, null data and wrong external types preserve the previous binding");
+		wlr_egl_restore_context(&previous);
+	} else {
+		ok = false;
+	}
 	fx_effect_shader_unref(bounded);
 	return ok;
 }
