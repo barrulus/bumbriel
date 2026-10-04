@@ -22,7 +22,7 @@
         "aarch64-linux"
       ];
 
-      rev = self.shortRev or self.dirtyShortRev;
+      rev = self.shortRev or self.dirtyShortRev or "local";
 
       forEachSystem =
         perSystem: nixpkgs.lib.genAttrs systems (system: perSystem nixpkgs.legacyPackages.${system});

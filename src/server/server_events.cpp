@@ -7,6 +7,7 @@
 #include "input/gestures.h"
 #include "input/keyboard.h"
 #include "input/seat.h"
+#include "input/text_input.h"
 #include "layer/layer_surface.h"
 #include "layout/scrolling.h"
 #include "lock/session_lock.h"
@@ -803,9 +804,11 @@ namespace umbriel {
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     for (const auto& view : self->m_registry.all()) {
-      // Live source owners pace callbacks after their output successfully
-      // commits; background ticks must not acknowledge an unpresented frame.
-      if (!view->mapped() || view->onActiveWorkspace() || view->hasPresentationSourceOccurrence()) {
+      // Hidden tabs need background callbacks, but live source owners pace
+      // callbacks only after their output successfully commits.
+      if (!view->mapped()
+          || (view->onActiveWorkspace() && !view->tabHidden())
+          || view->hasPresentationSourceOccurrence()) {
         continue;
       }
       view->forEachSurface(
@@ -1159,9 +1162,11 @@ namespace umbriel {
     Server* self;
     self = wl_container_of(listener, self, m_newImageCopySession);
     auto* session = static_cast<wlr_ext_image_copy_capture_session_v1*>(data);
-    auto* watch = new ImageCopySessionWatch();
+    auto watch = std::make_unique<ImageCopySessionWatch>();
     watch->server = self;
     watch->source = session->source;
+    watch->session = session;
+    watch->output = wlr_output_try_from_ext_image_capture_source_v1(session->source);
     watch->destroy.notify = onImageCopySessionDestroy;
     wl_signal_add(&session->events.destroy, &watch->destroy);
     for (const auto& view : self->views()) {
@@ -1171,6 +1176,7 @@ namespace umbriel {
         break;
       }
     }
+    self->m_imageCopySessions.push_back(std::move(watch));
   }
 
   // The session's render lock is released after this signal; the frame it schedules runs from an idle, without it.
@@ -1186,7 +1192,9 @@ namespace umbriel {
       }
     }
     wl_list_remove(&watch->destroy.link);
-    delete watch;
+    std::erase_if(server->m_imageCopySessions, [watch](const std::unique_ptr<ImageCopySessionWatch>& entry) {
+      return entry.get() == watch;
+    });
     if (isolated) {
       return;
     }
@@ -2911,6 +2919,12 @@ namespace umbriel {
 
   void Server::notifyKeyboardEnter(wlr_surface* surface) {
     wlr_seat* seat = m_seat->wlr();
+    wlr_surface* previous = seat->keyboard_state.focused_surface;
+    const bool leavesXwayland = m_xwayland != nullptr
+        && previous != nullptr
+        && wlr_xwayland_surface_try_from_wlr_surface(previous) != nullptr
+        && surface != nullptr
+        && wlr_xwayland_surface_try_from_wlr_surface(surface) == nullptr;
 
     if (config().input.keyboard.trackLayout == TrackLayout::Window) {
       if (const auto state = keyboardLayoutState();
@@ -2938,6 +2952,9 @@ namespace umbriel {
     wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat);
     if (keyboard == nullptr) {
       wlr_seat_keyboard_notify_enter(seat, surface, nullptr, 0, nullptr);
+      if (leavesXwayland) {
+        m_xwayland->scheduleFocusClear();
+      }
       return;
     }
 
@@ -2953,6 +2970,9 @@ namespace umbriel {
     }
     if (consumed == nullptr || consumed->empty()) {
       wlr_seat_keyboard_notify_enter(seat, surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+      if (leavesXwayland) {
+        m_xwayland->scheduleFocusClear();
+      }
       return;
     }
     std::array<uint32_t, WLR_KEYBOARD_KEYS_CAP> forwarded{};
@@ -2963,6 +2983,9 @@ namespace umbriel {
       }
     }
     wlr_seat_keyboard_notify_enter(seat, surface, forwarded.data(), count, &keyboard->modifiers);
+    if (leavesXwayland) {
+      m_xwayland->scheduleFocusClear();
+    }
   }
 
   void Server::forgetConsumedKeycodes() {
@@ -2983,17 +3006,28 @@ namespace umbriel {
     wlr_seat_keyboard_notify_clear_focus(seat);
   }
 
+  void Server::rememberKeyboardInputSource(Keyboard& keyboard) {
+    if (m_inputMethodRelay == nullptr || !m_inputMethodRelay->ownsKeyboard(keyboard.wlr())) {
+      m_keyboardInputSource = &keyboard;
+    }
+  }
+
   void Server::removeKeyboard(Keyboard* keyboard) {
     wlr_seat* seat = m_seat->wlr();
     const bool seatKeyboardRemoved = wlr_seat_get_keyboard(seat) == keyboard->wlr();
     const bool sourceRemoved = m_keyboardLayoutSource == keyboard;
+    if (m_keyboardInputSource == keyboard) {
+      m_keyboardInputSource = nullptr;
+    }
     std::erase_if(m_keyboards, [keyboard](const std::unique_ptr<Keyboard>& entry) { return entry.get() == keyboard; });
     if (seatKeyboardRemoved) {
-      wlr_keyboard* replacement = nullptr;
-      for (const auto& entry : m_keyboards) {
-        if (entry->wlr()->keymap != nullptr) {
-          replacement = entry->wlr();
-          break;
+      wlr_keyboard* replacement = m_keyboardInputSource != nullptr ? m_keyboardInputSource->wlr() : nullptr;
+      if (replacement == nullptr) {
+        for (const auto& entry : m_keyboards) {
+          if (entry->wlr()->keymap != nullptr) {
+            replacement = entry->wlr();
+            break;
+          }
         }
       }
       // Detach wlroots' later destroy listener so it cannot clear the replacement.

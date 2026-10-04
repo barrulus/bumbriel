@@ -225,6 +225,7 @@ namespace umbriel {
       }
       return;
     }
+    m_server->rememberKeyboardInputSource(*this);
     cancelRepeat();
     m_server->notifyIdleActivity();
     wlr_input_method_keyboard_grab_v2* grab = activeInputMethodGrab();
@@ -246,6 +247,7 @@ namespace umbriel {
 
   void Keyboard::handleKey(void* data) {
     auto* event = static_cast<wlr_keyboard_key_event*>(data);
+    m_server->rememberKeyboardInputSource(*this);
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
       m_server->notifyInputActivity();
     } else {

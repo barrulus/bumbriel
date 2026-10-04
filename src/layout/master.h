@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 struct wlr_box;
@@ -13,11 +14,12 @@ namespace umbriel {
 
   class View;
 
-  class MasterStackLayout final : public Layout {
+  class MasterStackLayout final : public Layout, public TabbedContainers {
   public:
     struct Area {
       std::vector<View*> views;
       std::vector<double> weights;
+      TabState tabs;
     };
 
     [[nodiscard]] LayoutMode mode() const override { return LayoutMode::Master; }
@@ -61,7 +63,24 @@ namespace umbriel {
     [[nodiscard]] uint32_t sanitizeResizeEdges(const View* view, uint32_t edges) const override;
     std::unique_ptr<ResizeGrab> beginResize(View* view, uint32_t edges, const wlr_box& usable) override;
 
+    [[nodiscard]] TabbedContainers* tabbedContainers() override { return this; }
+    bool setTabbed(const View* view, bool tabbed) override;
+    bool selectTab(const View* view) override;
+    bool insertTab(View* view, int column, int row, const View* member) override;
+    bool moveTab(const View* view, int direction) override;
+    bool setTabBar(const View* view, std::optional<bool> shown) override;
+
   private:
+    // Row changes for every area, keeping the tab selection on its view. An area that fills from empty takes the
+    // display new columns start with.
+    void insertRow(Area& area, size_t row, View* view, double weight) const;
+    double eraseRow(Area& area, size_t row);
+    // The row a window joining `area` by consume lands on.
+    [[nodiscard]] size_t joinRow(const Area& area) const;
+    // Targets other than hidden tabs, which share the box of the tab on show and would otherwise tie with it.
+    [[nodiscard]] std::vector<LayoutTarget> visibleTargets() const;
+    // The size a window joining `area`, `width` wide, gets, matching what arrange will assign.
+    [[nodiscard]] InitialSize joiningSize(const Area& area, int width, int contentHeight, int gap) const;
     [[nodiscard]] double masterFrac() const;
     [[nodiscard]] bool masterIsLeft() const;
     [[nodiscard]] bool masterIsCenter() const;

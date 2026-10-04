@@ -652,6 +652,12 @@ UMBRIEL_TEST(payloadAlternativeMatchesTheDeclaredArgKind) {
     case ActionArgKind::LayoutMode:
       input += ":toggle";
       break;
+    case ActionArgKind::ColumnDisplay:
+      input += ":tabbed";
+      break;
+    case ActionArgKind::TabIndex:
+      input += ":2";
+      break;
     case ActionArgKind::Workspace:
       input += ":1";
       break;
@@ -688,6 +694,12 @@ UMBRIEL_TEST(payloadAlternativeMatchesTheDeclaredArgKind) {
       break;
     case ActionArgKind::LayoutMode:
       CHECK(umbriel::payloadIf<umbriel::LayoutModeArg>(bind) != nullptr);
+      break;
+    case ActionArgKind::ColumnDisplay:
+      CHECK(umbriel::payloadIf<umbriel::ColumnDisplayArg>(bind) != nullptr);
+      break;
+    case ActionArgKind::TabIndex:
+      CHECK(umbriel::payloadIf<umbriel::TabIndexArg>(bind) != nullptr);
       break;
     case ActionArgKind::Workspace:
       CHECK(umbriel::payloadIf<umbriel::WorkspaceArg>(bind) != nullptr);
@@ -760,6 +772,12 @@ UMBRIEL_TEST(everyActionSpecRoundTripsThroughParseAction) {
       break;
     case ActionArgKind::LayoutMode:
       input += ":toggle";
+      break;
+    case ActionArgKind::ColumnDisplay:
+      input += ":tabbed";
+      break;
+    case ActionArgKind::TabIndex:
+      input += ":2";
       break;
     case ActionArgKind::Workspace:
       input += ":1";
@@ -903,6 +921,10 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
       return ":0.1";
     case ActionArgKind::LayoutMode:
       return ":scrolling";
+    case ActionArgKind::ColumnDisplay:
+      return ":normal";
+    case ActionArgKind::TabIndex:
+      return ":-1";
     case ActionArgKind::SkipConfirmation:
       return ":skip-confirmation";
     }
@@ -945,6 +967,10 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
       return "<delta>";
     case ActionArgKind::LayoutMode:
       return "<scrolling|dwindle|master|toggle>";
+    case ActionArgKind::ColumnDisplay:
+      return "<normal|tabbed>";
+    case ActionArgKind::TabIndex:
+      return "<index>";
     case ActionArgKind::SkipConfirmation:
       return "[skip-confirmation]";
     }

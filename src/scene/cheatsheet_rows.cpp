@@ -212,6 +212,16 @@ namespace {
           return name + ": toggle";
         }
         return name;
+      case umbriel::ActionArgKind::ColumnDisplay:
+        if (const auto* arg = umbriel::payloadIf<umbriel::ColumnDisplayArg>(bind)) {
+          return name + (arg->display == umbriel::ColumnDisplay::Tabbed ? ": tabbed" : ": normal");
+        }
+        return name;
+      case umbriel::ActionArgKind::TabIndex:
+        if (const auto* arg = umbriel::payloadIf<umbriel::TabIndexArg>(bind)) {
+          return std::format("{}: {}", name, arg->index);
+        }
+        return name;
       case umbriel::ActionArgKind::Workspace:
         if (const auto* workspace = umbriel::payloadIf<umbriel::WorkspaceArg>(bind)) {
           std::string label = name + ": " + workspaceReferenceLabel(workspace->reference);
@@ -323,6 +333,9 @@ namespace {
     case A::WindowFocusOrOutputRight:
     case A::ColumnFocusFirst:
     case A::ColumnFocusLast:
+    case A::ColumnFocusTab:
+    case A::ColumnFocusTabNext:
+    case A::ColumnFocusTabPrevious:
     case A::WindowFocusUp:
     case A::WindowFocusDown:
     case A::WindowFocusOrWorkspaceUp:
@@ -399,6 +412,13 @@ namespace {
     case A::ToggleMaximizeToEdges:
     case A::ToggleFullscreen:
     case A::TogglePinned:
+    case A::ColumnToggleTabbed:
+    case A::ColumnSetDisplay:
+    case A::ColumnMoveTabNext:
+    case A::ColumnMoveTabPrevious:
+    case A::ColumnToggleTabBar:
+    case A::ColumnShowTabBar:
+    case A::ColumnHideTabBar:
       return Group::Windows;
     case A::WindowMoveToScratchpad:
     case A::WindowRestoreFromScratchpad:

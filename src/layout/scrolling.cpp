@@ -32,6 +32,7 @@ namespace umbriel {
         double widthFraction = 0.5;
         double savedWidthFraction = 0.0;
         double viewportCenterFraction = 0.5;
+        ColumnTabs tabs;
       };
 
       [[nodiscard]] LayoutMode mode() const override { return LayoutMode::Scrolling; }
@@ -63,12 +64,100 @@ namespace umbriel {
       }
     }
 
+    // A column's per-row vectors change together, and its tab selection follows its view through every change.
+    struct ErasedRow {
+      double heightWeight = 1.0;
+      double rememberedExtent = 0.0;
+    };
+
+    // A row joining a tab group, strictly inside one or into group `into`, takes the group's shared extent rather than
+    // `heightWeight`.
+    void insertRow(
+        Column& column, size_t row, View* view, double heightWeight, double rememberedExtent,
+        std::optional<size_t> into = std::nullopt
+    ) {
+      ensureWeightCount(column);
+      ensureRememberedExtentCount(column);
+      row = std::min(row, column.views.size());
+      const auto at = static_cast<std::ptrdiff_t>(row);
+      column.views.insert(column.views.begin() + at, view);
+      column.heightWeights.insert(column.heightWeights.begin() + at, heightWeight);
+      column.rememberedScrollingExtents.insert(column.rememberedScrollingExtents.begin() + at, rememberedExtent);
+      column.tabs.rowInserted(row, into);
+      if (const TabGroup* group = column.tabs.groupAt(row); group != nullptr && group->count > 1) {
+        column.heightWeights[row] = column.heightWeights[row == group->first ? row + 1 : group->first];
+      }
+    }
+
+    ErasedRow eraseRow(Column& column, size_t row) {
+      ensureWeightCount(column);
+      ensureRememberedExtentCount(column);
+      const auto at = static_cast<std::ptrdiff_t>(row);
+      const ErasedRow erased{
+          .heightWeight = column.heightWeights[row],
+          .rememberedExtent = column.rememberedScrollingExtents[row],
+      };
+      column.views.erase(column.views.begin() + at);
+      column.heightWeights.erase(column.heightWeights.begin() + at);
+      column.rememberedScrollingExtents.erase(column.rememberedScrollingExtents.begin() + at);
+      column.tabs.rowErased(row);
+      return erased;
+    }
+
+    void swapRows(Column& column, size_t first, size_t second) {
+      ensureWeightCount(column);
+      ensureRememberedExtentCount(column);
+      std::swap(column.views[first], column.views[second]);
+      std::swap(column.heightWeights[first], column.heightWeights[second]);
+      std::swap(column.rememberedScrollingExtents[first], column.rememberedScrollingExtents[second]);
+      column.tabs.rowsSwapped(first, second);
+    }
+
+    // A tab group is one unit of the stack, so its shared weight counts once.
     double columnTotalWeight(const Column& column) {
       double total = std::max(0.0, column.topGapWeight) + std::max(0.0, column.bottomGapWeight);
-      for (double weight : column.heightWeights) {
-        total += std::max(kMinHeightWeight, weight);
+      for (size_t row = 0; row < column.heightWeights.size(); row = column.tabs.unitEnd(row)) {
+        total += std::max(kMinHeightWeight, column.heightWeights[row]);
       }
       return std::max(kMinHeightWeight, total);
+    }
+
+    // Every row of the unit holding `row` takes `weight`: the tabs of a group share one extent.
+    void setUnitWeight(Column& column, size_t row, double weight) {
+      ensureWeightCount(column);
+      const size_t end = std::min(column.tabs.unitEnd(row), column.heightWeights.size());
+      for (size_t member = column.tabs.unitStart(row); member < end; ++member) {
+        column.heightWeights[member] = weight;
+      }
+    }
+
+    // The heaviest minimum extent on the stacking axis among the rows of the unit holding `row`.
+    int unitMinCross(const Column& column, size_t row, const Layout& layout, bool vertical) {
+      int minimum = 0;
+      const size_t end = std::min(column.tabs.unitEnd(row), column.views.size());
+      for (size_t member = column.tabs.unitStart(row); member < end; ++member) {
+        if (const View* view = column.views[member]) {
+          const LayoutConstraints constraints = layout.constraintsFor(view);
+          minimum = std::max(minimum, vertical ? constraints.minWidth : constraints.minHeight);
+        }
+      }
+      return minimum;
+    }
+
+    // Rotate rows [first, last) of every per-row vector so row `middle` comes first. Tab groups are the caller's to
+    // follow.
+    void rotateRows(Column& column, size_t first, size_t middle, size_t last) {
+      ensureWeightCount(column);
+      ensureRememberedExtentCount(column);
+      const auto rotate = [&](auto& rows) {
+        std::rotate(
+            rows.begin() + static_cast<std::ptrdiff_t>(first), rows.begin() + static_cast<std::ptrdiff_t>(middle),
+            rows.begin() + static_cast<std::ptrdiff_t>(last)
+        );
+      };
+      rotate(column.views);
+      rotate(column.heightWeights);
+      rotate(column.rememberedScrollingExtents);
     }
 
     int columnMinPrimaryPx(const Column& column, const Layout& layout) {
@@ -173,6 +262,7 @@ namespace umbriel {
           .widthFraction = column.widthFrac,
           .savedWidthFraction = column.savedWidthFrac,
           .viewportCenterFraction = 0.5,
+          .tabs = column.tabs,
       };
       if (viewportPrimary > 0) {
         const double center = static_cast<double>(columnX(static_cast<int>(columnIndex), viewportPrimary))
@@ -228,6 +318,7 @@ namespace umbriel {
           .widthFrac = saved.widthFraction,
           .savedWidthFrac = saved.savedWidthFraction,
           .rememberedScrollingExtents = {},
+          .tabs = saved.tabs,
       };
       for (const ScrollingSnapshot::Row& row : saved.rows) {
         View* view = (*resolved)[static_cast<size_t>(row.member)];
@@ -235,6 +326,9 @@ namespace umbriel {
           column.views.push_back(view);
           column.heightWeights.push_back(row.heightWeight);
           column.rememberedScrollingExtents.push_back(0.0);
+        } else {
+          // A member that did not come back leaves its row the way a close does.
+          column.tabs.rowErased(column.views.size());
         }
       }
       if (!column.views.empty()) {
@@ -408,10 +502,22 @@ namespace umbriel {
     const int index = std::clamp(columnIndex, 0, static_cast<int>(m_columns.size()));
     Column column;
     column.widthFrac = m_config->scrolling.defaultExtentFraction.value_or(0.5);
-    column.views.push_back(view);
-    column.heightWeights.push_back(1.0);
-    column.rememberedScrollingExtents.push_back(0.0);
+    insertRow(column, 0, view, 1.0, 0.0);
+    if (opensTabbed()) {
+      column.tabs.form(0, 1, 0);
+    }
     m_columns.insert(m_columns.begin() + index, std::move(column));
+  }
+
+  ScrollingLayout::JoinPoint ScrollingLayout::joinPoint(const Column& column) const {
+    const std::optional<size_t> last =
+        column.views.empty() ? std::nullopt : column.tabs.groupIndexAt(column.views.size() - 1);
+    if (!last) {
+      return {.row = column.views.size(), .group = std::nullopt};
+    }
+    const TabGroup& group = column.tabs.groups()[*last];
+    const bool afterActive = m_config->tabs.newTabPosition == NewTabPosition::AfterActive;
+    return {.row = afterActive ? group.active + 1 : group.end(), .group = last};
   }
 
   // Weight for a row about to be added at `row`, and the gap it takes over. A column keeps free space at its ends as
@@ -421,14 +527,15 @@ namespace umbriel {
   // by one inter-row gap.
   double ScrollingLayout::claimInsertWeight(Column& column, int row, double fallbackWeight) {
     ensureWeightCount(column);
-    const int existingRows = static_cast<int>(column.views.size());
+    // Units, not rows: the stack gains one unit, and a tab group is one.
+    const int existingRows = static_cast<int>(column.tabs.unitCount(column.views.size()));
     double edgeGapWeight = 0.0;
     bool consumesTopGap = false;
     bool consumesBottomGap = false;
     if (row == 0 && column.topGapWeight > 0.0) {
       edgeGapWeight = column.topGapWeight;
       consumesTopGap = true;
-    } else if (row == existingRows && column.bottomGapWeight > 0.0) {
+    } else if (row == static_cast<int>(column.views.size()) && column.bottomGapWeight > 0.0) {
       edgeGapWeight = column.bottomGapWeight;
       consumesBottomGap = true;
     }
@@ -464,13 +571,32 @@ namespace umbriel {
       return;
     }
     Column& column = m_columns[static_cast<size_t>(columnIndex)];
-    ensureWeightCount(column);
-    ensureRememberedExtentCount(column);
     const int row = std::clamp(rowIndex, 0, static_cast<int>(column.views.size()));
-    const double insertedWeight = claimInsertWeight(column, row, 1.0);
-    column.views.insert(column.views.begin() + row, view);
-    column.heightWeights.insert(column.heightWeights.begin() + row, insertedWeight);
-    column.rememberedScrollingExtents.insert(column.rememberedScrollingExtents.begin() + row, 0.0);
+    // A row landing strictly inside a tab group becomes one of its tabs and adds no unit to claim space for.
+    const TabGroup* around = column.tabs.groupAt(static_cast<size_t>(row));
+    const bool joins = around != nullptr && static_cast<size_t>(row) > around->first;
+    const double insertedWeight = joins ? 1.0 : claimInsertWeight(column, row, 1.0);
+    insertRow(column, static_cast<size_t>(row), view, insertedWeight, 0.0);
+  }
+
+  bool ScrollingLayout::insertTab(View* view, int columnIndex, int rowIndex, const View* member) {
+    if (view == nullptr
+        || columnOf(view) >= 0
+        || columnIndex < 0
+        || columnIndex >= static_cast<int>(m_columns.size())) {
+      return false;
+    }
+    Column& column = m_columns[static_cast<size_t>(columnIndex)];
+    const TabGroup* group = tabGroupOf(column, member);
+    if (group == nullptr || rowIndex < 0) {
+      return false;
+    }
+    const auto row = static_cast<size_t>(rowIndex);
+    if (row < group->first || row > group->end()) {
+      return false;
+    }
+    insertRow(column, row, view, 1.0, 0.0, static_cast<size_t>(group - column.tabs.groups().data()));
+    return true;
   }
 
   bool ScrollingLayout::consume(View* view, int direction) {
@@ -486,23 +612,17 @@ namespace umbriel {
     Column& destination = m_columns[static_cast<size_t>(destinationColumn)];
     // Remember width for later expel
     const double rememberedExtent = source.savedWidthFrac > 0 ? source.savedWidthFrac : source.widthFrac;
-    ensureWeightCount(source);
-    ensureRememberedExtentCount(source);
-    ensureWeightCount(destination);
-    ensureRememberedExtentCount(destination);
     const int row = rowOf(view);
-    const double weight = row >= 0 ? source.heightWeights[static_cast<size_t>(row)] : 1.0;
-    std::erase(source.views, view);
-    if (row >= 0 && row < static_cast<int>(source.heightWeights.size())) {
-      source.heightWeights.erase(source.heightWeights.begin() + row);
+    if (row < 0) {
+      return false;
     }
-    if (row >= 0 && row < static_cast<int>(source.rememberedScrollingExtents.size())) {
-      source.rememberedScrollingExtents.erase(source.rememberedScrollingExtents.begin() + row);
-    }
-    const double insertedWeight = claimInsertWeight(destination, static_cast<int>(destination.views.size()), weight);
-    destination.views.push_back(view);
-    destination.heightWeights.push_back(insertedWeight);
-    destination.rememberedScrollingExtents.push_back(rememberedExtent);
+    const ErasedRow erased = eraseRow(source, static_cast<size_t>(row));
+    // Joining a tab group adds no unit, so only a row of its own claims the column's free space.
+    const JoinPoint join = joinPoint(destination);
+    const double insertedWeight = join.group
+        ? erased.heightWeight
+        : claimInsertWeight(destination, static_cast<int>(join.row), erased.heightWeight);
+    insertRow(destination, join.row, view, insertedWeight, rememberedExtent, join.group);
     if (source.views.empty()) {
       m_columns.erase(m_columns.begin() + sourceColumn);
     }
@@ -518,26 +638,19 @@ namespace umbriel {
     if (source.views.size() <= 1) {
       return false;
     }
-    ensureWeightCount(source);
-    ensureRememberedExtentCount(source);
     const int row = rowOf(view);
-    const double weight = row >= 0 ? source.heightWeights[static_cast<size_t>(row)] : 1.0;
-    std::erase(source.views, view);
-    if (row >= 0 && row < static_cast<int>(source.heightWeights.size())) {
-      source.heightWeights.erase(source.heightWeights.begin() + row);
+    if (row < 0) {
+      return false;
     }
+    const ErasedRow erased = eraseRow(source, static_cast<size_t>(row));
     // A row consumed from its own column expels back to the extent it had there.
     Column column;
-    column.widthFrac = m_config->scrolling.defaultExtentFraction.value_or(0.5);
-    if (row >= 0 && row < static_cast<int>(source.rememberedScrollingExtents.size())) {
-      if (const double extent = source.rememberedScrollingExtents[static_cast<size_t>(row)]; extent > 0.0) {
-        column.widthFrac = extent;
-      }
-      source.rememberedScrollingExtents.erase(source.rememberedScrollingExtents.begin() + row);
+    column.widthFrac = erased.rememberedExtent > 0.0 ? erased.rememberedExtent
+                                                     : m_config->scrolling.defaultExtentFraction.value_or(0.5);
+    insertRow(column, 0, view, erased.heightWeight, 0.0);
+    if (opensTabbed()) {
+      column.tabs.form(0, 1, 0);
     }
-    column.views.push_back(view);
-    column.heightWeights.push_back(weight);
-    column.rememberedScrollingExtents.push_back(0.0);
     const int destinationColumn = sourceColumn + (direction > 0 ? 1 : 0);
     m_columns.insert(m_columns.begin() + destinationColumn, std::move(column));
     return true;
@@ -550,18 +663,59 @@ namespace umbriel {
       return false;
     }
     Column& col = m_columns[static_cast<size_t>(column)];
-    ensureWeightCount(col);
-    ensureRememberedExtentCount(col);
-    const int target = row + direction;
-    if (target < 0 || target >= static_cast<int>(col.views.size())) {
+    if (direction != -1 && direction != 1) {
       return false;
     }
-    std::swap(col.views[static_cast<size_t>(row)], col.views[static_cast<size_t>(target)]);
-    std::swap(col.heightWeights[static_cast<size_t>(row)], col.heightWeights[static_cast<size_t>(target)]);
-    std::swap(
-        col.rememberedScrollingExtents[static_cast<size_t>(row)],
-        col.rememberedScrollingExtents[static_cast<size_t>(target)]
-    );
+    const auto at = static_cast<size_t>(row);
+    const size_t start = col.tabs.unitStart(at);
+    const size_t end = col.tabs.unitEnd(at);
+    // A tab steps out of its group toward the move, keeping the group's extent as its own.
+    if (end - start > 1) {
+      const size_t edge = direction > 0 ? end - 1 : start;
+      if (direction > 0) {
+        rotateRows(col, at, at + 1, end);
+      } else {
+        rotateRows(col, start, at, at + 1);
+      }
+      col.tabs.select(edge);
+      col.tabs.leave(edge);
+      return true;
+    }
+    const bool down = direction > 0;
+    if ((down && end >= col.views.size()) || (!down && start == 0)) {
+      return false;
+    }
+    const size_t neighbor = down ? end : start - 1;
+    // A window standing alone steps into a tab group it meets, as its nearest tab, and shows there.
+    if (!col.tabs.groupAt(at)) {
+      if (const std::optional<size_t> group = col.tabs.groupIndexAt(neighbor)) {
+        col.tabs.join(at, *group);
+        col.tabs.select(at);
+        setUnitWeight(col, at, col.heightWeights[neighbor]);
+        return true;
+      }
+    }
+    // Otherwise the two units trade places, each keeping its extent.
+    const size_t first = down ? start : col.tabs.unitStart(neighbor);
+    const size_t middle = down ? end : start;
+    const size_t last = down ? col.tabs.unitEnd(neighbor) : end;
+    rotateRows(col, first, middle, last);
+    col.tabs.unitsSwapped(first, middle, last);
+    return true;
+  }
+
+  bool ScrollingLayout::moveTab(const View* view, int direction) {
+    const int column = columnOf(view);
+    if (column < 0 || (direction != -1 && direction != 1)) {
+      return false;
+    }
+    Column& col = m_columns[static_cast<size_t>(column)];
+    const auto row = static_cast<size_t>(rowOf(view));
+    const TabGroup* group = col.tabs.groupAt(row);
+    if (group == nullptr || (direction < 0 && row == group->first) || (direction > 0 && row + 1 >= group->end())) {
+      return false;
+    }
+    swapRows(col, row, direction > 0 ? row + 1 : row - 1);
     return true;
   }
 
@@ -575,6 +729,12 @@ namespace umbriel {
     const int secondRow = rowOf(b);
     if (firstColumn < 0 || firstRow < 0 || secondColumn < 0 || secondRow < 0) {
       return false;
+    }
+    if (firstColumn == secondColumn) {
+      // Within one tab group the shown tab keeps following its view, as a row move does.
+      m_columns[static_cast<size_t>(firstColumn)].tabs.rowsSwapped(
+          static_cast<size_t>(firstRow), static_cast<size_t>(secondRow)
+      );
     }
     std::swap(
         m_columns[static_cast<size_t>(firstColumn)].views[static_cast<size_t>(firstRow)],
@@ -600,16 +760,7 @@ namespace umbriel {
       return;
     }
     Column& column = m_columns[static_cast<size_t>(columnIndex)];
-    ensureWeightCount(column);
-    ensureRememberedExtentCount(column);
-    const int row = rowOf(view);
-    std::erase(column.views, view);
-    if (row >= 0 && row < static_cast<int>(column.heightWeights.size())) {
-      column.heightWeights.erase(column.heightWeights.begin() + row);
-    }
-    if (row >= 0 && row < static_cast<int>(column.rememberedScrollingExtents.size())) {
-      column.rememberedScrollingExtents.erase(column.rememberedScrollingExtents.begin() + row);
-    }
+    eraseRow(column, static_cast<size_t>(rowOf(view)));
     if (column.views.empty()) {
       m_columns.erase(m_columns.begin() + columnIndex);
       if (m_removedFocusedColumn == columnIndex) {
@@ -921,7 +1072,8 @@ namespace umbriel {
       const int primary =
           (v ? usable.y : usable.x) + edgePad + runningColumnX - static_cast<int>(std::lround(m_scroll));
       runningColumnX += primarySize + gap + bleed.after;
-      const int rowCount = static_cast<int>(column.views.size());
+      // Rows stack as units: a window standing alone, or a tab group whose tabs all take the group's one share.
+      const int rowCount = static_cast<int>(column.tabs.unitCount(column.views.size()));
       const int gapsTotal = std::max(0, rowCount - 1) * gap;
       const int stackCross = std::max(rowCount, availableCross - gapsTotal);
       const double totalWeight = columnTotalWeight(column);
@@ -932,30 +1084,132 @@ namespace umbriel {
       cross += startGapPx;
       int used = startGapPx;
 
-      for (int row = 0; row < rowCount; ++row) {
-        const double weight = std::max(kMinHeightWeight, column.heightWeights[static_cast<size_t>(row)]);
+      for (size_t start = 0; start < column.views.size(); start = column.tabs.unitEnd(start)) {
+        const double weight = std::max(kMinHeightWeight, column.heightWeights[start]);
         int crossSize = static_cast<int>(std::lround(weight / totalWeight * stackCross));
-        if (row == rowCount - 1) {
+        if (column.tabs.unitEnd(start) >= column.views.size()) {
           const int endGapPx =
               static_cast<int>(std::lround(std::max(0.0, column.bottomGapWeight) / totalWeight * stackCross));
           crossSize = std::max(1, stackCross - used - endGapPx);
         } else {
           crossSize = std::max(1, crossSize);
         }
-        View* view = column.views[static_cast<size_t>(row)];
-        if (view != nullptr) {
-          const LayoutConstraints constraints = constraintsFor(view);
-          crossSize = v ? constraints.clampWidth(crossSize) : constraints.clampHeight(crossSize);
-        }
-        if (v) {
-          m_targets.push_back({.view = view, .x = cross, .y = primary, .width = crossSize, .height = primarySize});
+        if (const TabGroup* group = column.tabs.groupAt(start)) {
+          const wlr_box unit = v ? wlr_box{.x = cross, .y = primary, .width = crossSize, .height = primarySize}
+                                 : wlr_box{.x = primary, .y = cross, .width = primarySize, .height = crossSize};
+          pushTabTargets(column, *group, unit);
         } else {
-          m_targets.push_back({.view = view, .x = primary, .y = cross, .width = primarySize, .height = crossSize});
+          View* view = column.views[start];
+          if (view != nullptr) {
+            const LayoutConstraints constraints = constraintsFor(view);
+            crossSize = v ? constraints.clampWidth(crossSize) : constraints.clampHeight(crossSize);
+          }
+          if (v) {
+            m_targets.push_back({.view = view, .x = cross, .y = primary, .width = crossSize, .height = primarySize});
+          } else {
+            m_targets.push_back({.view = view, .x = primary, .y = cross, .width = primarySize, .height = crossSize});
+          }
         }
         cross += crossSize + gap;
         used += crossSize;
       }
     }
+  }
+
+  void ScrollingLayout::pushTabTargets(const Column& column, const TabGroup& group, const wlr_box& unit) {
+    // Every tab gets the group's unit less its bar.
+    const bool v = vertical();
+    const wlr_box shared = tabbedBox(unit, group.count, group.bar);
+    for (size_t row = group.first; row < group.end() && row < column.views.size(); ++row) {
+      View* view = column.views[row];
+      const LayoutConstraints constraints = constraintsFor(view);
+      // The primary extent comes from the lane, already clamped for every member; only the cross extent is the view's.
+      const int width = v ? constraints.clampWidth(shared.width) : shared.width;
+      const int height = v ? shared.height : constraints.clampHeight(shared.height);
+      m_targets.push_back({.view = view, .x = shared.x, .y = shared.y, .width = width, .height = height});
+    }
+  }
+
+  bool ScrollingLayout::setTabbed(const View* view, bool tabbed) {
+    const int columnIndex = columnOf(view);
+    if (columnIndex < 0) {
+      return false;
+    }
+    Column& column = m_columns[static_cast<size_t>(columnIndex)];
+    ensureWeightCount(column);
+    const auto row = static_cast<size_t>(rowOf(view));
+    if (!tabbed) {
+      const TabGroup* group = column.tabs.groupAt(row);
+      if (group == nullptr) {
+        return false;
+      }
+      // The tabs split the group's extent evenly, so the column keeps its other rows where they were.
+      const size_t first = group->first;
+      const size_t count = group->count;
+      const double share = std::max(kMinHeightWeight, column.heightWeights[first]) / static_cast<double>(count);
+      column.tabs.dissolve(row);
+      for (size_t member = first; member < first + count; ++member) {
+        column.heightWeights[member] = share;
+      }
+      return true;
+    }
+    if (column.tabs.groupAt(row) != nullptr) {
+      return false;
+    }
+    // The run of rows standing alone around `view`, as far as the nearest tab groups, becomes one group showing it,
+    // taking the extent the run had.
+    size_t first = row;
+    while (first > 0 && column.tabs.groupAt(first - 1) == nullptr) {
+      --first;
+    }
+    size_t end = row + 1;
+    while (end < column.views.size() && column.tabs.groupAt(end) == nullptr) {
+      ++end;
+    }
+    double extent = 0.0;
+    for (size_t member = first; member < end; ++member) {
+      extent += std::max(kMinHeightWeight, column.heightWeights[member]);
+    }
+    column.tabs.form(first, end - first, row);
+    setUnitWeight(column, row, extent);
+    return true;
+  }
+
+  bool ScrollingLayout::setTabBar(const View* view, std::optional<bool> shown) {
+    const int columnIndex = columnOf(view);
+    if (columnIndex < 0) {
+      return false;
+    }
+    Column& column = m_columns[static_cast<size_t>(columnIndex)];
+    const auto row = static_cast<size_t>(rowOf(view));
+    const TabGroup* group = column.tabs.groupAt(row);
+    if (group == nullptr) {
+      return false;
+    }
+    const bool current = tabBarShown(*m_config, group->count, group->bar);
+    const bool target = shown.value_or(!current);
+    column.tabs.setBar(row, target);
+    return target != current;
+  }
+
+  bool ScrollingLayout::adoptTabs(int columnIndex, const ColumnTabs& tabs) {
+    if (columnIndex < 0 || columnIndex >= static_cast<int>(m_columns.size())) {
+      return false;
+    }
+    Column& column = m_columns[static_cast<size_t>(columnIndex)];
+    if (!tabs.empty() && tabs.groups().back().end() > column.views.size()) {
+      return false;
+    }
+    column.tabs = tabs;
+    return true;
+  }
+
+  bool ScrollingLayout::selectTab(const View* view) {
+    const int columnIndex = columnOf(view);
+    if (columnIndex < 0) {
+      return false;
+    }
+    return m_columns[static_cast<size_t>(columnIndex)].tabs.select(static_cast<size_t>(rowOf(view)));
   }
 
   Layout::InitialSize ScrollingLayout::initialSize(
@@ -974,10 +1228,16 @@ namespace umbriel {
     } else if (m_config->scrolling.defaultExtentFraction) {
       extent = fractionalWidth(viewportPrimary, *m_config->scrolling.defaultExtentFraction);
     }
-    if (vertical()) {
-      return {.width = content.width, .height = extent};
+    // A column that opens tabbed gives its bar the space its window would otherwise take, on whichever side the bar is.
+    // A primary extent of 0 leaves that size to the client, and stays 0.
+    const bool v = vertical();
+    const wlr_box lane = v ? wlr_box{.x = 0, .y = 0, .width = content.width, .height = std::max(1, extent)}
+                           : wlr_box{.x = 0, .y = 0, .width = std::max(1, extent), .height = content.height};
+    const wlr_box shared = opensTabbed() ? tabbedBox(lane, 1, std::nullopt) : lane;
+    if (v) {
+      return {.width = shared.width, .height = extent > 0 ? shared.height : 0};
     }
-    return {.width = extent, .height = content.height};
+    return {.width = extent > 0 ? shared.width : 0, .height = shared.height};
   }
 
   wlr_box ScrollingLayout::targetBox(const View* view) const {
@@ -1056,7 +1316,8 @@ namespace umbriel {
     }
     Column& column = m_columns[static_cast<size_t>(columnIndex)];
     const int row = rowOf(view);
-    if (column.views.size() == 1) {
+    // A tab sizes its whole group, the unit it shows in.
+    if (column.tabs.unitCount(column.views.size()) == 1) {
       // No sibling row to trade weight with, so the remainder goes to the column's edge gaps, exactly as dragging the
       // window's top or bottom edge does. An ungapped window keeps its top edge and frees the space below, which is
       // where the next window in the column lands. Existing gaps keep their proportion, so a window a drag pushed
@@ -1084,11 +1345,13 @@ namespace umbriel {
     }
     Column& column = m_columns[static_cast<size_t>(columnIndex)];
     ensureWeightCount(column);
-    if (upperRow < 0 || upperRow + 1 >= static_cast<int>(column.views.size())) {
+    // The boundary below the unit holding `upperRow`, which the next unit shares.
+    const size_t lowerRow = upperRow < 0 ? column.views.size() : column.tabs.unitEnd(static_cast<size_t>(upperRow));
+    if (lowerRow >= column.views.size()) {
       return false;
     }
-    column.heightWeights[static_cast<size_t>(upperRow)] = std::max(kMinHeightWeight, upperWeight);
-    column.heightWeights[static_cast<size_t>(upperRow + 1)] = std::max(kMinHeightWeight, lowerWeight);
+    setUnitWeight(column, static_cast<size_t>(upperRow), std::max(kMinHeightWeight, upperWeight));
+    setUnitWeight(column, lowerRow, std::max(kMinHeightWeight, lowerWeight));
     return true;
   }
 
@@ -1101,7 +1364,7 @@ namespace umbriel {
     if (row < 0 || row >= static_cast<int>(column.heightWeights.size())) {
       return false;
     }
-    column.heightWeights[static_cast<size_t>(row)] = std::max(kMinHeightWeight, weight);
+    setUnitWeight(column, static_cast<size_t>(row), std::max(kMinHeightWeight, weight));
     return true;
   }
 
@@ -1156,13 +1419,13 @@ namespace umbriel {
       ScrollingResizeGrab(
           ScrollingLayout* layout, int column, int row, uint32_t edges, bool vertical, bool soloPrimary,
           bool clearedFullWidth, double startScroll, int startColumnX, int startPrimaryPx, int startPrevPrimaryPx,
-          int startStripPrimaryPx, int upperRow, double startUpperWeight, double startLowerWeight
+          int startStripPrimaryPx, int upperRow, int lowerRow, double startUpperWeight, double startLowerWeight
       )
           : m_layout(layout), m_column(column), m_row(row), m_edges(edges), m_vertical(vertical),
             m_soloPrimary(soloPrimary), m_clearedFullWidth(clearedFullWidth), m_startScroll(startScroll),
             m_startColumnX(startColumnX), m_startPrimaryPx(startPrimaryPx), m_startPrevPrimaryPx(startPrevPrimaryPx),
-            m_startStripPrimaryPx(startStripPrimaryPx), m_upperRow(upperRow), m_startUpperWeight(startUpperWeight),
-            m_startLowerWeight(startLowerWeight) {}
+            m_startStripPrimaryPx(startStripPrimaryPx), m_upperRow(upperRow), m_lowerRow(lowerRow),
+            m_startUpperWeight(startUpperWeight), m_startLowerWeight(startLowerWeight) {}
 
       [[nodiscard]] bool unmaximizeOnBegin() const override { return m_clearedFullWidth; }
 
@@ -1299,31 +1562,27 @@ namespace umbriel {
 
         if ((m_edges & (crossStartEdge | crossEndEdge)) != 0 && m_row >= 0) {
           const Column& column = layout.columns()[static_cast<size_t>(m_column)];
-          const int rowCount = static_cast<int>(column.views.size());
+          // A tab group is one unit of the stack, so the stack counts units and the boundary sits between units.
+          const int rowCount = static_cast<int>(column.tabs.unitCount(column.views.size()));
           const int gapsTotal = std::max(0, rowCount - 1) * gap;
           const int stackCross = std::max(rowCount, availableCross - gapsTotal);
           if (stackCross > 0) {
             constexpr double kMinWindow = 0.05;
             double totalWeight = std::max(0.0, column.topGapWeight) + std::max(0.0, column.bottomGapWeight);
-            for (double weight : column.heightWeights) {
-              totalWeight += std::max(kMinWindow, weight);
+            for (size_t row = 0; row < column.heightWeights.size(); row = column.tabs.unitEnd(row)) {
+              totalWeight += std::max(kMinWindow, column.heightWeights[row]);
             }
             totalWeight = std::max(kMinWindow, totalWeight);
 
-            auto minWindowWeight = [&](View* view) {
-              if (view == nullptr) {
-                return kMinWindow;
-              }
-              const LayoutConstraints constraints = layout.constraintsFor(view);
-              const int minimum = m_vertical ? constraints.minWidth : constraints.minHeight;
+            auto minWindowWeight = [&](int row) {
+              const int minimum = unitMinCross(column, static_cast<size_t>(row), layout, m_vertical);
               return std::max(kMinWindow, static_cast<double>(minimum) / stackCross * totalWeight);
             };
 
             const double pair = std::max(kMinWindow, m_startUpperWeight + m_startLowerWeight);
             const double deltaWeight = dCross / static_cast<double>(stackCross) * totalWeight;
 
-            auto splitWindows = [&](double startUpper, double /*startLower*/, double delta, double minUpper,
-                                    double minLower) {
+            auto splitWindows = [&](double startUpper, double delta, double minUpper, double minLower) {
               double upper = startUpper + delta;
               double lower = pair - upper;
               if (upper < minUpper) {
@@ -1336,7 +1595,7 @@ namespace umbriel {
               }
               return std::pair{upper, lower};
             };
-            auto splitGapAndWindow = [&](double startGap, double /*startWindow*/, double deltaGap, double minWindow) {
+            auto splitGapAndWindow = [&](double startGap, double deltaGap, double minWindow) {
               double gapWeight = startGap + deltaGap;
               double windowWeight = pair - gapWeight;
               if (gapWeight < 0.0) {
@@ -1354,35 +1613,23 @@ namespace umbriel {
               return std::pair{gapWeight, windowWeight};
             };
 
-            // "Upper" denotes the cross-start side, which is left when vertical.
-            if ((m_edges & crossStartEdge) != 0) {
-              if (m_row == 0) {
-                const double minWindow = minWindowWeight(column.views[0]);
-                const auto [gapWeight, windowWeight] =
-                    splitGapAndWindow(m_startUpperWeight, m_startLowerWeight, deltaWeight, minWindow);
-                layout.setTopGapWeight(m_column, gapWeight);
-                layout.setHeightWeight(m_column, 0, windowWeight);
-              } else if (m_upperRow >= 0) {
-                const double minUpper = minWindowWeight(column.views[static_cast<size_t>(m_upperRow)]);
-                const double minLower = minWindowWeight(column.views[static_cast<size_t>(m_row)]);
-                const auto [upper, lower] =
-                    splitWindows(m_startUpperWeight, m_startLowerWeight, deltaWeight, minUpper, minLower);
-                layout.setRowBoundary(m_column, m_upperRow, upper, lower);
-              }
-            } else if ((m_edges & crossEndEdge) != 0) {
-              if (m_row + 1 >= rowCount) {
-                const double minWindow = minWindowWeight(column.views[static_cast<size_t>(m_row)]);
-                const auto [gapWeight, windowWeight] =
-                    splitGapAndWindow(m_startLowerWeight, m_startUpperWeight, -deltaWeight, minWindow);
-                layout.setHeightWeight(m_column, m_row, windowWeight);
-                layout.setBottomGapWeight(m_column, gapWeight);
-              } else if (m_upperRow >= 0) {
-                const double minUpper = minWindowWeight(column.views[static_cast<size_t>(m_upperRow)]);
-                const double minLower = minWindowWeight(column.views[static_cast<size_t>(m_row + 1)]);
-                const auto [upper, lower] =
-                    splitWindows(m_startUpperWeight, m_startLowerWeight, deltaWeight, minUpper, minLower);
-                layout.setRowBoundary(m_column, m_upperRow, upper, lower);
-              }
+            // "Upper" denotes the cross-start side, which is left when vertical. A missing upper unit is the column's
+            // start gap, a missing lower one its end gap.
+            if (m_upperRow < 0 && m_lowerRow >= 0) {
+              const auto [gapWeight, windowWeight] =
+                  splitGapAndWindow(m_startUpperWeight, deltaWeight, minWindowWeight(m_lowerRow));
+              layout.setTopGapWeight(m_column, gapWeight);
+              layout.setHeightWeight(m_column, m_lowerRow, windowWeight);
+            } else if (m_lowerRow < 0 && m_upperRow >= 0) {
+              const auto [gapWeight, windowWeight] =
+                  splitGapAndWindow(m_startLowerWeight, -deltaWeight, minWindowWeight(m_upperRow));
+              layout.setHeightWeight(m_column, m_upperRow, windowWeight);
+              layout.setBottomGapWeight(m_column, gapWeight);
+            } else if (m_upperRow >= 0 && m_lowerRow >= 0) {
+              const auto [upper, lower] = splitWindows(
+                  m_startUpperWeight, deltaWeight, minWindowWeight(m_upperRow), minWindowWeight(m_lowerRow)
+              );
+              layout.setRowBoundary(m_column, m_upperRow, upper, lower);
             }
           }
         }
@@ -1401,7 +1648,9 @@ namespace umbriel {
       int m_startPrimaryPx;
       int m_startPrevPrimaryPx;
       int m_startStripPrimaryPx;
+      // First rows of the units either side of the dragged boundary; -1 for the column's edge gap there.
       int m_upperRow;
+      int m_lowerRow;
       double m_startUpperWeight;
       double m_startLowerWeight;
     };
@@ -1417,7 +1666,8 @@ namespace umbriel {
   }
 
   uint32_t ScrollingLayout::sanitizeResizeEdges(const View* view, uint32_t edges) const {
-    if (columnOf(view) == 0 && !m_config->scrolling.centerUnderfullStrip) {
+    const int columnIndex = columnOf(view);
+    if (columnIndex == 0 && !m_config->scrolling.centerUnderfullStrip) {
       edges &= ~(vertical() ? WLR_EDGE_TOP : WLR_EDGE_LEFT);
     }
     return edges;
@@ -1443,9 +1693,9 @@ namespace umbriel {
 
     const int viewportPrimary = std::max(1, (v ? usable.height : usable.width) - 2 * m_config->edgePad);
 
-    const wlr_box box = targetBox(view);
     const int startColumnX = columnX(column, viewportPrimary);
-    const int startPrimaryPx = v ? box.height : box.width;
+    // The column's own extent, not the window's: a tab group's bar can take part of it.
+    const int startPrimaryPx = columnWidth(column, viewportPrimary);
     if (startPrimaryPx >= viewportPrimary) {
       soloPrimary = true;
     }
@@ -1455,36 +1705,32 @@ namespace umbriel {
     }
     const double startScroll = scroll();
 
+    // The boundary dragged lies between the unit holding the window, which may be a tab group, and the unit or edge gap
+    // beside it.
     int upperRow = -1;
+    int lowerRow = -1;
     double startUpperWeight = 0;
     double startLowerWeight = 0;
     if ((edges & (crossStartEdge | crossEndEdge)) != 0 && row >= 0) {
       const Column& lane = m_columns[static_cast<size_t>(column)];
+      const size_t start = lane.tabs.unitStart(static_cast<size_t>(row));
+      const size_t end = lane.tabs.unitEnd(static_cast<size_t>(row));
       if ((edges & crossStartEdge) != 0) {
-        if (row > 0) {
-          upperRow = row - 1;
-          startUpperWeight = heightWeight(column, upperRow);
-          startLowerWeight = heightWeight(column, row);
-        } else {
-          startUpperWeight = topGapWeight(column);
-          startLowerWeight = heightWeight(column, 0);
-        }
-      } else if ((edges & crossEndEdge) != 0) {
-        if (row + 1 < static_cast<int>(lane.views.size())) {
-          upperRow = row;
-          startUpperWeight = heightWeight(column, row);
-          startLowerWeight = heightWeight(column, row + 1);
-        } else {
-          upperRow = static_cast<int>(lane.views.size()) - 1;
-          startUpperWeight = heightWeight(column, row);
-          startLowerWeight = bottomGapWeight(column);
-        }
+        lowerRow = static_cast<int>(start);
+        upperRow = start > 0 ? static_cast<int>(lane.tabs.unitStart(start - 1)) : -1;
+        startUpperWeight = upperRow >= 0 ? heightWeight(column, upperRow) : topGapWeight(column);
+        startLowerWeight = heightWeight(column, lowerRow);
+      } else {
+        upperRow = static_cast<int>(start);
+        lowerRow = end < lane.views.size() ? static_cast<int>(end) : -1;
+        startUpperWeight = heightWeight(column, upperRow);
+        startLowerWeight = lowerRow >= 0 ? heightWeight(column, lowerRow) : bottomGapWeight(column);
       }
     }
 
     return std::make_unique<ScrollingResizeGrab>(
         this, column, row, edges, v, soloPrimary, clearedFullWidth, startScroll, startColumnX, startPrimaryPx,
-        startPrevPrimaryPx, rawTotalWidth(viewportPrimary), upperRow, startUpperWeight, startLowerWeight
+        startPrevPrimaryPx, rawTotalWidth(viewportPrimary), upperRow, lowerRow, startUpperWeight, startLowerWeight
     );
   }
 

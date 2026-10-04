@@ -8,6 +8,7 @@
 #include "input/seat.h"
 #include "layer/layer_surface.h"
 #include "lock/session_lock.h"
+#include "output/cursor_plane_pace.h"
 #include "output/format_sequence.h"
 #include "output/frame_schedule.h"
 #include "output/identity.h"
@@ -900,6 +901,79 @@ namespace umbriel {
     return true;
   }
 
+#ifdef UMBRIEL_TEST_IPC
+  void Output::setSyntheticPlaneCursorForTest(
+      double x, double y, bool visible, std::uintptr_t image, int width, int height, int hotspotX, int hotspotY
+  ) {
+    m_syntheticPlaneCursor = CursorPlaneState{
+        .valid = false,
+        .enabled = true,
+        .visible = visible,
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+        .hotspot_x = hotspotX,
+        .hotspot_y = hotspotY,
+        .image = reinterpret_cast<const void*>(image),
+    };
+  }
+#endif
+
+  bool Output::paceCursorPlaneTransition() {
+    if (m_output == nullptr || m_sceneOutput == nullptr) {
+      return false;
+    }
+    const wlr_output_cursor* plane = m_output->hardware_cursor;
+    CursorPlaneState now{
+        .valid = false,
+        .enabled = plane != nullptr && plane->enabled,
+        .visible = plane != nullptr && plane->visible,
+        .x = plane != nullptr ? plane->x : 0,
+        .y = plane != nullptr ? plane->y : 0,
+        .width = plane != nullptr ? static_cast<int>(plane->width) : 0,
+        .height = plane != nullptr ? static_cast<int>(plane->height) : 0,
+        .hotspot_x = plane != nullptr ? plane->hotspot_x : 0,
+        .hotspot_y = plane != nullptr ? plane->hotspot_y : 0,
+        .image = plane != nullptr ? m_output->cursor_front_buffer : nullptr,
+    };
+#ifdef UMBRIEL_TEST_IPC
+    if (m_syntheticPlaneCursor.has_value()) {
+      now = *m_syntheticPlaneCursor;
+    }
+#endif
+    // The snapshot advances on every sample, consumer or not: a client that
+    // starts recording later must diff from where the cursor is now, not from
+    // wherever it was when the last session ended.
+    CursorPlaneState previous;
+    if (!cursorPlaneAdvance(&m_lastCursorPlane, now, &previous)) {
+      return false;
+    }
+    // Past this point the transition is real, so the sweep over live capture
+    // sessions is worth its cost; on a stationary cursor it never runs.
+    if (!needsCursorCapturePacing()) {
+      return false;
+    }
+    const CursorPlaneDamage damage = cursorPlaneDamageFor(&previous, &now);
+    if (damage.has_leave) {
+      wlr_scene_output_damage_box(m_sceneOutput, &damage.leave_box);
+    }
+    if (damage.has_enter) {
+      wlr_scene_output_damage_box(m_sceneOutput, &damage.enter_box);
+    }
+    return true;
+  }
+
+  bool Output::needsCursorCapturePacing() const {
+    if (m_output == nullptr) {
+      return false;
+    }
+    // Only an output whose capture source carries a live cursor-metadata
+    // session is paced. The session bookkeeping and the source mapping live
+    // in Server; screencopy and export-dmabuf never register there.
+    return m_server->hasCopyCaptureFor(m_output);
+  }
+
   void Output::applyCursorConfig() {
     const bool lockSoftwareCursor = !config().input.cursor.hardwareCursor;
     if (lockSoftwareCursor == m_softwareCursorLocked) {
@@ -907,6 +981,10 @@ namespace umbriel {
     }
     wlr_output_lock_software_cursors(m_output, lockSoftwareCursor);
     m_softwareCursorLocked = lockSoftwareCursor;
+    // Locking drops the plane and unlocking brings it back wherever the cursor
+    // happens to be; neither is a transition a recorder should see, so discard
+    // the snapshot and let the next sample re-seed it.
+    m_lastCursorPlane = {};
     wlr_output_schedule_frame(m_output);
   }
 
@@ -1436,6 +1514,12 @@ namespace umbriel {
     // "nothing to render" path, they never commit again, damage stays clean, and the output stops producing frames.
     bool commitFailed = false;
     bool audioSubmitted = false;
+    // Sample the plane before the needs_frame test below: a cursor-only move
+    // damages nothing else, so this frame is the only commit that can carry
+    // the damage. wlroots clears needs_frame on commit, so every mutation
+    // since the last commit is diffed here exactly once; the umbrielfx scene's
+    // own needs_frame listener is what scheduled this frame for them.
+    paceCursorPlaneTransition();
     const bool sceneChanged = wlr_scene_output_needs_frame(m_sceneOutput);
     if (sceneChanged) {
       // Scene motion under a stationary cursor must reach the client before its next press.

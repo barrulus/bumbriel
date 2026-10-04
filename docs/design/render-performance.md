@@ -31,8 +31,8 @@ The fork adds three conditions upstream does not have:
   composition even when nothing overlaps the node.
 
 Umbriel holds `wlr_output_lock_attach_render` while an output animates
-([`output.cpp:1265-1268`](../../src/output/output.cpp)) and vetoes tearing for
-the same frames (`:1308-1309`). Persistent effects trigger neither.
+([`output.cpp:1343-1346`](../../src/output/output.cpp)) and vetoes tearing for
+the same frames (`:1385-1387`). Persistent effects trigger neither.
 
 `direct_scanout = false` on an output, or `WLR_SCENE_DISABLE_DIRECT_SCANOUT=1`
 process-wide, forces composition. Both are documented in the
@@ -92,14 +92,56 @@ cardinality.
 
 ## Per-frame work outside the render pass
 
-`Output::handleFrame` (`output.cpp:1204`) runs before any damage test:
+### Hardware-cursor capture pacing
+
+**Invariant:** a plane-cursor transition on an output whose capture source
+carries a live cursor-metadata session must deliver a frame, even when nothing
+else damaged the output — except a cursor that is already hidden and merely
+moves, which presents nothing and therefore lands no damage.
+
+With `hardware_cursor = true` the cursor is KMS state, so a cursor-only move
+produces no scene damage. Capture consumers are fed from commits, so an idle
+output would record a frozen cursor.
+
+`Output::paceCursorPlaneTransition` diffs a plane sample — visibility, enabled
+state, position, dimensions, hotspot, buffer identity — and on change damages
+both the old and the new box. The old box is the load-bearing part: a leave must
+come from the *previous* sample, because wlroots has already marked the cursor
+invisible by the time the move is observed. A transition that changes what the
+cursor presents lands at least one box — a hidden cursor in motion deliberately
+lands none, since nothing visible changed — and the damage itself schedules the
+commit a cursor-metadata client is blocked on.
+
+**Gate:** `Server::hasCopyCaptureFor`, keyed on the source output: a live cursor
+session attaches its update listener to the cursor of the source it was created
+for, and the gate reads that attachment for this output's sources only — one
+client recording output A with cursor metadata never paces its pixel-only
+capture of output B. Screencopy and export-dmabuf never register; pixel-only
+sessions register but no cursor session is attached to their source. Software
+cursors drop the plane entirely.
+
+**Trigger:** once per frame, in `Output::handleFrame` (`output.cpp:1415`), before
+the `wlr_scene_output_needs_frame` test, so the frame already running commits
+the damage. wlroots clears `needs_frame` on commit, so every plane mutation
+since the last commit is diffed exactly once; the umbrielfx scene's own
+`needs_frame` listener is what scheduled that frame. Sampling at frame time —
+not inside `wlr_cursor_move` — also keeps position and cursor-buffer identity
+consistent, since wlroots raises the signal before it swaps
+`cursor_front_buffer`. Checked by `render/capture_pacing` (move, crossings both
+directions, hide, image, hotspot, size, and pixel-only idle held by the same
+client that holds the cursor session on the other output) through the synthetic
+`plane-cursor` command, since the harness has no DRM plane, plus
+`tests/unit/cursor_plane_pace.cpp` for the transition decisions. Real-plane
+behaviour needs a native session.
+
+`Output::handleFrame` (`output.cpp:1282`) runs before any damage test:
 `flushDirty`, `Server::tickAnimations`, `flushPendingViewOpacities` over every
 view, and `WineColorManager::applySurfaceDescriptions`, which walks every
 `wlr_scene_buffer` in the scene with a map lookup per buffer
 ([`wine_color_manager.cpp:1061-1100`](../../src/server/wine_color_manager.cpp)).
 
 `wlr_scene_output_send_frame_done` at the end of that function is unconditional
-and must stay so (`output.cpp:1474`). Mailbox and FIFO clients block on
+and must stay so (`output.cpp:1557`). Mailbox and FIFO clients block on
 `wl_surface.frame`, so skipping it on the nothing-to-render path stalls them
 permanently.
 

@@ -33,6 +33,9 @@ namespace umbriel {
   void View::setBorderFocused(bool focused) {
     const bool focusChanged = m_borderFocusedState != focused;
     m_borderFocusedState = focused;
+    if (m_chromeAttachment != nullptr) {
+      m_chromeAttachment->setFocused(focused);
+    }
 
     const auto& animation = config().animation;
     const auto& dim = animation.dimUnfocused;
@@ -83,6 +86,8 @@ namespace umbriel {
     m_urgent = urgent;
     if (m_workspace != nullptr) {
       m_workspace->updateUrgent();
+      // A hidden tab can only ask for attention through its slot in the bar.
+      m_workspace->tabs().memberChanged(this);
     }
     m_server->scheduleIpcWindowsEvent();
   }
@@ -195,9 +200,46 @@ namespace umbriel {
 
   void View::updateBorderGeometry(int contentWidth, int contentHeight) {
     m_decoration.updateBorderGeometry(contentWidth, contentHeight);
+    layoutChromeAttachment(contentWidth, contentHeight);
+  }
+
+  void View::setChromeAttachment(std::unique_ptr<ViewChromeAttachment> attachment) {
+    m_chromeAttachment = std::move(attachment);
+    if (m_chromeAttachment == nullptr) {
+      return;
+    }
+    m_chromeAttachment->setFocused(m_borderFocusedState);
+    m_chromeAttachment->setAlpha(chromeAlpha());
+    if (m_chromeContentWidth <= 0 || m_chromeContentHeight <= 0) {
+      const wlr_box content = committedContentBox();
+      layoutChromeAttachment(content.width, content.height);
+    } else {
+      layoutChromeAttachment(m_chromeContentWidth, m_chromeContentHeight);
+    }
+  }
+
+  void View::layoutChromeAttachment(int contentWidth, int contentHeight) {
+    m_chromeContentWidth = contentWidth;
+    m_chromeContentHeight = contentHeight;
+    if (m_chromeAttachment == nullptr || m_contentTree == nullptr) {
+      return;
+    }
+    const Output* output = currentOutput();
+    m_chromeAttachment->layout({
+        .contentX = m_contentTree->node.x,
+        .contentY = m_contentTree->node.y,
+        .contentWidth = contentWidth,
+        .contentHeight = contentHeight,
+        .borderInset = borderInset(),
+        .scale = output != nullptr ? output->wlr()->scale : 1.0F,
+        .suppressed = !m_mapped || m_maximizedToEdges || scheduledFullscreen() || currentFullscreen(),
+    });
   }
 
   void View::refreshConfigChrome() {
+    if (m_chromeAttachment != nullptr) {
+      m_chromeAttachment->reloadConfig();
+    }
     m_focusDimInitialized = false;
     // Temporary unfocus would consume pool selections during an unrelated reload.
     setBorderFocused(m_borderFocusedState);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/dirty.h"
+#include "output/cursor_plane_pace.h"
 #include "output/frame_schedule.h"
 #include "scene/effect_selection.h"
 #include "scene/presentation_probe.h"
@@ -160,6 +161,21 @@ namespace umbriel {
     void resetTearingState();
     void applyDirectScanoutConfig();
     void applyCursorConfig();
+    // Compare the live hardware cursor against the snapshot and, when it
+    // changed and a cursor-metadata consumer wants it, damage the box it left
+    // and the box it entered, so the transition reaches a delivered frame.
+    // Called once per frame, before the needs_frame test, so the frame already
+    // running commits the damage. Single-threaded, non-blocking, bounded per
+    // output.
+    bool paceCursorPlaneTransition();
+#ifdef UMBRIEL_TEST_IPC
+    // Harness-only: synthesize the plane sample a headless backend cannot produce.
+    void setSyntheticPlaneCursorForTest(
+        double x, double y, bool visible, std::uintptr_t image, int width, int height, int hotspotX, int hotspotY
+    );
+#endif
+    // True only for sessions needing separate cursor metadata
+    [[nodiscard]] bool needsCursorCapturePacing() const;
     // Re-evaluate fullscreen-controlled VRR after a view or workspace changes.
     void updateVrr();
     // Re-evaluate automatic HDR after surface color, fullscreen, visibility,
@@ -249,6 +265,10 @@ namespace umbriel {
     bool m_gammaDirty = false;
     bool m_softwareCursorLocked = false;
     bool m_animationRenderLocked = false;
+    CursorPlaneState m_lastCursorPlane{};
+#ifdef UMBRIEL_TEST_IPC
+    std::optional<CursorPlaneState> m_syntheticPlaneCursor;
+#endif
     bool m_desktopEnabled = true;
     bool m_dpmsOff = false;
     bool m_hdrGammaWarningLogged = false;

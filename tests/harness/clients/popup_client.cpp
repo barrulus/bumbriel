@@ -204,11 +204,15 @@ namespace {
   void toplevelConfigure(void*, xdg_toplevel*, int32_t, int32_t, wl_array*) {}
   void toplevelClose(void*, xdg_toplevel*) {}
 
+  // The shell is bound at up to version 6, which sends these too; this client has no use for them.
+  void toplevelConfigureBounds(void*, xdg_toplevel*, int32_t, int32_t) {}
+  void toplevelWmCapabilities(void*, xdg_toplevel*, wl_array*) {}
+
   constexpr xdg_toplevel_listener kToplevelListener = {
       .configure = toplevelConfigure,
       .close = toplevelClose,
-      .configure_bounds = nullptr,
-      .wm_capabilities = nullptr,
+      .configure_bounds = toplevelConfigureBounds,
+      .wm_capabilities = toplevelWmCapabilities,
   };
 
   void wmBasePing(void*, xdg_wm_base* wmBase, uint32_t serial) { xdg_wm_base_pong(wmBase, serial); }

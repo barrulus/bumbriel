@@ -46,6 +46,36 @@ feedback) silently misbehaves. Membership must stay derived from real scene
 geometry, which is exactly why the clip changes that geometry instead of
 filtering its result.
 
+## Native focus fully leaves the X11 domain
+
+wlroots deactivates the focused Xwayland surface by moving X core input focus
+to `PointerRoot`. Its XWM also publishes a private no-focus window through
+`_NET_ACTIVE_WINDOW`. That preserves X11 keyboard grabs and popups, but an X11
+launcher can continue treating itself as eligible for controller input while a
+native Wayland game has seat focus. Clearing only `_NET_ACTIVE_WINDOW` is not
+enough: the X core focus target must leave `PointerRoot` too.
+
+Umbriel handles an Xwayland-to-native keyboard transition in this order:
+
+1. Deliver `wl_keyboard.enter` to the native surface.
+2. Arm a one-millisecond Wayland event-loop timer, placing the X11 update on
+   the next dispatch after the server flushes the native enter.
+3. Recheck that seat focus is still a non-Xwayland surface.
+4. Set X core input focus to `None`, set `_NET_ACTIVE_WINDOW` to `None`, and
+   flush the XWM connection.
+
+The delayed ordering matches xwayland-satellite's cross-process handoff. It is
+also the focus state Hyprland uses for native clients. Performing the X clear
+before the native enter can leave the native game unable to receive control. A
+stale timer cannot clear a newly restored X11 focus because the callback
+rechecks the seat, and Xwayland-to-Xwayland refreshes never schedule it.
+
+Using `None` means X11 keyboard grabs are unavailable while a native client is
+focused, which is why wlroots normally prefers `PointerRoot`. Umbriel limits
+that tradeoff to a real Xwayland-to-native transfer and lets wlroots restore
+normal X focus when the seat returns to Xwayland. This is the same externally
+observable state as the previously working xwayland-satellite path.
+
 ## X11 games can retain stale input after a windowed resize round trip
 
 A fake-fullscreen game (borderless window at output size) that receives a
@@ -93,11 +123,21 @@ which declares `# harness: outputs=2` so the harness boots it a two-output
 instance, and compares real framebuffers while a strip overflows the shared
 edge. Run it as `just check output/two_output_containment`.
 
-The shared fullscreen-exit ordering is covered by `just check layout/fullscreen_exit_configure`: the first
-windowed configure must already contain the restored tile size. The headless
-harness runs without Xwayland and cannot exercise multi-output X coordinate spaces, so the
-X11 path still needs a running session with Steam or another X11 game. A
-fullscreen exit must start the windowed resize immediately and remain windowed
-after the animation settles. For the protected float and re-tile round trip,
-the signature to reject is a ConfigureNotify pair through a non-fullscreen
-size; a passive `StructureNotifyMask` monitor on `DISPLAY=:0` shows it directly.
+The shared fullscreen-exit ordering is covered by
+`just check layout/fullscreen_exit_configure`: the first windowed configure
+must already contain the restored tile size. That check does not exercise the
+X11 resize path or multi-output X coordinate spaces, so the X11 path still
+needs a running session with Steam or another X11 game. A fullscreen exit must
+start the windowed resize immediately and remain windowed after the animation
+settles. For the protected float and re-tile round trip, the signature to
+reject is a ConfigureNotify pair through a non-fullscreen size; a passive
+`StructureNotifyMask` monitor on `DISPLAY=:0` shows it directly.
+
+The X11-to-native focus handoff is covered by
+[`tests/harness/checks/focus/xwayland_native_handoff.sh`](../../tests/harness/checks/focus/xwayland_native_handoff.sh).
+It starts the harness's private Xwayland server, transfers focus from a real
+X11 window to a native client, and requires X core focus and
+`_NET_ACTIVE_WINDOW` to both become `None`. It also verifies that the native
+client receives keys, the old X11 client does not, and returning to X11 restores
+both focus channels and key delivery. Run it as
+`just check focus/xwayland_native_handoff`.

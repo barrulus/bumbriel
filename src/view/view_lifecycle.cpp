@@ -256,6 +256,7 @@ namespace umbriel {
     m_initialRulesContentType = m_contentType;
     m_namedScrollingColumnName = rule.defaultScrollingColumn;
     m_namedScrollingColumnOrder = rule.defaultScrollingColumnOrder;
+    m_ruleColumnDisplay = rule.defaultColumnDisplay;
     const bool launchRuleOverride = m_launchPlacementPending
         && (rule.defaultOutput.has_value() || rule.defaultWorkspace.has_value() || rule.defaultScratchpad.has_value());
     if (rule.defaultFloating) {
@@ -553,6 +554,8 @@ namespace umbriel {
     if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
       overview->onViewUnmapped(this);
     }
+    // Replacement focus can hide the closing tab. Capture while its current visibility still decides eligibility.
+    const CloseSnapshotId snapshot = beginCloseAnimation();
     // Choose the layout neighbor while this view still belongs to the layout. Waiting for destroy loses that position.
     // It remains the fallback when the pointer did not belong to the closing tile or no survivor takes its place.
     if (m_workspace != nullptr && m_workspace->focusedView() == this) {
@@ -569,7 +572,6 @@ namespace umbriel {
         m_workspace->setFocusedView(nullptr);
       }
     }
-    const CloseSnapshotId snapshot = beginCloseAnimation();
     if (Output* output = currentOutput(); output != nullptr
         && (output->windowPresentation() || effectRegistry().sceneAnimationEffect(AnimationEvent::WindowsOut))) {
       output->ensureWindowPresentation().closing(*this, snapshot);

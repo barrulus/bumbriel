@@ -75,12 +75,13 @@ seat grabs, live reloads. Every unit test gets `umbriel_pure_dep`, and one that 
 `umbriel_core_dep` in the third field of the `unit_tests` table in `tests/meson.build`. A test that is not in that
 table is not built and will rot unnoticed.
 
-Test targets exist only where the `tests` feature option resolves to enabled. `just configure` passes
-`-Dtests=enabled` for every mode, so `just test` works in debug, asan, and release build directories.
-A build directory configured by hand without that option follows `auto`: unsanitized debug builds get the targets, a
-release build gets none. Test binaries land in the build directory's `tests` subdir. Checks also drive IPC commands
-that exist only with the `test_ipc` option (auto: debug builds, which includes asan), so `just check` refuses a
-release binary unless it was configured with `-Dtests=enabled -Dtest_ipc=enabled`.
+Test targets exist only where the `tests` feature option resolves to enabled. `just configure` leaves it at `auto`:
+unsanitized debug builds get the targets, release and asan builds get none. `just test`, `just gpu-test`, `just check`,
+`just check-stress`, and `just lint` switch the selected build directory to `-Dtests=enabled` when it lacks them, so
+they work in every mode; a plain `just build` of a release directory never compiles a test. Test binaries land in the
+build directory's `tests` subdir. Checks also drive IPC commands that exist only with the `test_ipc` option (auto: debug
+builds, which includes asan), so `just check` and `just check-stress` also switch a release directory to
+`-Dtest_ipc=enabled`, and `check.sh` refuses a binary built without it.
 
 `check.sh` runs every script in `tests/harness/checks/` against its own dedicated compositor: one contained headless
 instance is booted per check, the check runs in its own process group with `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`
@@ -397,8 +398,8 @@ taking control of a seat.
 
 ### AddressSanitizer
 
-`just configure asan` creates `build-asan` as a debug build with `-Db_sanitize=address` and `-Dtests=enabled`, so
-every workflow runs there:
+`just configure asan` creates `build-asan` as a debug build with `-Db_sanitize=address`. The recipes below enable the
+test targets in that directory on first use, so every workflow runs there:
 
 ```sh
 just asan                     # build the instrumented binary

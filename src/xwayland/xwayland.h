@@ -2,6 +2,7 @@
 
 #include "xwayland/outputs.h"
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <wayland-server-core.h>
@@ -49,18 +50,27 @@ namespace umbriel {
     [[nodiscard]] bool advertiseOutputManager(const wl_client* client, const wl_global* global) const;
     // Republishes the X screen and moves every X11 window to match it.
     void handleOutputLayoutChange();
+    // An Xwayland surface just yielded the keyboard to a native Wayland client. Clear both X focus channels after the
+    // Wayland enter has reached the client, matching the cross-process handoff used by xwayland-satellite.
+    void scheduleFocusClear();
 
   private:
+    static void onServerStart(wl_listener* listener, void* data);
     static void onReady(wl_listener* listener, void* data);
     static void onNewSurface(wl_listener* listener, void* data);
+    static int onFocusClearTimer(void* data);
     void handleReady();
     void handleNewSurface(wlr_xwayland_surface* xsurface);
+    void clearFocus();
 
     Server& m_server;
     wlr_xwayland* m_wlr = nullptr;
     bool m_nativeResolution = false;
     std::unique_ptr<XwaylandOutputs> m_outputs;
     std::vector<std::unique_ptr<XwaylandWindow>> m_windows;
+    uint32_t m_netActiveWindow = 0;
+    wl_event_source* m_focusClearTimer = nullptr;
+    wl_listener m_serverStart{};
     wl_listener m_ready{};
     wl_listener m_newSurface{};
   };

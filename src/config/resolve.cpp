@@ -135,6 +135,21 @@ namespace umbriel {
       if (overrides.newExitsFullscreen) {
         resolved.newExitsFullscreen = *overrides.newExitsFullscreen;
       }
+      if (overrides.tabs.defaultDisplay) {
+        resolved.tabs.defaultDisplay = *overrides.tabs.defaultDisplay;
+      }
+      if (overrides.tabs.newTabPosition) {
+        resolved.tabs.newTabPosition = *overrides.tabs.newTabPosition;
+      }
+      if (overrides.tabs.wrapFocus) {
+        resolved.tabs.wrapFocus = *overrides.tabs.wrapFocus;
+      }
+      if (overrides.tabs.scrollSwitchesTabs) {
+        resolved.tabs.scrollSwitchesTabs = *overrides.tabs.scrollSwitchesTabs;
+      }
+      if (overrides.tabs.middleClickCloses) {
+        resolved.tabs.middleClickCloses = *overrides.tabs.middleClickCloses;
+      }
       const int borderWidth = config.appearance.totalBorderWidth();
       resolved.totalGap = resolved.gap + 2 * borderWidth;
       resolved.edgePad = resolved.gap + borderWidth;
@@ -274,6 +289,9 @@ namespace umbriel {
       }
       if (rule.defaultScrollingColumnOrder) {
         resolved.defaultScrollingColumnOrder = rule.defaultScrollingColumnOrder;
+      }
+      if (rule.defaultColumnDisplay) {
+        resolved.defaultColumnDisplay = rule.defaultColumnDisplay;
       }
       if (rule.defaultFullscreen) {
         resolved.defaultFullscreen = rule.defaultFullscreen;
@@ -417,6 +435,15 @@ namespace umbriel {
     resolved.master.newOnTop = config.layout.master.newOnTop;
     resolved.master.newBecomesMaster = config.layout.master.newBecomesMaster;
     resolved.master.position = config.layout.master.position;
+    resolved.tabs.defaultDisplay = config.layout.tabs.defaultDisplay;
+    resolved.tabs.newTabPosition = config.layout.tabs.newTabPosition;
+    resolved.tabs.wrapFocus = config.layout.tabs.wrapFocus;
+    resolved.tabs.scrollSwitchesTabs = config.layout.tabs.scrollSwitchesTabs;
+    resolved.tabs.middleClickCloses = config.layout.tabs.middleClickCloses;
+    resolved.tabs.barHeight = config.appearance.tabBar.height;
+    resolved.tabs.barPosition = config.appearance.tabBar.position;
+    resolved.tabs.hideWhenSingle = config.appearance.tabBar.hideWhenSingle;
+    resolved.tabs.barVisible = config.appearance.tabBar.visible;
     const int borderWidth = config.appearance.totalBorderWidth();
     resolved.totalGap = resolved.gap + 2 * borderWidth;
     resolved.edgePad = resolved.gap + borderWidth;

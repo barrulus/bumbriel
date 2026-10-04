@@ -7,6 +7,23 @@
 
 namespace umbriel {
 
+  namespace {
+
+    // An override-redirect window that takes the keyboard says so through its window type. A managed menu or dropdown
+    // is focused by the window manager, as on X11; a tooltip or drag icon never is.
+    bool takesKeyboard(const wlr_xwayland_surface* xsurface) {
+      if (wlr_xwayland_surface_icccm_input_model(xsurface) == WLR_ICCCM_INPUT_MODEL_NONE) {
+        return false;
+      }
+      if (xsurface->override_redirect) {
+        return wlr_xwayland_surface_override_redirect_wants_focus(xsurface);
+      }
+      return !wlr_xwayland_surface_has_window_type(xsurface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLTIP)
+          && !wlr_xwayland_surface_has_window_type(xsurface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DND);
+    }
+
+  } // namespace
+
   XwaylandUnmanaged::XwaylandUnmanaged(Server& server, wlr_xwayland_surface* xsurface)
       : m_server(server), m_xsurface(xsurface) {
     m_tree = wlr_scene_tree_create(server.xwaylandUnmanagedTree());
@@ -60,10 +77,7 @@ namespace umbriel {
     syncPosition();
     wlr_scene_node_set_enabled(&m_tree->node, true);
     wlr_scene_node_raise_to_top(&m_tree->node);
-    if (!wlr_xwayland_surface_override_redirect_wants_focus(m_xsurface)
-        || wlr_xwayland_surface_icccm_input_model(m_xsurface) == WLR_ICCCM_INPUT_MODEL_NONE
-        || m_server.sessionLocked()
-        || m_server.exclusiveKeyboardLayer() != nullptr) {
+    if (!takesKeyboard(m_xsurface) || m_server.sessionLocked() || m_server.exclusiveKeyboardLayer() != nullptr) {
       return;
     }
     // A menu that takes the keyboard: the window it belongs to keeps its activated chrome, as with an xdg popup.
@@ -72,6 +86,11 @@ namespace umbriel {
       wlr_seat_keyboard_end_grab(seat);
     }
     m_server.notifyKeyboardEnter(m_xsurface->surface);
+    // An override-redirect window sets X input focus itself; a managed one waits for the window manager. The
+    // activated window reclaims it when it takes the seat back.
+    if (!m_xsurface->override_redirect) {
+      wlr_xwayland_surface_activate(m_xsurface, true);
+    }
   }
 
   void XwaylandUnmanaged::handleUnmap() {

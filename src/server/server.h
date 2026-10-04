@@ -41,6 +41,7 @@ struct wlr_ext_foreign_toplevel_handle_v1;
 struct wlr_ext_foreign_toplevel_list_v1;
 struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1;
 struct wlr_export_dmabuf_manager_v1;
+struct wlr_ext_image_copy_capture_session_v1;
 struct wlr_foreign_toplevel_manager_v1;
 struct wlr_idle_inhibit_manager_v1;
 struct wlr_idle_notifier_v1;
@@ -178,6 +179,8 @@ namespace umbriel {
     [[nodiscard]] const wlr_security_context_v1_state* clientSecurityContext(const wl_client* client) const;
     [[nodiscard]] wlr_color_manager_v1* colorManager() const { return m_colorManager; }
     [[nodiscard]] wlr_export_dmabuf_manager_v1* exportDmabufManager() const { return m_exportDmabufManager; }
+    // True while a live cursor session is attached to a capture source of this output.
+    [[nodiscard]] bool hasCopyCaptureFor(const wlr_output* output) const;
     [[nodiscard]] wlr_tearing_control_manager_v1* tearingControlManager() const { return m_tearingControlManager; }
     [[nodiscard]] WineColorManager* wineColorManager() const { return m_wineColorManager.get(); }
     [[nodiscard]] const wlr_image_description_v1_data* surfaceImageDescription(wlr_surface* surface) const;
@@ -258,6 +261,7 @@ namespace umbriel {
     void emitRendererLostForTest();
     void cancelPresentationProbes(PresentationFallback reason);
     bool presentationTouchProbe(std::string_view argument);
+    [[nodiscard]] bool injectPlaneCursor(std::string_view spec, std::string* error);
 #endif
     [[nodiscard]] Ipc* ipc() const { return m_ipc.get(); }
     [[nodiscard]] const ScreenCastCommand& screenCastCommand() const { return m_screenCastCommand; }
@@ -423,6 +427,7 @@ namespace umbriel {
     void removeOutput(Output* output);
     void reassignOutputViews(Output* source, Output* destination);
     void scheduleDisplacedViewRestore();
+    void rememberKeyboardInputSource(Keyboard& keyboard);
     void removeKeyboard(Keyboard* keyboard);
     void removeView(View* view);
     void removeLayerSurface(LayerSurface* layerSurface, wlr_output* output);
@@ -611,6 +616,12 @@ namespace umbriel {
       Server* server = nullptr;
       wlr_ext_image_capture_source_v1* source = nullptr;
       bool isolated = false;
+      // Owned by wlroots; freed at the end of session_destroy, after the destroy
+      // signal has been emitted. This listener runs during that emission and erases
+      // the watch, so the pointer stays valid for every use below.
+      wlr_ext_image_copy_capture_session_v1* session = nullptr;
+      // Identity only; never dereferenced, so output teardown order cannot dangle.
+      wlr_output* output = nullptr;
       wl_listener destroy{};
     };
     struct PointerDevice {
@@ -871,6 +882,9 @@ namespace umbriel {
     wl_listener m_newIdleInhibitor{};
     wl_listener m_newShortcutsInhibitor{};
     wl_listener m_newImageCopySession{};
+    // Live ext-image-copy-capture sessions, the cursor-metadata pacing gate reads them per output, then
+    // per client, to find the cursor session attached to that output's source.
+    std::vector<std::unique_ptr<ImageCopySessionWatch>> m_imageCopySessions;
     wl_listener m_newActivationToken{};
     wl_listener m_requestActivate{};
     wl_listener m_workspaceCommit{};
@@ -887,6 +901,7 @@ namespace umbriel {
     std::vector<std::unique_ptr<ShortcutsInhibitorWatch>> m_shortcutsInhibitors;
     SurfaceLayoutMemory m_surfaceLayouts;
     Keyboard* m_keyboardLayoutSource = nullptr;
+    Keyboard* m_keyboardInputSource = nullptr;
     ModifierTapState m_modifierTap;
     std::vector<std::unique_ptr<PointerDevice>> m_pointers;
     std::vector<std::unique_ptr<TouchDevice>> m_touchDevices;

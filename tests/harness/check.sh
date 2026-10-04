@@ -174,8 +174,10 @@ export UMBRIEL_SUBSURFACE_CLIENT="$CLIENT_DIR/subsurface-client"
 export UMBRIEL_FRACTIONAL_CLIENT="$CLIENT_DIR/fractional-client"
 export UMBRIEL_SECURITY_CONTEXT_CLIENT="$CLIENT_DIR/security-context-client"
 export UMBRIEL_SEAT_LOG_CLIENT="$CLIENT_DIR/seat-log-client"
+export UMBRIEL_XWAYLAND_FOCUS_CLIENT="$CLIENT_DIR/xwayland-focus-client"
 export UMBRIEL_OUTPUT_MANAGEMENT_CLIENT="$CLIENT_DIR/output-management-client"
 export UMBRIEL_PIXEL_PROBE="$CLIENT_DIR/pixel-probe"
+export UMBRIEL_CAPTURE_CLIENT="$CLIENT_DIR/capture-client"
 export UMBRIEL_HARNESS_LIB="$HARNESS_DIR/lib.sh"
 export UMBRIEL=$BINARY
 
@@ -326,12 +328,14 @@ row() {
   detail "$status" "$text"
 }
 
-# No autostart, no xwayland, no cheatsheet: a check wants a bare compositor, and
-# each of those would spawn processes outside the container.
+# No autostart, no Xwayland, no cheatsheet: a check wants a bare compositor, and
+# each of those would spawn processes outside the container. A check that needs
+# X11 opts in with `# harness: xwayland=true` in its header.
 write_default_config() {
-  cat > "$1" << 'EOF'
+  local xwayland=$2
+  cat > "$1" << EOF
 [general]
-xwayland = false
+xwayland = $xwayland
 show_cheatsheet = false
 autostart = []
 EOF
@@ -349,6 +353,14 @@ check_keyboard() {
     echo none
   else
     echo virtual
+  fi
+}
+
+check_xwayland() {
+  if sed -n '2,12p' "$CHECKS_DIR/$1.sh" | grep -q '^# harness: xwayland=true'; then
+    echo true
+  else
+    echo false
   fi
 }
 
@@ -388,6 +400,7 @@ check_outputs() {
 # it sets BOOT_ERROR and leaves the runtime directory for the caller to keep.
 start_instance() {
   local outputs=$1
+  local xwayland=$2
   # sockaddr_un caps paths at 108 bytes and the compositor appends
   # "/umbriel-wayland-0.sock" (23) to XDG_RUNTIME_DIR, so keep the root short. A
   # long path makes wl_display_add_socket fail and the boot abort.
@@ -395,7 +408,7 @@ start_instance() {
   local log=$RUNTIME_DIR/compositor.log
   local config=$RUNTIME_DIR/config.toml
   local socket=$RUNTIME_DIR/umbriel-wayland-0.sock
-  write_default_config "$config"
+  write_default_config "$config" "$xwayland"
 
   # setsid puts the compositor in a session of its own, so anything it forks
   # (an autostart, a keybind `spawn:`) is reachable as one process group at
@@ -435,6 +448,21 @@ start_instance() {
   export UMBRIEL_RUNTIME_DIR=$RUNTIME_DIR
   export UMBRIEL_LOG=$log
   export UMBRIEL_CONFIG=$config
+  UMBRIEL_HARNESS_DISPLAY=
+  if [[ $xwayland == true ]]; then
+    local display_waited_ms=0
+    while [[ -z $UMBRIEL_HARNESS_DISPLAY ]]; do
+      UMBRIEL_HARNESS_DISPLAY=$(sed -n 's/.*Xwayland listening on DISPLAY=\([^ ]*\).*/\1/p' "$log" | tail -1)
+      [[ -n $UMBRIEL_HARNESS_DISPLAY ]] && break
+      if ! kill -0 "$SERVER_PID" 2>/dev/null || ((display_waited_ms >= 10000)); then
+        BOOT_ERROR="Xwayland display was not published during boot"$'\n'"$(< "$log")"
+        return 1
+      fi
+      sleep 0.005
+      display_waited_ms=$((display_waited_ms + 5))
+    done
+  fi
+  export UMBRIEL_HARNESS_DISPLAY
   return 0
 }
 
@@ -522,7 +550,11 @@ stop_instance() {
 run_check_body() {
   local name=$1 output_file=$2
   local pgid_file=$RUNTIME_DIR/check.pgid
-  setsid env -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS \
+  local -a display_environment=()
+  if [[ -n ${UMBRIEL_HARNESS_DISPLAY:-} ]]; then
+    display_environment+=("DISPLAY=$UMBRIEL_HARNESS_DISPLAY")
+  fi
+  setsid env -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS "${display_environment[@]}" \
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
     WAYLAND_DISPLAY=wayland-0 \
     bash -c 'echo $$ > "$1"; shift; exec "$@"' _ "$pgid_file" \
@@ -551,7 +583,7 @@ run_one() {
   check_start=$(now_us)
 
   BOOT_ERROR=
-  if ! start_instance "$(check_outputs "$name")"; then
+  if ! start_instance "$(check_outputs "$name")" "$(check_xwayland "$name")"; then
     publish "$prefix" 1 "$check_start" "$BOOT_ERROR"
     return 0
   fi

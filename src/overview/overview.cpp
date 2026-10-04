@@ -243,8 +243,9 @@ namespace umbriel {
       return;
     }
     wlr_scene_node_set_enabled(&card.tree->node, true);
-    // A tiled opener waiting for the arrange that places it is not showing yet. Its card follows.
-    if (view->tiledOpeningDeferred()) {
+    // A tiled opener waiting for the arrange that places it is not showing yet, and a hidden tab shares its box with
+    // the tab on show. Their cards follow.
+    if (view->presentationSuppressed()) {
       card.blur.hide();
       wlr_scene_node_set_enabled(&card.tree->node, false);
       syncCardEffects(card);
@@ -306,6 +307,7 @@ namespace umbriel {
       const std::array<float, 4> outerColor = tint(view->borderColors().outer, presentedOpacity);
       wlr_scene_border_set_colors(card.border, innerColor.data(), outerColor.data());
     }
+    layoutCardChrome(card, world, decorated ? total : 0, z, presentedOpacity);
     syncCardEffects(card);
 
     if (card.badge != nullptr) {
@@ -413,6 +415,34 @@ namespace umbriel {
     if (!blurUpdated) {
       card.blur.hide();
     }
+  }
+
+  void Overview::layoutCardChrome(Card& card, const wlr_box& world, int borderInset, double zoom, float alpha) const {
+    const ViewChromeAttachment* live = card.view->chromeAttachment();
+    if (live == nullptr) {
+      card.chrome.reset();
+      return;
+    }
+    if (card.chrome == nullptr) {
+      card.chrome = live->makePreview(card.tree);
+      if (card.chrome == nullptr) {
+        return;
+      }
+    }
+    live->syncPreview(*card.chrome);
+    card.chrome->setAlpha(alpha);
+    // The card tree sits at the content origin, and the chrome measures in the view's own units from there.
+    const Output* output = card.owner != nullptr ? card.owner->output : nullptr;
+    card.chrome->layout({
+        .contentX = 0,
+        .contentY = 0,
+        .contentWidth = world.width,
+        .contentHeight = world.height,
+        .borderInset = borderInset,
+        .scale = output != nullptr ? output->wlr()->scale : 1.0F,
+        .suppressed = card.view->currentFullscreen() || card.view->maximizedToEdges(),
+        .zoom = zoom,
+    });
   }
 
   void Overview::layoutCardShadow(Card& card, double zoom, float alpha) const {
@@ -1181,6 +1211,8 @@ namespace umbriel {
       wl_list_remove(&entry->frameDone.link);
     }
     card->surfaces.clear();
+    // The chrome copy's nodes hang under the card tree, so it goes before the tree does.
+    card->chrome.reset();
     destroyCardShadow(*card);
     if (card->tree != nullptr) {
       wlr_scene_node_destroy(&card->tree->node);
@@ -2865,8 +2897,8 @@ namespace umbriel {
     View* target = workspace->focusedView();
     const bool focusMoved = bestColumn >= 0 && (target == nullptr || scrolling->columnOf(target) != bestColumn);
     if (focusMoved) {
-      const auto& views = scrolling->columns()[static_cast<size_t>(bestColumn)].views;
-      target = views.empty() ? nullptr : views.front();
+      // A tab group is entered on the tab it shows, as a directional focus move enters it.
+      target = columnEntry(scrolling->columns()[static_cast<size_t>(bestColumn)]);
     }
     scrolling->setScroll(bestPosition);
     // Do not activate a different workspace merely because its preview was
