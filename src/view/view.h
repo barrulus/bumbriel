@@ -2,6 +2,7 @@
 #include "config/config.h"
 #include "core/animation.h"
 #include "scene/node.h"
+#include "view/chrome_attachment.h"
 #include "view/decoration.h"
 #include "view/deferred_unfullscreen.h"
 #include "view/drag_physics.h"
@@ -79,6 +80,11 @@ namespace umbriel {
     [[nodiscard]] bool currentMaximized() const;
     [[nodiscard]] bool scheduledActivated() const;
     void setActivatedState(bool activated);
+    // Take X input focus back for an X11 window that stayed activated while one of its menus held it; a no-op for xdg
+    // toplevels.
+    void reclaimXwaylandFocus();
+    // Tell the client nothing of it is visible, so it can stop drawing and animating; a no-op for X11 windows.
+    void setSuspendedState(bool suspended);
     void setFullscreenState(bool fullscreen);
     void setMaximizedState(bool maximized);
     void requestClose();
@@ -233,6 +239,16 @@ namespace umbriel {
     void clearDisplaced() { m_displacedHome.reset(); }
 
     void setOnActiveWorkspace(bool active);
+    // A member of a tabbed column other than the one it shows. It keeps its layout slot and stays mapped and configured
+    // at that size, but its frame stays disabled whatever else asks to enable it.
+    void setTabHidden(bool hidden);
+    [[nodiscard]] bool tabHidden() const { return m_tabHidden; }
+    // True while nothing may show the frame: a tiled opener waiting for the arrange that places it, or a hidden tab.
+    [[nodiscard]] bool presentationSuppressed() const { return m_tiledOpeningDeferred || m_tabHidden; }
+    // Chrome carried beside the borders, its scene nodes under chromeParent(). Replacing it destroys the previous one.
+    void setChromeAttachment(std::unique_ptr<ViewChromeAttachment> attachment);
+    [[nodiscard]] ViewChromeAttachment* chromeAttachment() const { return m_chromeAttachment.get(); }
+    [[nodiscard]] wlr_scene_tree* chromeParent() const { return m_sceneTree; }
     // Scratchpad membership: selects the scratchpad border palette and animation event, and matches is_scratchpad.
     void setInScratchpad(bool scratchpad);
     void animateTo(int x, int y);
@@ -488,6 +504,9 @@ namespace umbriel {
     void handleCaptureSourceDestroy();
     void updateBorderGeometry();
     void updateBorderGeometry(int contentWidth, int contentHeight);
+    // Lay the chrome attachment out around content of that size, which is remembered for later relayouts.
+    void layoutChromeAttachment(int contentWidth, int contentHeight);
+    [[nodiscard]] float chromeAlpha() const { return m_fadeAlpha * m_dragOpacity * m_overviewOpacity; }
     void applyCornerRadius();
     void reloadBackdropColor() { m_presentation.reloadBackdropColor(); }
     void refreshConfigChrome();
@@ -725,6 +744,8 @@ namespace umbriel {
     // True for the member that created its current named scrolling column.
     // Its own late width rule still applies after peers have joined.
     bool m_ownsNamedScrollingColumnExtent = false;
+    // The display the column this window opens in takes, from its opening rules.
+    std::optional<ColumnDisplay> m_ruleColumnDisplay;
 
     Server* m_server = nullptr;
     wlr_xdg_toplevel* m_toplevel = nullptr;
@@ -759,6 +780,10 @@ namespace umbriel {
     // must never sample the composited desktop behind translucent content.
     wlr_scene* m_captureScene = nullptr;
     ViewDecoration m_decoration;
+    std::unique_ptr<ViewChromeAttachment> m_chromeAttachment;
+    int m_chromeContentWidth = 0;
+    int m_chromeContentHeight = 0;
+    bool m_tabHidden = false;
     ViewEffects m_effects;
     ViewPresentation m_presentation;
     ResizeCrossfade m_resizeCrossfade;

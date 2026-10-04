@@ -1,4 +1,5 @@
 #include "check.h"
+#include "config/resolve.h"
 #include "config/store.h"
 
 #include <algorithm>
@@ -600,6 +601,82 @@ new_becomes_master = false
   CHECK(store.config().workspaceRules[0].layout.master.newBecomesMaster == false);
   CHECK(containsDiagnostic(store, "layout.master.default_width_fraction = 0.05 out of range, clamped to 0.1"));
   CHECK(containsDiagnostic(store, "unknown key layout.master.surprise"));
+}
+
+UMBRIEL_TEST(tabReadersLoadLayoutAppearanceColorsAndRules) {
+  const TempConfig file;
+  file.write(R"(
+[layout.tabs]
+default_display = "tabbed"
+new_tab_position = "after_active"
+wrap_focus = false
+scroll_switches_tabs = false
+middle_click_closes = true
+
+[appearance.tab_bar]
+style = "indicator"
+position = "bottom"
+height = 4
+font = "Inter Bold 9"
+tab_gap = 0
+corner_radius = 1
+title_format = "{index}: {title}"
+title_align = "left"
+hide_when_single = true
+max_tabs = 5
+overflow = "shrink"
+
+[colors.tab_bar]
+urgent = "#FF000080"
+
+[output.DP-1]
+workspaces = ["dev"]
+
+[[workspace]]
+name = "dev"
+
+[workspace.layout.tabs]
+default_display = "normal"
+
+[[window_rule]]
+match.app_id = "^firefox$"
+default_column_display = "tabbed"
+)");
+
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  const umbriel::ConfigReloadResult result = store.reload();
+
+  CHECK(result.success);
+  const umbriel::Config& config = store.config();
+  CHECK(config.layout.tabs.defaultDisplay == umbriel::ColumnDisplay::Tabbed);
+  CHECK(config.layout.tabs.newTabPosition == umbriel::NewTabPosition::AfterActive);
+  CHECK(!config.layout.tabs.wrapFocus);
+  CHECK(!config.layout.tabs.scrollSwitchesTabs);
+  CHECK(config.layout.tabs.middleClickCloses);
+  CHECK(config.appearance.tabBar.style == umbriel::TabBarLook::Indicator);
+  CHECK(config.appearance.tabBar.position == umbriel::TabBarPosition::Bottom);
+  CHECK_EQ(config.appearance.tabBar.height, 4);
+  CHECK_EQ(config.appearance.tabBar.font, std::string{"Inter Bold 9"});
+  CHECK_EQ(config.appearance.tabBar.tabGap, 0);
+  CHECK_EQ(config.appearance.tabBar.cornerRadius, 1);
+  CHECK_EQ(config.appearance.tabBar.titleFormat, std::string{"{index}: {title}"});
+  CHECK(config.appearance.tabBar.titleAlign == umbriel::TitleAlign::Left);
+  CHECK(config.appearance.tabBar.hideWhenSingle);
+  CHECK_EQ(config.appearance.tabBar.maxTabs, 5);
+  CHECK(config.appearance.tabBar.overflow == umbriel::TabOverflow::Shrink);
+  CHECK_EQ(config.colors.tabBar.urgent[3], 128.0F / 255.0F);
+  CHECK_EQ(config.workspaceRules.size(), size_t{1});
+  CHECK(config.workspaceRules[0].layout.tabs.defaultDisplay == umbriel::ColumnDisplay::Normal);
+  CHECK_EQ(config.windowRules.size(), size_t{1});
+  CHECK(config.windowRules[0].defaultColumnDisplay == umbriel::ColumnDisplay::Tabbed);
+
+  // The bar's space is part of the layout, so resolution carries it with the behavior keys.
+  const umbriel::ResolvedLayoutConfig resolved = umbriel::resolveGlobalLayout(config);
+  CHECK(resolved.tabs.defaultDisplay == umbriel::ColumnDisplay::Tabbed);
+  CHECK_EQ(resolved.tabs.barHeight, 4);
+  CHECK(resolved.tabs.barPosition == umbriel::TabBarPosition::Bottom);
+  CHECK(resolved.tabs.hideWhenSingle);
 }
 
 UMBRIEL_TEST(masterPositionAcceptsCenterAndRejectsOtherValues) {

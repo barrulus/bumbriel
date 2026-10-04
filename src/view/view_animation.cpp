@@ -89,6 +89,9 @@ namespace umbriel {
     // shadows get their opacity from captured pixels instead of this multiplier.
     const float shadowOpacity = fadeComposited() ? effective * m_fadeAlpha : effective;
     m_decoration.setAlpha(shadowOpacity, m_fadeAlpha * m_overviewOpacity);
+    if (m_chromeAttachment != nullptr) {
+      m_chromeAttachment->setAlpha(chromeAlpha());
+    }
   }
 
   void View::setOverviewOpacity(float opacity) {
@@ -960,7 +963,7 @@ namespace umbriel {
   CloseSnapshotId View::beginCloseAnimation() {
     const auto& animation = config().animation;
     if (!m_mapped
-        || m_tiledOpeningDeferred
+        || presentationSuppressed()
         || !m_onActiveWorkspace
         || !animation.enabled
         || !animation.windowsOut.enabled

@@ -690,7 +690,8 @@ namespace umbriel {
       workspace->reevaluateFocusedColumn();
       workspace->markArrange(true);
     } else if (!scrolling->columns()[static_cast<size_t>(best)].views.empty()) {
-      View* target = scrolling->columns()[static_cast<size_t>(best)].views.front();
+      // A tab group is entered on the tab it shows, as a directional focus move enters it.
+      View* target = columnEntry(scrolling->columns()[static_cast<size_t>(best)]);
       m_server->focusView(target, FocusReason::Directional);
     } else {
       workspace->ensureFocusedVisible();

@@ -47,6 +47,7 @@ extern "C" {
 #include <fcntl.h>
 #include <optional>
 #include <ranges>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -598,7 +599,9 @@ namespace umbriel {
     m_setGamma.notify = onSetGamma;
     wl_signal_add(&m_gammaManager->events.set_gamma, &m_setGamma);
 
-    m_xdgShell = wlr_xdg_shell_create(m_display, 3);
+    // Version 6 adds the suspended state hidden tabs are given. The window-manager capabilities version 5 sends default
+    // to every capability, which is what a client assumed before, so no client sees a change in what it may ask for.
+    m_xdgShell = wlr_xdg_shell_create(m_display, 6);
     m_newXdgToplevel.notify = onNewXdgToplevel;
     wl_signal_add(&m_xdgShell->events.new_toplevel, &m_newXdgToplevel);
     m_newXdgPopup.notify = onNewXdgPopup;
@@ -715,6 +718,60 @@ namespace umbriel {
     wlr_log(WLR_INFO, "mod key: %s (%s session)", m_nested ? "Alt" : "Super", m_nested ? "nested" : "native");
     kLog.info("mod key: {} ({} session)", m_nested ? "Alt" : "Super", m_nested ? "nested" : "native");
   }
+  namespace {
+    // wlroots never announces ext-image-copy-capture cursor sessions and their struct is private, so the only
+    // public trace of "this client asked for cursor metadata for this source" is the update listener the session
+    // attaches to that source's cursor. Probing it per source keeps a cursor session bound to output A from
+    // pacing the same client's pixel-only capture of output B. The seat is only what the interface takes; the
+    // output source ignores it.
+    constexpr std::string_view kSourceInterface = "ext_image_capture_source_v1";
+
+    struct CursorSessionProbe {
+      const wlr_output* output = nullptr;
+      wlr_seat* seat = nullptr;
+      bool found = false;
+    };
+
+    wl_iterator_result probeCursorSession(wl_resource* resource, void* data) {
+      auto* probe = static_cast<CursorSessionProbe*>(data);
+      const char* klass = wl_resource_get_class(resource);
+      if (klass == nullptr || std::string_view(klass) != kSourceInterface) {
+        return WL_ITERATOR_CONTINUE;
+      }
+      wlr_ext_image_capture_source_v1* source = wlr_ext_image_capture_source_v1_from_resource(resource);
+      if (source == nullptr || wlr_output_try_from_ext_image_capture_source_v1(source) != probe->output) {
+        return WL_ITERATOR_CONTINUE;
+      }
+      // Only a live cursor session for exactly this source has a listener here; its destroy path removes it.
+      const wlr_ext_image_capture_source_v1_cursor* cursor = source->impl->get_pointer_cursor(source, probe->seat);
+      if (cursor != nullptr && !wl_list_empty(&cursor->events.update.listener_list)) {
+        probe->found = true;
+        return WL_ITERATOR_STOP;
+      }
+      return WL_ITERATOR_CONTINUE;
+    }
+  } // namespace
+
+  bool Server::hasCopyCaptureFor(const wlr_output* output) const {
+    if (output == nullptr) {
+      return false;
+    }
+    for (const auto& watch : m_imageCopySessions) {
+      if (watch->session == nullptr || watch->output != output) {
+        continue;
+      }
+      wl_client* client = wl_resource_get_client(watch->session->resource);
+      if (client == nullptr) {
+        continue;
+      }
+      CursorSessionProbe probe{.output = output, .seat = m_seat != nullptr ? m_seat->wlr() : nullptr};
+      wl_client_for_each_resource(client, probeCursorSession, &probe);
+      if (probe.found) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   Server::~Server() {
     m_stopping = true;
@@ -745,6 +802,15 @@ namespace umbriel {
     wl_list_remove(&m_newIdleInhibitor.link);
     wl_list_remove(&m_newShortcutsInhibitor.link);
     wl_list_remove(&m_newImageCopySession.link);
+    // The manager listener is gone, so no new track can appear. Unlink each
+    // session's destroy listener before freeing its track: otherwise a session
+    // that outlives this point in teardown still holds a wl_listener pointing
+    // into memory we're about to free, and its destroy signal firing later is a
+    // use-after-free.
+    for (const auto& track : m_imageCopySessions) {
+      wl_list_remove(&track->destroy.link);
+    }
+    m_imageCopySessions.clear();
     wl_list_remove(&m_newActivationToken.link);
     wl_list_remove(&m_requestActivate.link);
     wl_list_remove(&m_workspaceCommit.link);
@@ -1578,6 +1644,42 @@ namespace umbriel {
   }
 
   void Server::emitRendererLostForTest() { wl_signal_emit_mutable(&m_renderer->events.lost, nullptr); }
+
+  bool Server::injectPlaneCursor(std::string_view spec, std::string* error) {
+    std::istringstream stream{std::string(spec)};
+    std::string name;
+    double x = 0.0;
+    double y = 0.0;
+    int visible = 0;
+    std::uint64_t image = 0;
+    // Geometry and hotspot default to the 24x24 hotspot-0 cursor, so existing checks keep working unchanged.
+    int width = 24;
+    int height = 24;
+    int hotspotX = 0;
+    int hotspotY = 0;
+    if (!(stream >> name >> x >> y >> visible >> image)) {
+      *error = "plane-cursor needs '<output> <x> <y> <visible> <image> [width height hotspot_x hotspot_y]'";
+      return false;
+    }
+    if (!(stream >> width >> height >> hotspotX >> hotspotY)) {
+      width = 24;
+      height = 24;
+      hotspotX = 0;
+      hotspotY = 0;
+    }
+    for (const auto& output : m_outputs) {
+      if (name != output->wlr()->name) {
+        continue;
+      }
+      output->setSyntheticPlaneCursorForTest(
+          x, y, visible != 0, static_cast<std::uintptr_t>(image), width, height, hotspotX, hotspotY
+      );
+      wl_signal_emit_mutable(&output->wlr()->events.needs_frame, nullptr);
+      return true;
+    }
+    *error = "no such output: " + name;
+    return false;
+  }
 #endif
 
   bool Server::settled() const {

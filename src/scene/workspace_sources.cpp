@@ -279,8 +279,11 @@ namespace umbriel {
       }
       for (View* view : owners) {
         if (!view->pinned()) {
+          // Restore workspace visibility without revealing hidden tabs or
+          // tiled openers still waiting for their first arrange.
           add(&view->sceneTree()->node,
-              view->workspace() == workspace ? FX_SCENE_SOURCE_VISIBLE : FX_SCENE_SOURCE_HIDDEN);
+              view->workspace() == workspace && !view->presentationSuppressed() ? FX_SCENE_SOURCE_VISIBLE
+                                                                                : FX_SCENE_SOURCE_HIDDEN);
         }
       }
       return result;

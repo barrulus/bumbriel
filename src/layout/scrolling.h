@@ -2,6 +2,7 @@
 
 #include "layout/layout.h"
 
+#include <optional>
 #include <vector>
 
 struct wlr_box;
@@ -13,7 +14,7 @@ namespace umbriel {
   // Public width/X names refer to the primary scroll axis and height to the cross axis. Horizontal layouts map
   // primary/cross to X/Y, vertical layouts to Y/X.
 
-  class ScrollingLayout : public Layout {
+  class ScrollingLayout : public Layout, public TabbedContainers {
   public:
     [[nodiscard]] LayoutMode mode() const override { return LayoutMode::Scrolling; }
 
@@ -97,6 +98,16 @@ namespace umbriel {
     [[nodiscard]] double topGapWeight(int columnIndex) const;
     [[nodiscard]] double bottomGapWeight(int columnIndex) const;
 
+    [[nodiscard]] TabbedContainers* tabbedContainers() override { return this; }
+    bool setTabbed(const View* view, bool tabbed) override;
+    bool selectTab(const View* view) override;
+    bool insertTab(View* view, int column, int row, const View* member) override;
+    bool moveTab(const View* view, int direction) override;
+    bool setTabBar(const View* view, std::optional<bool> shown) override;
+    // Restore the tab groups of a column rebuilt row by row, replacing its initial display mode.
+    // False when `tabs` reaches past the column's rows.
+    bool adoptTabs(int columnIndex, const ColumnTabs& tabs);
+
   private:
     struct Target {
       View* view = nullptr;
@@ -132,6 +143,15 @@ namespace umbriel {
     void applyCenteringPolicy(int columnIndex, int viewportPrimary, bool force);
     [[nodiscard]] bool vertical() const;
     void syncHeightWeights(Column& column);
+    // Targets for the tabs of `group`: every one in `unit`, the group's share of the column, less its bar.
+    void pushTabTargets(const Column& column, const TabGroup& group, const wlr_box& unit);
+    // Where a window joining `column` by consume lands: among the tabs of the column's last unit when that is a tab
+    // group, after its shown tab when new tabs go there, otherwise in a row of its own at the end.
+    struct JoinPoint {
+      size_t row = 0;
+      std::optional<size_t> group;
+    };
+    [[nodiscard]] JoinPoint joinPoint(const Column& column) const;
     // Weight for a row being added to `column` at `row`, taking over the column's edge gap when the row lands against
     // one. Shared by fresh inserts and by consume, so free space always becomes the incoming row's extent.
     double claimInsertWeight(Column& column, int row, double fallbackWeight);

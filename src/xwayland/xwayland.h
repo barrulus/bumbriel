@@ -51,6 +51,7 @@ namespace umbriel {
     void handleOutputLayoutChange();
 
   private:
+    static void onServerStart(wl_listener* listener, void* data);
     static void onReady(wl_listener* listener, void* data);
     static void onNewSurface(wl_listener* listener, void* data);
     void handleReady();
@@ -61,6 +62,7 @@ namespace umbriel {
     bool m_nativeResolution = false;
     std::unique_ptr<XwaylandOutputs> m_outputs;
     std::vector<std::unique_ptr<XwaylandWindow>> m_windows;
+    wl_listener m_serverStart{};
     wl_listener m_ready{};
     wl_listener m_newSurface{};
   };

@@ -6,7 +6,28 @@
 #include "xwayland/unmanaged.h"
 #include "xwayland/xwayland.h"
 
+#include <algorithm>
+#include <array>
+
 namespace umbriel {
+
+  namespace {
+
+    // The window types of menus, tooltips, dropdowns, and drag icons. A client may leave such a window to the window
+    // manager instead of making it override-redirect, yet it still places the window itself, next to what opened it.
+    constexpr std::array kPopupWindowTypes{
+        WLR_XWAYLAND_NET_WM_WINDOW_TYPE_MENU,       WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DROPDOWN_MENU,
+        WLR_XWAYLAND_NET_WM_WINDOW_TYPE_POPUP_MENU, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLTIP,
+        WLR_XWAYLAND_NET_WM_WINDOW_TYPE_COMBO,      WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DND,
+    };
+
+    bool isPopup(const wlr_xwayland_surface* xsurface) {
+      return xsurface->override_redirect || std::ranges::any_of(kPopupWindowTypes, [xsurface](auto type) {
+               return wlr_xwayland_surface_has_window_type(xsurface, type);
+             });
+    }
+
+  } // namespace
 
   XwaylandWindow::XwaylandWindow(Server& server, Xwayland& owner, wlr_xwayland_surface* xsurface)
       : m_server(server), m_owner(owner), m_xsurface(xsurface) {
@@ -115,7 +136,7 @@ namespace umbriel {
   }
 
   void XwaylandWindow::createWrapper() {
-    if (m_xsurface->override_redirect) {
+    if (isPopup(m_xsurface)) {
       m_unmanaged = std::make_unique<XwaylandUnmanaged>(m_server, m_xsurface);
     } else {
       m_view = &m_server.adoptView(std::make_unique<View>(m_server, m_xsurface));

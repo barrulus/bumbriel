@@ -35,6 +35,16 @@ namespace umbriel {
           color("workspace_background", &C::Overview::workspaceBackground),
           color("badge", &C::Overview::badge),
       };
+      static const registry::Fields<C::TabBar> tabBar{
+          color("background", &C::TabBar::background),
+          color("text", &C::TabBar::text),
+          color("active", &C::TabBar::active),
+          color("active_text", &C::TabBar::activeText),
+          color("active_unfocused", &C::TabBar::activeUnfocused),
+          color("active_unfocused_text", &C::TabBar::activeUnfocusedText),
+          color("urgent", &C::TabBar::urgent),
+          color("urgent_text", &C::TabBar::urgentText),
+      };
       static const registry::Fields<C> fields{
           color("background", &C::background),
           color("text_primary", &C::textPrimary),
@@ -48,6 +58,7 @@ namespace umbriel {
           color("shadow", &C::shadow),
           registry::table("border", &C::border, border),
           registry::table("overview", &C::overview, overview),
+          registry::table("tab_bar", &C::tabBar, tabBar),
       };
       return fields;
     }
@@ -69,6 +80,48 @@ namespace umbriel {
           integer("offset_x", -200, 200, &A::Shadow::offsetX),
           integer("offset_y", -200, 200, &A::Shadow::offsetY),
       };
+      static const registry::Fields<A::TabBar> tabBar{
+          registry::choice(
+              "style", &A::TabBar::style,
+              {
+                  {.name = "titles", .value = TabBarLook::Titles},
+                  {.name = "indicator", .value = TabBarLook::Indicator},
+              }
+          ),
+          registry::choice(
+              "position", &A::TabBar::position,
+              {
+                  {.name = "top", .value = TabBarPosition::Top},
+                  {.name = "bottom", .value = TabBarPosition::Bottom},
+                  {.name = "left", .value = TabBarPosition::Left},
+                  {.name = "right", .value = TabBarPosition::Right},
+              }
+          ),
+          integer("height", 2, 400, &A::TabBar::height),
+          registry::text("font", &A::TabBar::font),
+          integer("padding", 0, 64, &A::TabBar::padding),
+          integer("tab_gap", 0, 64, &A::TabBar::tabGap),
+          integer("corner_radius", -1, 100, &A::TabBar::cornerRadius),
+          registry::text("title_format", &A::TabBar::titleFormat),
+          registry::choice(
+              "title_align", &A::TabBar::titleAlign,
+              {
+                  {.name = "left", .value = TitleAlign::Left},
+                  {.name = "center", .value = TitleAlign::Center},
+                  {.name = "right", .value = TitleAlign::Right},
+              }
+          ),
+          boolean("visible", &A::TabBar::visible),
+          boolean("hide_when_single", &A::TabBar::hideWhenSingle),
+          integer("max_tabs", 0, 64, &A::TabBar::maxTabs),
+          registry::choice(
+              "overflow", &A::TabBar::overflow,
+              {
+                  {.name = "scroll", .value = TabOverflow::Scroll},
+                  {.name = "shrink", .value = TabOverflow::Shrink},
+              }
+          ),
+      };
       static const registry::Fields<A> fields{
           integer("border_width", 0, 100, &A::borderWidth),
           integer("outer_border_width", 0, 100, &A::outerBorderWidth),
@@ -78,6 +131,7 @@ namespace umbriel {
           boolean("opaque_fullscreen", &A::opaqueFullscreen),
           registry::table("blur", &A::blur, blur),
           registry::table("shadow", &A::shadow, shadow),
+          registry::table("tab_bar", &A::tabBar, tabBar),
       };
       return fields;
     }

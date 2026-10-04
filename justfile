@@ -16,7 +16,7 @@ default:
 configure m=mode install_prefix=prefix:
     #!/usr/bin/env bash
     set -euo pipefail
-    args=(-Dcpp_std={{cpp-std}} -Dtests=enabled --prefix "{{install_prefix}}")
+    args=(-Dcpp_std={{cpp-std}} -Dtests=auto --prefix "{{install_prefix}}")
     case "{{m}}" in
       release)
         args+=(--buildtype=release -Db_lto=true)
@@ -59,6 +59,26 @@ _ensure-configured m=mode:
         just configure {{m}}
     fi
 
+# Auto mode leaves test targets out of release and sanitized builds, so the recipes that need them turn them on
+# for the build directory they run in. `ipc` also turns on the harness-only IPC commands, which `check` needs and
+# debug and asan builds already have.
+[no-exit-message]
+_enable-tests m=mode ipc="no":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    configured="$(meson configure "build-{{m}}")"
+    current() { awk -v key="$1" '$1 == key { print $2; exit }' <<<"$configured"; }
+    args=()
+    if [[ "{{m}}" != "debug" && "$(current tests)" != "enabled" ]]; then
+        args+=(-Dtests=enabled)
+    fi
+    if [[ "{{ipc}}" == "yes" && "{{m}}" != "debug" && "{{m}}" != "asan" && "$(current test_ipc)" != "enabled" ]]; then
+        args+=(-Dtest_ipc=enabled)
+    fi
+    if ((${#args[@]} > 0)); then
+        meson configure "build-{{m}}" "${args[@]}"
+    fi
+
 build m=mode: (_ensure-configured m)
     meson compile -C build-{{m}} umbriel
 
@@ -88,7 +108,7 @@ run m=mode startup="": (build m)
     fi
     exec ./build-{{m}}/umbriel "${args[@]}"
 
-test m=mode: (configure m)
+test m=mode: (_ensure-configured m) (_enable-tests m)
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "{{m}}" == "asan" ]]; then
@@ -101,7 +121,7 @@ test m=mode: (configure m)
 # container or a headless runner does not have, so it is a tool rather than a
 # suite entry. This runs it against every render node this machine exposes.
 [no-exit-message]
-gpu-test m=mode: (_ensure-configured m)
+gpu-test m=mode: (_ensure-configured m) (_enable-tests m)
     #!/usr/bin/env bash
     set -euo pipefail
     nodes=(/dev/dri/renderD*)
@@ -118,7 +138,7 @@ test-workflows:
 
 # Harness checks: the whole suite, or the ones whose names contain any given fragment, each against its own headless compositor instance. `just check overview/wheel`, `just check overview/wheel input_method`, `just check overview/`, `just check overview/wheel -v` to keep the output of passing checks. Checks run several at a time; `just check -j16` or `CHECK_JOBS=16` changes how many. Another build directory is `mode=`, as in `just mode=asan check overview/wheel`.
 [no-exit-message]
-check *filters: (_ensure-configured mode)
+check *filters: (_ensure-configured mode) (_enable-tests mode "yes")
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "{{mode}}" == "asan" ]]; then
@@ -133,7 +153,7 @@ check *filters: (_ensure-configured mode)
 
 # Runs n copies of one harness check at once, each against its own instance, to expose races that load reveals. `just check-stress focus/dwindle_close`, `just check-stress focus/dwindle_close 64`.
 [no-exit-message]
-check-stress name n="32": (_ensure-configured mode)
+check-stress name n="32": (_ensure-configured mode) (_enable-tests mode "yes")
     #!/usr/bin/env bash
     set -euo pipefail
     if ! build_log=$(meson compile -C build-{{mode}} umbriel harness-clients 2>&1); then
@@ -165,7 +185,7 @@ format:
 # checked through the sources that include them. Another build directory is `mode=`, as in `just mode=asan lint`.
 # The compile database carries -Werror for the compiler; -Wno-error keeps clang-only warnings out of clang-tidy's errors.
 [no-exit-message]
-lint *files: (_ensure-configured mode)
+lint *files: (_ensure-configured mode) (_enable-tests mode)
     #!/usr/bin/env bash
     set -euo pipefail
     opts=(-quiet -p "build-{{mode}}" -header-filter='\.\./(src|tests)/.*' -warnings-as-errors='*' -extra-arg=-Wno-error)

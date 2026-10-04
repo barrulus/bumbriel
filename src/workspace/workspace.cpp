@@ -96,6 +96,21 @@ namespace umbriel {
       }
       return std::nullopt;
     }
+
+    // Ordered members join the tab group at their insertion row, including either boundary.
+    void joinNamedScrollingColumn(ScrollingLayout& layout, View* view, const NamedScrollingColumnPlacement& placement) {
+      const auto column = static_cast<int>(placement.column);
+      const Column& lane = layout.columns()[placement.column];
+      const auto row = static_cast<size_t>(placement.row);
+      const TabGroup* group = lane.tabs.groupAt(row);
+      if (group == nullptr && row > 0) {
+        group = lane.tabs.groupAt(row - 1);
+      }
+      const View* member = group != nullptr ? lane.views[group->active] : nullptr;
+      if (member == nullptr || !layout.insertTab(view, column, placement.row, member)) {
+        layout.insertViewIntoColumn(view, column, placement.row);
+      }
+    }
   } // namespace
 
   Workspace::Workspace(
@@ -124,6 +139,8 @@ namespace umbriel {
 
   Workspace::~Workspace() {
     m_launchAnchor->workspace = nullptr;
+    // Windows leaving with the workspace are no longer anyone's tabs.
+    m_tabs.releaseAll();
     discardCloseSnapshots();
     endLayoutMotion();
     for (View* view : m_views) {
@@ -208,6 +225,8 @@ namespace umbriel {
         m_floatingStack.push_back(view);
         restackFloatingViews();
       }
+      // Whatever focused a tab, a click on its bar, a keybind, activation, or IPC, puts that tab on show.
+      m_tabs.focusChanged(view);
     }
   }
 
@@ -362,7 +381,7 @@ namespace umbriel {
         : std::nullopt;
     view->m_ownsNamedScrollingColumnExtent = scrolling != nullptr && name.has_value() && !placement;
     if (placement) {
-      scrolling->insertViewIntoColumn(view, static_cast<int>(placement->column), placement->row);
+      joinNamedScrollingColumn(*scrolling, view, *placement);
     } else if (DwindleLayout* dwindle = dwindleLayout(); dwindle != nullptr && m_layoutConfig.dwindle.newTowardCursor) {
       // The pointer only means something here while it is over this workspace as shown on its output.
       Server* server = m_group != nullptr ? m_group->server() : nullptr;
@@ -381,6 +400,11 @@ namespace umbriel {
       }
     } else {
       m_layout->insertView(view, layoutAttachIndex(view));
+    }
+    // An opening window's rules can set how the column it opens in shows its windows.
+    if (TabbedContainers* containers = m_layout->tabbedContainers();
+        containers != nullptr && origin == LayoutAttachOrigin::OpeningView && view->m_ruleColumnDisplay) {
+      containers->setTabbed(view, *view->m_ruleColumnDisplay == ColumnDisplay::Tabbed);
     }
 
     if (scrolling != nullptr && !placement) {
@@ -451,7 +475,7 @@ namespace umbriel {
       return std::nullopt;
     }
     const int column = static_cast<int>(placement->column);
-    preview->insertViewIntoColumn(view, column, placement->row);
+    joinNamedScrollingColumn(*preview, view, *placement);
     if (maximized && !preview->isFullWidth(column)) {
       preview->toggleFullWidth(column);
     }
@@ -525,7 +549,7 @@ namespace umbriel {
       scrolling->insertView(view, std::clamp(previousColumn, 0, static_cast<int>(scrolling->columns().size())));
       kLog.error("named scrolling column '{}' disappeared while moving a view", name);
     } else {
-      scrolling->insertViewIntoColumn(view, static_cast<int>(placement->column), placement->row);
+      joinNamedScrollingColumn(*scrolling, view, *placement);
     }
     restoreMaximizedColumn();
     clampScrollToRange();
@@ -570,6 +594,8 @@ namespace umbriel {
         ? scrolling->scrollShiftForColumnRemoval(scrolling->columnOf(view), scrollViewportExtent())
         : 0.0;
     m_layout->removeView(view);
+    // Outside the layout a window is never a tab; whatever presents it next finds it showing.
+    m_tabs.released(view);
     releaseLayoutMotion(view);
     view->endLayoutMotion();
     if (scrolling != nullptr && shift != 0.0) {
@@ -671,6 +697,9 @@ namespace umbriel {
     }
 
     m_layout->arrange(applyLayoutStruts(usable, m_layoutConfig.struts));
+    // Tab visibility follows the layout on hidden workspaces too, so a workspace always comes back showing the right
+    // tabs.
+    m_tabs.sync();
     // The map-time IPC event can fire before this arrange runs, leaving the previous window positions in the listing.
     // Re-emit now that the layout boxes are settled; the event coalescer caps this at one per frame.
     m_group->server()->scheduleIpcWindowsEvent();
@@ -1172,8 +1201,7 @@ namespace umbriel {
     if (current < 0 || target < 0 || target >= static_cast<int>(m_layout->columns().size())) {
       return nullptr;
     }
-    const Column& column = m_layout->columns()[static_cast<size_t>(target)];
-    return column.views.empty() ? nullptr : column.views.front();
+    return columnEntry(m_layout->columns()[static_cast<size_t>(target)]);
   }
 
   View* Workspace::focusWithinLane(int direction) const {
@@ -1185,9 +1213,14 @@ namespace umbriel {
     if (column < 0 || row < 0) {
       return nullptr;
     }
-    const auto& views = m_layout->columns()[static_cast<size_t>(column)].views;
-    const int target = row + direction;
-    return target < 0 || target >= static_cast<int>(views.size()) ? nullptr : views[static_cast<size_t>(target)];
+    // A tab group is one unit of its column: focus steps past its hidden tabs and enters it at the tab it shows.
+    const Column& lane = m_layout->columns()[static_cast<size_t>(column)];
+    const auto at = static_cast<size_t>(row);
+    if (direction > 0) {
+      return unitEntry(lane, lane.tabs.unitEnd(at));
+    }
+    const size_t start = lane.tabs.unitStart(at);
+    return direction < 0 && start > 0 ? unitEntry(lane, start - 1) : nullptr;
   }
 
   View* Workspace::preferRecentPeer(View* target) const {
@@ -1195,7 +1228,11 @@ namespace umbriel {
       return target;
     }
     const std::vector<View*> peers = m_layout->focusPeers(m_focusedView, target);
-    if (peers.size() < 2) {
+    // A single peer is the only window the move may land on, such as the tab a tabbed column shows.
+    if (peers.size() == 1) {
+      return peers.front();
+    }
+    if (peers.empty()) {
       return target;
     }
     for (const auto& entry : m_group->server()->registry().all()) {
@@ -1220,8 +1257,7 @@ namespace umbriel {
     if (columns.empty()) {
       return nullptr;
     }
-    const Column& firstColumn = columns.front();
-    return firstColumn.views.empty() ? nullptr : firstColumn.views.front();
+    return columnEntry(columns.front());
   }
 
   View* Workspace::focusLastColumn() const {
@@ -1229,8 +1265,7 @@ namespace umbriel {
     if (columns.empty()) {
       return nullptr;
     }
-    const Column& lastColumn = columns.back();
-    return lastColumn.views.empty() ? nullptr : lastColumn.views.front();
+    return columnEntry(columns.back());
   }
 
   View* Workspace::focusReplacementForRemoval(const View* view) const {
@@ -1359,6 +1394,10 @@ namespace umbriel {
     std::vector<LayoutTarget> targets;
     for (const Column& column : m_layout->columns()) {
       for (View* view : column.views) {
+        // A hidden tab shares the box of the tab on show, so only the one on show is a neighbor on screen.
+        if (hiddenTab(column, view)) {
+          continue;
+        }
         const wlr_box box = m_layout->targetBox(view);
         targets.push_back({.view = view, .x = box.x, .y = box.y, .width = box.width, .height = box.height});
       }
@@ -1751,6 +1790,47 @@ namespace umbriel {
     }
 
     target->toggleFullscreen();
+    return true;
+  }
+
+  bool Workspace::setFocusedColumnTabbed(std::optional<bool> tabbed) {
+    TabbedContainers* containers = m_layout->tabbedContainers();
+    View* view = m_focusedView;
+    const int column = containers != nullptr && view != nullptr && view->tiled() ? m_layout->columnOf(view) : -1;
+    if (column < 0) {
+      return false;
+    }
+    const bool grouped = tabGroupOf(m_layout->columns()[static_cast<size_t>(column)], view) != nullptr;
+    if (!containers->setTabbed(view, tabbed.value_or(!grouped))) {
+      return false;
+    }
+    reevaluateFocusedColumn();
+    markArrange();
+    return true;
+  }
+
+  bool Workspace::moveFocusedTab(int direction) {
+    TabbedContainers* containers = m_layout->tabbedContainers();
+    if (containers == nullptr || m_focusedView == nullptr || !m_focusedView->tiled()) {
+      return false;
+    }
+    if (!containers->moveTab(m_focusedView, direction)) {
+      return false;
+    }
+    markArrange();
+    return true;
+  }
+
+  bool Workspace::setFocusedTabBar(std::optional<bool> shown) {
+    TabbedContainers* containers = m_layout->tabbedContainers();
+    if (containers == nullptr || m_focusedView == nullptr || !m_focusedView->tiled()) {
+      return false;
+    }
+    if (!containers->setTabBar(m_focusedView, shown)) {
+      return false;
+    }
+    // The tabs grow into the bar's space, or give it back.
+    markArrange();
     return true;
   }
 
@@ -2385,6 +2465,9 @@ namespace umbriel {
           : resolveUnnamedWorkspaceLayout(config(), identity, workspace->index());
       if (workspace->layoutConfig() != layout) {
         workspace->applyLayoutConfig(std::move(layout));
+      } else {
+        // Bar text such as title_format and max_tabs moves no box, so no arrange redraws the bars that show it.
+        workspace->tabs().sync();
       }
     }
   }

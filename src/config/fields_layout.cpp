@@ -47,6 +47,14 @@ namespace umbriel {
       return choices;
     }
 
+    const registry::Choices<NewTabPosition>& newTabPositions() {
+      static const registry::Choices<NewTabPosition> choices{
+          {.name = "end", .value = NewTabPosition::End},
+          {.name = "after_active", .value = NewTabPosition::AfterActive},
+      };
+      return choices;
+    }
+
     const registry::Choices<FullscreenExitScope>& fullscreenExitScopes() {
       static const registry::Choices<FullscreenExitScope> choices{
           {.name = "tiled", .value = FullscreenExitScope::Tiled},
@@ -144,6 +152,7 @@ namespace umbriel {
       using Scrolling = decltype(L::scrolling);
       using Dwindle = decltype(L::dwindle);
       using Master = decltype(L::master);
+      using Tabs = decltype(L::tabs);
       constexpr int kStrutLimit = 65535;
 
       static const Fields<Struts> struts{
@@ -166,6 +175,13 @@ namespace umbriel {
           real("default_width_fraction", 0.1, 0.9, &Master::defaultWidthFraction),
           boolean("new_on_top", &Master::newOnTop),
           boolean("new_becomes_master", &Master::newBecomesMaster),
+      };
+      static const Fields<Tabs> tabs{
+          choice("default_display", &Tabs::defaultDisplay, columnDisplays()),
+          choice("new_tab_position", &Tabs::newTabPosition, newTabPositions()),
+          boolean("wrap_focus", &Tabs::wrapFocus),
+          boolean("scroll_switches_tabs", &Tabs::scrollSwitchesTabs),
+          boolean("middle_click_closes", &Tabs::middleClickCloses),
       };
       static const Fields<L> fields{
           choice("mode", &L::mode, layoutModes()),
@@ -197,6 +213,7 @@ namespace umbriel {
           table("scrolling", &L::scrolling, scrolling),
           table("dwindle", &L::dwindle, dwindle),
           table("master", &L::master, master),
+          table("tabs", &L::tabs, tabs),
       };
       return fields;
     }
@@ -377,6 +394,14 @@ namespace umbriel {
     }
 
   } // namespace
+
+  const registry::Choices<ColumnDisplay>& columnDisplays() {
+    static const registry::Choices<ColumnDisplay> choices{
+        {.name = "normal", .value = ColumnDisplay::Normal},
+        {.name = "tabbed", .value = ColumnDisplay::Tabbed},
+    };
+    return choices;
+  }
 
   registry::Field<Config> layoutTable() {
     return registry::table("layout", &Config::layout, layoutFields<Config::Layout>());

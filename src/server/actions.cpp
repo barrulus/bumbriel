@@ -281,6 +281,63 @@ namespace umbriel {
       }
     }
 
+    void rebuildTransferredColumn(Workspace& target, const Column& column, int targetIndex) {
+      if (column.views.empty()) {
+        return;
+      }
+      View* first = column.views.front();
+      first->moveToWorkspace(&target, /*attachToLayout=*/false);
+      target.layout().insertView(first, targetIndex);
+      View* insertionAnchor = first;
+      for (size_t row = 1; row < column.views.size(); ++row) {
+        View* view = column.views[row];
+        view->moveToWorkspace(&target, /*attachToLayout=*/false);
+        target.layout().insertViewIntoColumn(view, target.layout().columnOf(insertionAnchor), static_cast<int>(row));
+        if (target.layout().columnOf(view) != target.layout().columnOf(first)) {
+          // Splitting layouts flatten a source stack. Advance the insertion
+          // anchor so three or more members retain their original order.
+          insertionAnchor = view;
+        }
+      }
+
+      if (ScrollingLayout* scrolling = target.scrollingLayout()) {
+        const int targetColumn = scrolling->columnOf(first);
+        const double normalWidth = column.savedWidthFrac > 0.0 ? column.savedWidthFrac : column.widthFrac;
+        scrolling->setWidthFraction(targetColumn, normalWidth);
+        if (column.savedWidthFrac > 0.0) {
+          scrolling->toggleFullWidth(targetColumn);
+        }
+        scrolling->adoptTabs(targetColumn, column.tabs);
+        for (size_t row = 0; row < column.heightWeights.size(); row = column.tabs.unitEnd(row)) {
+          scrolling->setHeightWeight(targetColumn, static_cast<int>(row), column.heightWeights[row]);
+        }
+        scrolling->setTopGapWeight(targetColumn, column.topGapWeight);
+        scrolling->setBottomGapWeight(targetColumn, column.bottomGapWeight);
+      } else if (TabbedContainers* tabs = target.layout().tabbedContainers()) {
+        const int targetColumn = target.layout().columnOf(first);
+        const auto& targetColumns = target.layout().columns();
+        if (targetColumn < 0
+            || targetColumn >= static_cast<int>(targetColumns.size())
+            || targetColumns[static_cast<size_t>(targetColumn)].views != column.views) {
+          // A group merged with existing area rows cannot keep its own display.
+          return;
+        }
+        // A master area can show one group spanning all its rows, not separate
+        // groups and standalone rows. Its new-area default cannot change the source display.
+        const auto& groups = column.tabs.groups();
+        const bool wholeGroup =
+            groups.size() == 1 && groups.front().first == 0 && groups.front().count == column.views.size();
+        tabs->setTabbed(first, wholeGroup);
+        if (wholeGroup) {
+          const TabGroup& group = groups.front();
+          tabs->selectTab(column.views[group.active]);
+          if (group.bar.has_value()) {
+            tabs->setTabBar(first, group.bar);
+          }
+        }
+      }
+    }
+
     // Move the focused tiled column as one structural unit. Rebuild it only
     // after snapshotting because every view transfer mutates the source layout.
     // A floating focus has no column, so it follows the single-window behavior
@@ -310,34 +367,7 @@ namespace umbriel {
       const int focusedTargetColumn = target.layout().columnOf(target.focusedView());
       const int targetIndex =
           focusedTargetColumn >= 0 ? focusedTargetColumn + 1 : static_cast<int>(target.layout().columns().size());
-      View* first = column.views.front();
-      first->moveToWorkspace(&target, /*attachToLayout=*/false);
-      target.layout().insertView(first, targetIndex);
-      View* insertionAnchor = first;
-      for (size_t row = 1; row < column.views.size(); ++row) {
-        View* view = column.views[row];
-        view->moveToWorkspace(&target, /*attachToLayout=*/false);
-        target.layout().insertViewIntoColumn(view, target.layout().columnOf(insertionAnchor), static_cast<int>(row));
-        if (target.layout().columnOf(view) != target.layout().columnOf(first)) {
-          // Splitting layouts flatten a source stack. Advance the insertion
-          // anchor so three or more members retain their original order.
-          insertionAnchor = view;
-        }
-      }
-
-      if (ScrollingLayout* scrolling = target.scrollingLayout()) {
-        const int targetColumn = scrolling->columnOf(first);
-        const double normalWidth = column.savedWidthFrac > 0.0 ? column.savedWidthFrac : column.widthFrac;
-        scrolling->setWidthFraction(targetColumn, normalWidth);
-        if (column.savedWidthFrac > 0.0) {
-          scrolling->toggleFullWidth(targetColumn);
-        }
-        for (size_t row = 0; row < column.heightWeights.size(); ++row) {
-          scrolling->setHeightWeight(targetColumn, static_cast<int>(row), column.heightWeights[row]);
-        }
-        scrolling->setTopGapWeight(targetColumn, column.topGapWeight);
-        scrolling->setBottomGapWeight(targetColumn, column.bottomGapWeight);
-      }
+      rebuildTransferredColumn(target, column, targetIndex);
 
       target.markArrange();
       target.group()->activate(&target);
@@ -787,6 +817,63 @@ namespace umbriel {
         }
       }
       return actionOutputFocus<WlrDir>(server, bind, error);
+    }
+
+    // Tab or untab the focused column; nullopt toggles. A layout whose columns cannot be tabbed refuses.
+    bool setFocusedColumnTabbed(Server& server, std::optional<bool> tabbed, std::string* error) {
+      Workspace* workspace = windowActionWorkspace(server);
+      if (workspace == nullptr) {
+        return true;
+      }
+      if (workspace->layout().tabbedContainers() == nullptr) {
+        return reject(error, "tabs need a layout with columns: scrolling or master");
+      }
+      workspace->setFocusedColumnTabbed(tabbed);
+      return true;
+    }
+
+    bool actionColumnToggleTabbed(Server& server, const Keybind& /*bind*/, std::string* error) {
+      return setFocusedColumnTabbed(server, std::nullopt, error);
+    }
+
+    bool actionColumnSetDisplay(Server& server, const Keybind& bind, std::string* error) {
+      const auto* arg = payloadIf<ColumnDisplayArg>(bind);
+      if (arg == nullptr) {
+        return true;
+      }
+      return setFocusedColumnTabbed(server, arg->display == ColumnDisplay::Tabbed, error);
+    }
+
+    template <int Direction>
+    bool actionColumnFocusTabStep(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
+      if (Workspace* workspace = windowActionWorkspace(server)) {
+        focusWindowFromNavigation(server, workspace->tabs().stepTarget(Direction));
+      }
+      return true;
+    }
+
+    bool actionColumnFocusTab(Server& server, const Keybind& bind, std::string* /*error*/) {
+      const auto* arg = payloadIf<TabIndexArg>(bind);
+      Workspace* workspace = windowActionWorkspace(server);
+      if (arg != nullptr && workspace != nullptr) {
+        focusWindowFromNavigation(server, workspace->tabs().indexTarget(arg->index));
+      }
+      return true;
+    }
+
+    template <int Direction> bool actionColumnMoveTab(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
+      if (Workspace* workspace = windowActionWorkspace(server)) {
+        workspace->moveFocusedTab(Direction);
+      }
+      return true;
+    }
+
+    // Draw (1) or hide (0) the focused tab group's bar, or toggle it (-1).
+    template <int Shown> bool actionColumnTabBar(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
+      if (Workspace* workspace = windowActionWorkspace(server)) {
+        workspace->setFocusedTabBar(Shown < 0 ? std::nullopt : std::optional<bool>(Shown > 0));
+      }
+      return true;
     }
 
     template <int Direction> bool actionFocusVertical(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
@@ -1549,14 +1636,9 @@ namespace umbriel {
 
       // Snapshot the source contents first: every setWorkspace below triggers reconcileDynamic on both groups, and
       // iterating the live layout while it rebuilds would be use-after-free.
-      struct ColumnSnapshot {
-        std::vector<View*> views;
-        double widthFrac = 0.5;
-      };
-      std::vector<ColumnSnapshot> columns;
-      for (const Column& column : source->layout().columns()) {
-        columns.push_back({column.views, column.widthFrac});
-      }
+      const bool sameLayout = source->layout().mode() == destination->layout().mode();
+      const LayoutCapture tiles = sameLayout ? source->layout().captureState() : LayoutCapture{};
+      const std::vector<Column> columns = sameLayout ? std::vector<Column>{} : source->layout().columns();
       std::vector<View*> floats;
       for (View* view : source->allViews()) {
         if (view->floating() && !view->pinned()) {
@@ -1564,20 +1646,20 @@ namespace umbriel {
         }
       }
 
-      for (const ColumnSnapshot& column : columns) {
-        if (column.views.empty()) {
-          continue;
+      if (sameLayout) {
+        // Restore into the empty destination before moving any members, so a
+        // rejected snapshot leaves the source intact.
+        if (tiles.snapshot == nullptr || !destination->layout().restoreState(*tiles.snapshot, tiles.members)) {
+          return reject(error, "failed to restore workspace layout");
         }
-        View* first = column.views.front();
-        first->moveToWorkspace(destination, /*attachToLayout=*/false);
-        destination->layout().insertView(first, static_cast<int>(destination->layout().columns().size()));
-        if (destination->scrollingLayout() != nullptr) {
-          destination->layout().setWidthFraction(destination->layout().columnOf(first), column.widthFrac);
+        for (const LayoutMember& member : tiles.members) {
+          if (member.view != nullptr) {
+            member.view->moveToWorkspace(destination, /*attachToLayout=*/false);
+          }
         }
-        for (size_t i = 1; i < column.views.size(); ++i) {
-          View* view = column.views[i];
-          view->moveToWorkspace(destination, /*attachToLayout=*/false);
-          destination->layout().insertViewIntoColumn(view, destination->layout().columnOf(first), static_cast<int>(i));
+      } else {
+        for (const Column& column : columns) {
+          rebuildTransferredColumn(*destination, column, static_cast<int>(destination->layout().columns().size()));
         }
       }
       for (View* view : floats) {
@@ -2085,6 +2167,16 @@ namespace umbriel {
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Cycle>,
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Toggle>,
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Reset>,
+        &actionColumnToggleTabbed,
+        &actionColumnSetDisplay,
+        &actionColumnFocusTabStep<1>,
+        &actionColumnFocusTabStep<-1>,
+        &actionColumnFocusTab,
+        &actionColumnMoveTab<1>,
+        &actionColumnMoveTab<-1>,
+        &actionColumnTabBar<-1>,
+        &actionColumnTabBar<1>,
+        &actionColumnTabBar<0>,
     };
 
     consteval bool everyActionHasHandler() {

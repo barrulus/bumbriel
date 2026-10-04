@@ -184,6 +184,16 @@ namespace umbriel {
     EffectCursorCycle,
     EffectCursorToggle,
     EffectCursorReset,
+    ColumnToggleTabbed,
+    ColumnSetDisplay,
+    ColumnFocusTabNext,
+    ColumnFocusTabPrevious,
+    ColumnFocusTab,
+    ColumnMoveTabNext,
+    ColumnMoveTabPrevious,
+    ColumnToggleTabBar,
+    ColumnShowTabBar,
+    ColumnHideTabBar,
     Count,
   };
 
@@ -235,6 +245,14 @@ namespace umbriel {
     std::optional<LayoutMode> mode; // nullopt cycles scrolling to dwindle to master to scrolling
     bool operator==(const LayoutModeArg&) const = default;
   };
+  struct ColumnDisplayArg {
+    ColumnDisplay display = ColumnDisplay::Normal;
+    bool operator==(const ColumnDisplayArg&) const = default;
+  };
+  struct TabIndexArg {
+    int index = 1; // counted from 1, or from the end when negative
+    bool operator==(const TabIndexArg&) const = default;
+  };
   struct QuitArg {
     bool skipConfirmation = false;
     bool operator==(const QuitArg&) const = default;
@@ -257,7 +275,7 @@ namespace umbriel {
 
   using KeybindPayload = std::variant<
       std::monostate, SpawnArg, SubmapArg, FractionArg, WorkspaceArg, OutputArg, ScratchpadArg, WindowIdArg,
-      LayoutModeArg, QuitArg, EffectWindowArg, EffectScreenArg, EffectCursorArg>;
+      LayoutModeArg, ColumnDisplayArg, TabIndexArg, QuitArg, EffectWindowArg, EffectScreenArg, EffectCursorArg>;
 
   struct Keybind {
     // What triggers the bind.
@@ -316,6 +334,8 @@ namespace umbriel {
     OptionalWindowId,
     FractionDelta,
     LayoutMode,
+    ColumnDisplay,
+    TabIndex,
     SkipConfirmation,
     WindowEffectSet,
     WindowEffectCycle,

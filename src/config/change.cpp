@@ -232,7 +232,8 @@ namespace umbriel {
             || outputLayout
             || before.layout != after.layout
             || before.workspaceRules != after.workspaceRules
-            || before.appearance.totalBorderWidth() != after.appearance.totalBorderWidth(),
+            || before.appearance.totalBorderWidth() != after.appearance.totalBorderWidth()
+            || before.appearance.tabBar != after.appearance.tabBar,
         .sceneBlur = sceneBlur,
         // [colors] owns the border, backdrop, insert-hint, and shadow colors, so
         // any color edit refreshes window chrome.

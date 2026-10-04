@@ -37,6 +37,7 @@ unit_tests = [
   ['output-direction', ['unit/output_direction.cpp'], []],
   ['output-identity', ['unit/output_identity.cpp'], []],
   ['output-mode-selection', ['unit/output_mode_selection.cpp'], []],
+  ['cursor-plane-pace', ['unit/cursor_plane_pace.cpp'], []],
   ['output-frame-schedule', ['unit/output_frame_schedule.cpp'], []],
   ['output-format-sequence', ['unit/output_format_sequence.cpp'], []],
   ['hdr-format', ['unit/hdr_format.cpp'], []],
@@ -46,6 +47,7 @@ unit_tests = [
   ['scrolling-layout', ['unit/scrolling_layout.cpp'], []],
   ['dwindle-layout', ['unit/dwindle_layout.cpp'], []],
   ['master-layout', ['unit/master_layout.cpp'], []],
+  ['tabbed-layout', ['unit/tabbed_layout.cpp'], []],
   ['cheatsheet-rows', ['unit/cheatsheet_rows.cpp'], []],
   ['shortcut-labels', ['unit/shortcut_labels.cpp'], []],
   ['border-ring', ['unit/border_ring.cpp'], []],
@@ -365,8 +367,24 @@ pixel_probe = executable(
   override_options: ['optimization=2'],
 )
 
+# Harness helper that captures one output through ext-image-copy-capture and reports every delivered frame;
+# --cursor also asks for cursor metadata, which is what the compositor gates capture pacing on.
+capture_client = executable(
+  'capture-client',
+  [
+    'harness/clients/capture_client.cpp',
+    ext_image_capture_source_client_h,
+    ext_image_capture_source_client_c,
+    ext_image_copy_capture_client_h,
+    ext_image_copy_capture_client_c,
+    ext_foreign_toplevel_list_client_c,
+  ],
+  dependencies: [wayland_client_dep],
+)
+
 harness_client_targets = [
   pixel_probe,
+  capture_client,
   pointer_client,
   pointer_modifiers_client,
   keyboard_keymap_client,

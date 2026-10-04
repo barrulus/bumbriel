@@ -177,8 +177,19 @@ namespace umbriel {
         {"column-center", "", "Center the focused column in the viewport", KeybindAction::ColumnCenter},
         {"column-focus-first", "", "Focus the first column in the workspace", KeybindAction::ColumnFocusFirst},
         {"column-focus-last", "", "Focus the last column in the workspace", KeybindAction::ColumnFocusLast},
+        {"column-focus-tab", "<index>", "Focus a tab of the focused tab group by its position",
+         KeybindAction::ColumnFocusTab, ActionArgKind::TabIndex},
+        {"column-focus-tab-next", "", "Focus the next tab in the focused tab group", KeybindAction::ColumnFocusTabNext},
+        {"column-focus-tab-previous", "", "Focus the previous tab in the focused tab group",
+         KeybindAction::ColumnFocusTabPrevious},
+        {"column-hide-tab-bar", "", "Hide the focused tab group's bar; its tabs take the space",
+         KeybindAction::ColumnHideTabBar},
         {"column-move-left", "", "Move the focused column one position left", KeybindAction::ColumnMoveLeft},
         {"column-move-right", "", "Move the focused column one position right", KeybindAction::ColumnMoveRight},
+        {"column-move-tab-next", "", "Move the focused tab one place later among its tabs",
+         KeybindAction::ColumnMoveTabNext},
+        {"column-move-tab-previous", "", "Move the focused tab one place earlier among its tabs",
+         KeybindAction::ColumnMoveTabPrevious},
         {"column-move-to-first", "", "Move the focused column to the first position", KeybindAction::ColumnMoveToFirst},
         {"column-move-to-last", "", "Move the focused column to the last position", KeybindAction::ColumnMoveToLast},
         {"column-move-to-output-down", "", "Move the focused column to the output below",
@@ -195,6 +206,12 @@ namespace umbriel {
          KeybindAction::ColumnMoveToWorkspaceNext},
         {"column-move-to-workspace-previous", "", "Move the focused column to the previous workspace",
          KeybindAction::ColumnMoveToWorkspacePrevious},
+        {"column-set-display", "<normal|tabbed>", "Show the rows around the focused window as tabs or stacked",
+         KeybindAction::ColumnSetDisplay, ActionArgKind::ColumnDisplay},
+        {"column-show-tab-bar", "", "Show the focused tab group's bar", KeybindAction::ColumnShowTabBar},
+        {"column-toggle-tab-bar", "", "Show or hide the focused tab group's bar", KeybindAction::ColumnToggleTabBar},
+        {"column-toggle-tabbed", "", "Tab the rows around the focused window, or stack its tabs",
+         KeybindAction::ColumnToggleTabbed},
         {"config-reload", "", "Reload the configuration file", KeybindAction::ConfigReload},
         {"dpms-off", "[<output>]", "Power off one output, or every output when bare", KeybindAction::DpmsOff,
          ActionArgKind::OptionalOutput},
@@ -679,6 +696,26 @@ namespace umbriel {
           return true;
         }
         break;
+      case ActionArgKind::ColumnDisplay:
+        if (takeActionArg(value, spec, arg) && (arg == "normal" || arg == "tabbed")) {
+          output.action = spec.action;
+          output.payload = ColumnDisplayArg{.display = arg == "tabbed" ? ColumnDisplay::Tabbed : ColumnDisplay::Normal};
+          return true;
+        }
+        break;
+      case ActionArgKind::TabIndex: {
+        if (!takeActionArg(value, spec, arg)) {
+          break;
+        }
+        int index = 0;
+        const auto [indexPtr, indexError] = std::from_chars(arg.data(), arg.data() + arg.size(), index);
+        if (indexError != std::errc{} || indexPtr != arg.data() + arg.size() || index == 0) {
+          break;
+        }
+        output.action = spec.action;
+        output.payload = TabIndexArg{.index = index};
+        return true;
+      }
       case ActionArgKind::SkipConfirmation:
         if (value == spec.name) {
           output.action = spec.action;
@@ -810,6 +847,7 @@ namespace umbriel {
     add(KeybindAction::ToggleMaximizeToEdges, XKB_KEY_m);
     add(KeybindAction::ToggleFloating, XKB_KEY_t);
     add(KeybindAction::TogglePinned, XKB_KEY_p);
+    add(KeybindAction::ColumnToggleTabbed, XKB_KEY_w);
     // Holding the overview key would thrash open/close.
     add(KeybindAction::OverviewToggle, XKB_KEY_o).repeat = false;
 

@@ -46,6 +46,26 @@ namespace umbriel {
     All = Tiled | Floating | Pinned,
   };
 
+  // What a tab bar draws in each slot.
+  enum class TabBarLook : uint8_t {
+    Titles,
+    Indicator,
+  };
+
+  // What a tab bar does with more tabs than its max_tabs.
+  enum class TabOverflow : uint8_t {
+    // Keep the slots at their size and scroll the strip.
+    Scroll,
+    // Narrow the slots until every tab fits.
+    Shrink,
+  };
+
+  enum class TitleAlign : uint8_t {
+    Left,
+    Center,
+    Right,
+  };
+
   struct AccelProfile {
     enum class Kind {
       Flat,
@@ -82,6 +102,14 @@ namespace umbriel {
       std::optional<MasterPosition> position;
       bool operator==(const Master&) const = default;
     } master;
+    struct Tabs {
+      std::optional<ColumnDisplay> defaultDisplay;
+      std::optional<NewTabPosition> newTabPosition;
+      std::optional<bool> wrapFocus;
+      std::optional<bool> scrollSwitchesTabs;
+      std::optional<bool> middleClickCloses;
+      bool operator==(const Tabs&) const = default;
+    } tabs;
 
     bool operator==(const WorkspaceLayoutOverrides&) const = default;
   };
@@ -131,6 +159,20 @@ namespace umbriel {
       MasterPosition position = MasterPosition::Left;
       bool operator==(const Master&) const = default;
     } master;
+    struct Tabs {
+      ColumnDisplay defaultDisplay = ColumnDisplay::Normal;
+      NewTabPosition newTabPosition = NewTabPosition::End;
+      bool wrapFocus = true;
+      bool scrollSwitchesTabs = true;
+      bool middleClickCloses = false;
+      // Derived from [appearance.tab_bar]; set by resolve function. The bar's space is part of the layout.
+      int barHeight = 24;
+      TabBarPosition barPosition = TabBarPosition::Top;
+      bool hideWhenSingle = false;
+      // Whether bars are drawn unless a group says otherwise.
+      bool barVisible = true;
+      bool operator==(const Tabs&) const = default;
+    } tabs;
     // Derived from gap + appearance border widths; set by resolve function.
     int totalGap = 0; // gap + 2 * totalBorderWidth
     int edgePad = 0;  // gap + totalBorderWidth
@@ -344,6 +386,7 @@ namespace umbriel {
     std::optional<std::string> defaultScratchpad;
     std::optional<std::string> defaultScrollingColumn;
     std::optional<int> defaultScrollingColumnOrder;
+    std::optional<ColumnDisplay> defaultColumnDisplay;
     std::optional<bool> defaultFullscreen;
     std::optional<bool> defaultMaximizeToEdges;
     std::optional<bool> defaultMaximize;
@@ -400,6 +443,7 @@ namespace umbriel {
           && defaultScratchpad == other.defaultScratchpad
           && defaultScrollingColumn == other.defaultScrollingColumn
           && defaultScrollingColumnOrder == other.defaultScrollingColumnOrder
+          && defaultColumnDisplay == other.defaultColumnDisplay
           && defaultFullscreen == other.defaultFullscreen
           && defaultMaximizeToEdges == other.defaultMaximizeToEdges
           && defaultMaximize == other.defaultMaximize
@@ -441,6 +485,7 @@ namespace umbriel {
     std::optional<std::string> defaultScratchpad;
     std::optional<std::string> defaultScrollingColumn;
     std::optional<int> defaultScrollingColumnOrder;
+    std::optional<ColumnDisplay> defaultColumnDisplay;
     std::optional<bool> defaultFullscreen;
     std::optional<bool> defaultMaximizeToEdges;
     std::optional<bool> defaultMaximize;
@@ -546,6 +591,22 @@ namespace umbriel {
         bool operator==(const Overview&) const = default;
       } overview;
 
+      struct TabBar {
+        // Every tab that is neither shown nor urgent.
+        std::array<float, 4> background{0.1019608F, 0.1019608F, 0.1215686F, 1.0F};
+        std::array<float, 4> text{0.5411765F, 0.5411765F, 0.5725490F, 1.0F};
+        // The shown tab of the focused column.
+        std::array<float, 4> active{0.4784314F, 0.6392157F, 1.0F, 1.0F};
+        std::array<float, 4> activeText{0.0784314F, 0.0784314F, 0.0980392F, 1.0F};
+        // The shown tab of any other column.
+        std::array<float, 4> activeUnfocused{0.1607843F, 0.1607843F, 0.2F, 1.0F};
+        std::array<float, 4> activeUnfocusedText{0.9098039F, 0.9098039F, 0.9176471F, 1.0F};
+        // A hidden tab whose window asks for attention.
+        std::array<float, 4> urgent{1.0F, 0.4196078F, 0.4196078F, 1.0F};
+        std::array<float, 4> urgentText{0.0784314F, 0.0784314F, 0.0980392F, 1.0F};
+        bool operator==(const TabBar&) const = default;
+      } tabBar;
+
       bool operator==(const Colors&) const = default;
     } colors;
 
@@ -575,6 +636,34 @@ namespace umbriel {
         int offsetY = 2;
         bool operator==(const Shadow&) const = default;
       } shadow;
+      // The strip a tabbed column draws across one edge.
+      struct TabBar {
+        // Titles shows each tab's title in its slot; indicator draws the slots alone, as a thin strip.
+        TabBarLook style = TabBarLook::Titles;
+        TabBarPosition position = TabBarPosition::Top;
+        // Thickness: the bar's height on the top or bottom edge, its width on the left or right.
+        int height = 24;
+        // A Pango font description.
+        std::string font = "sans 10";
+        // Space a title keeps from either end of its slot.
+        int padding = 8;
+        // Space between neighbouring slots.
+        int tabGap = 2;
+        // -1 follows corner_radius.
+        int cornerRadius = -1;
+        // {title}, {app_id} and {index} are replaced; a window without a title shows its app id instead.
+        std::string titleFormat = "{title}";
+        TitleAlign titleAlign = TitleAlign::Center;
+        // A tabbed column of one window draws no bar and gives up its space.
+        bool hideWhenSingle = false;
+        // False draws no bar for any tab group the user has not shown one for; the tabs keep working, and take its
+        // space.
+        bool visible = true;
+        // Slots the bar shows at once; 0 shows every tab.
+        int maxTabs = 0;
+        TabOverflow overflow = TabOverflow::Scroll;
+        bool operator==(const TabBar&) const = default;
+      } tabBar;
       bool preferNoCsd = true;
 
       [[nodiscard]] int totalBorderWidth() const { return borderWidth + outerBorderWidth; }
@@ -779,6 +868,14 @@ namespace umbriel {
         MasterPosition position = MasterPosition::Left;
         bool operator==(const Master&) const = default;
       } master;
+      struct Tabs {
+        ColumnDisplay defaultDisplay = ColumnDisplay::Normal;
+        NewTabPosition newTabPosition = NewTabPosition::End;
+        bool wrapFocus = true;
+        bool scrollSwitchesTabs = true;
+        bool middleClickCloses = false;
+        bool operator==(const Tabs&) const = default;
+      } tabs;
       bool operator==(const Layout&) const = default;
     } layout;
 

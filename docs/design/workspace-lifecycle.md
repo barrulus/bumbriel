@@ -290,6 +290,9 @@ input-method keyboard grab are covered by
 Modifier release across text-input activation changes, including Fcitx's
 persistent virtual-keyboard mode, is covered by
 [`tests/harness/checks/input/input_method_modifier_release.sh`](../../tests/harness/checks/input/input_method_modifier_release.sh).
+Restoring the active keyboard after a transient IME keyboard disappears while
+another connected keyboard is idle is covered by
+[`tests/harness/checks/input/input_method_keyboard_restore.sh`](../../tests/harness/checks/input/input_method_keyboard_restore.sh).
 Client-cursor refresh after a short data-device drag is covered by
 [`tests/harness/checks/drag/external_drag.sh`](../../tests/harness/checks/drag/external_drag.sh).
 Keyboard-focus replay after a logical focus change during a drag is covered by

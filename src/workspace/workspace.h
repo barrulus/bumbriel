@@ -3,6 +3,7 @@
 #include "core/animation.h"
 #include "layout/layout.h"
 #include "layout/layout_motion.h"
+#include "workspace/tab_presenter.h"
 
 #include <array>
 #include <cstddef>
@@ -197,6 +198,17 @@ namespace umbriel {
     bool toggleFocusedMaximizedToEdges();
     bool toggleFocusedFullscreen();
     bool toggleFocusedFloating();
+    // Show the rows around the focused window as tabs, keeping it on show, or stack its tab group again; nullopt
+    // toggles. False when the layout's columns cannot be tabbed, when no tiled window is focused, or when nothing
+    // changed.
+    bool setFocusedColumnTabbed(std::optional<bool> tabbed);
+    // Move the focused tab one place among its tabs. False at either end or outside a tab group.
+    bool moveFocusedTab(int direction);
+    // Draw or hide the bar of the focused window's tab group; nullopt toggles. False outside a tab group.
+    bool setFocusedTabBar(std::optional<bool> shown);
+    // The tab groups' presentation: bars, hidden tabs, and the questions only the bars can answer.
+    [[nodiscard]] TabPresenter& tabs() { return m_tabs; }
+    [[nodiscard]] const TabPresenter& tabs() const { return m_tabs; }
     void ensureFocusedVisible();
     void activateFocusedColumn();
     // Re-applies the centering policy after the focused column's extent changed, instead of only fitting it.
@@ -309,6 +321,7 @@ namespace umbriel {
       wlr_box canvas{};
     };
     std::vector<TrackedCloseSnapshot> m_trackedCloseSnapshots;
+    TabPresenter m_tabs{*this};
   };
 
   class WorkspaceGroup : public Animatable {

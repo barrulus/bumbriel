@@ -6,6 +6,7 @@
 #include "overview/navigation.h"
 #include "scene/hint_rect.h"
 #include "scene/surface_blur.h"
+#include "view/chrome_attachment.h"
 
 #include <array>
 #include <cstddef>
@@ -183,6 +184,8 @@ namespace umbriel {
       // pools below every tile, under the output's `tileShadows`.
       wlr_scene_tree* shadowTree = nullptr;
       wlr_scene_shadow* shadow = nullptr;
+      // Scaled copy of the chrome the view carries beside its borders, such as a tab bar, under `tree`.
+      std::unique_ptr<ViewChromeAttachment> chrome;
       std::vector<std::unique_ptr<CardSurface>> surfaces;
       wlr_box box{}; // content box in layout coordinates
       wlr_scene_tree* badge = nullptr;
@@ -301,6 +304,8 @@ namespace umbriel {
     void destroyCard(Card* card);
     void layoutCardShadow(Card& card, double zoom, float alpha) const;
     static void destroyCardShadow(Card& card);
+    // Lay the card's chrome copy over `world`, the view's presented box, at `zoom`, or drop it with the view's chrome.
+    void layoutCardChrome(Card& card, const wlr_box& world, int borderInset, double zoom, float alpha) const;
     static void syncCardBuffer(CardSurface& entry);
     void dropCard(View* view);
     void rebuildCard(View* view);

@@ -3,6 +3,7 @@
 # visible during both window opening and closing. Built-in popin shrinks a closing snapshot toward its own centre.
 # Built-in fade applies one alpha to the whole window: a red parent fully covered by a blue subsurface never shows
 # through it while opening or closing, as it would if each buffer faded on its own.
+# A shown tab keeps its close snapshot over its red replacement; an already-hidden tab never contributes pixels.
 set -euo pipefail
 
 readonly CLIENT="${UMBRIEL_UNMAP_CLIENT:-./build-debug/tests/unmap-client}"
@@ -38,6 +39,13 @@ enabled = false
 
 [animation.dim_unfocused]
 enabled = false
+
+[layout.tabs]
+default_display = "tabbed"
+
+[[window_rule]]
+match.title = "^style-tab-"
+default_scrolling_column = "style-tabs"
 
 [[window_rule]]
 match.title = "^style-fade$"
@@ -78,13 +86,26 @@ wait_for_window() {
 }
 
 spawn() {
-  local title=$1
-  FILL_COLOR=0xFF0000FF "$CLIENT" "$title" 400 240 > "$UMBRIEL_RUNTIME_DIR/$title.log" 2>&1 &
+  local title=$1 color=${2:-0xFF0000FF}
+  FILL_COLOR="$color" "$CLIENT" "$title" 400 240 > "$UMBRIEL_RUNTIME_DIR/$title.log" 2>&1 &
   wait_for_window "$title"
 }
 
 window_id() {
   "$UMBRIEL" windows --json | jq -r --arg title "$1" '.[] | select(.title == $title) | .id'
+}
+
+wait_unmapped() {
+  local title=$1
+  for _ in $(seq 100); do
+    if grep -q '^unmapped$' "$UMBRIEL_RUNTIME_DIR/$title.log" \
+        && ! "$UMBRIEL" windows --json | jq -e --arg title "$title" 'any(.[]; .title == $title)' > /dev/null; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "timed out waiting for $title to unmap"
+  return 1
 }
 
 sample_rgb() {
@@ -200,4 +221,66 @@ kill "$group_pid"
 read -r group_close_red group_close_blue <<< "$(sample_rgb 940 540)"
 assert_group_fade closing "$group_close_red" "$group_close_blue"
 
-echo "built-in slide stayed distinct from fade, popin shrank the close snapshot, and fade kept subsurfaces opaque over their parent"
+"$UMBRIEL" clock-advance 5000
+
+spawn style-tab-red 0xFFFF0000
+"$UMBRIEL" clock-advance 5000
+spawn style-tab-blue
+"$UMBRIEL" clock-advance 5000
+if ! "$UMBRIEL" windows --json | jq -e '
+  any(.[]; .title == "style-tab-blue" and .tabbed and (.tab_hidden | not) and .active)
+  and any(.[]; .title == "style-tab-red" and .tab_hidden)
+' > /dev/null; then
+  echo "expected the blue tab to show over its hidden red replacement"
+  exit 1
+fi
+read -r tab_x tab_y < <("$UMBRIEL" windows --json | jq -r '
+  .[] | select(.title == "style-tab-blue") | "\(.x + (.w / 2 | floor)) \(.y + (.h / 2 | floor))"
+')
+grim "$IMAGE"
+read -r red green blue < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$tab_x" "$tab_y")
+if ((red > 15 || green > 15 || blue < 240)); then
+  echo "shown blue tab did not draw before closing: $red $green $blue"
+  exit 1
+fi
+"$UMBRIEL" msg "window-close:$(window_id style-tab-blue)" > /dev/null
+wait_unmapped style-tab-blue
+"$UMBRIEL" clock-advance "$((DURATION_MS / 2))"
+grim "$IMAGE"
+read -r red green blue < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$tab_x" "$tab_y")
+if ((red < 90 || red > 165 || green > 15 || blue < 90 || blue > 165)); then
+  echo "shown blue tab did not fade over its red replacement at midpoint: $red $green $blue"
+  exit 1
+fi
+"$UMBRIEL" clock-advance "$((DURATION_MS / 2))"
+grim "$IMAGE"
+read -r red green blue < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$tab_x" "$tab_y")
+if ((red < 240 || green > 15 || blue > 15)); then
+  echo "red replacement did not remain after the shown tab finished closing: $red $green $blue"
+  exit 1
+fi
+
+spawn style-tab-hidden
+"$UMBRIEL" clock-advance 5000
+"$UMBRIEL" msg "window-focus:$(window_id style-tab-red)" > /dev/null
+"$UMBRIEL" clock-advance 1
+if ! "$UMBRIEL" windows --json | jq -e '
+  any(.[]; .title == "style-tab-hidden" and .tab_hidden)
+  and any(.[]; .title == "style-tab-red" and (.tab_hidden | not) and .active)
+' > /dev/null; then
+  echo "expected the blue closer to be hidden before its close begins"
+  exit 1
+fi
+"$UMBRIEL" msg "window-close:$(window_id style-tab-hidden)" > /dev/null
+wait_unmapped style-tab-hidden
+for advance in 1 "$((DURATION_MS / 2))"; do
+  "$UMBRIEL" clock-advance "$advance"
+  grim "$IMAGE"
+  read -r red green blue < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel "$tab_x" "$tab_y")
+  if ((red < 240 || green > 15 || blue > 15)); then
+    echo "already-hidden blue tab contributed a close snapshot over red: $red $green $blue"
+    exit 1
+  fi
+done
+
+echo "built-in styles kept their lifecycle visuals, shown tabs faded over replacements, and hidden tabs stayed snapshot-free"

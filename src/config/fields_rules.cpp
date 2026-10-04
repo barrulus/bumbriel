@@ -258,6 +258,7 @@ namespace umbriel {
               "default_scrolling_column_order", std::numeric_limits<int>::min(), std::numeric_limits<int>::max(),
               &W::defaultScrollingColumnOrder
           ),
+          registry::choice("default_column_display", &W::defaultColumnDisplay, columnDisplays()),
       };
       return fields;
     }

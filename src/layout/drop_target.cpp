@@ -254,6 +254,11 @@ namespace umbriel {
         int nearestRow = 0;
         double rowDistance = std::abs(crossWorld - (crossOrigin + edgePad));
         for (int row = 1; row <= static_cast<int>(column.views.size()); ++row) {
+          // Boundaries lie between units: a tab group's tabs share one box, with no boundary between them.
+          if (const TabGroup* group = column.tabs.groupAt(static_cast<size_t>(row));
+              group != nullptr && static_cast<size_t>(row) > group->first) {
+            continue;
+          }
           const wlr_box target =
               row == static_cast<int>(column.views.size()) ? wlr_box{} : layout.targetBox(column.views[row]);
           const int boundary = row == static_cast<int>(column.views.size()) ? crossOrigin + crossExtent - edgePad
@@ -472,6 +477,16 @@ namespace umbriel {
       result.column = static_cast<int>(workspace.layout().columns().size());
     }
 
+    // Tabs share one box, so a drop over a tab group's bar or middle picks its place among the tabs rather than a row
+    // boundary.
+    if (result.row >= 0) {
+      if (const std::optional<TabDrop> tab = workspace.tabs().dropSlot(result.column, worldX, worldY)) {
+        result.row = tab->row;
+        result.tab = tab->member;
+        result.hintBox = tab->hint;
+      }
+    }
+
     if (options.clipHintToUsable) {
       result.hintBox = clampHintBox(result.hintBox, visible);
     }
@@ -519,8 +534,15 @@ namespace umbriel {
     } else {
       target.layout().removeView(&view);
     }
+    TabbedContainers* containers = target.layout().tabbedContainers();
+    const bool joinedTabs = drop.row >= 0
+        && drop.tab != nullptr
+        && containers != nullptr
+        && containers->insertTab(&view, std::max(0, drop.column), drop.row, drop.tab);
     if (drop.row >= 0) {
-      target.layout().insertViewIntoColumn(&view, std::max(0, drop.column), drop.row);
+      if (!joinedTabs) {
+        target.layout().insertViewIntoColumn(&view, std::max(0, drop.column), drop.row);
+      }
     } else {
       target.layout().insertView(&view, std::max(0, drop.column));
     }

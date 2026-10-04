@@ -24,6 +24,8 @@
 // FILL_COLOR=<ARGB> paints the buffer that colour (default 0xFF5577AA), so screenshots can tell windows apart.
 // RESIZE_FILL_COLOR=<ARGB> maps at the first configured size, then redraws at every later configured size in that
 // colour, the way a real client follows its tile.
+// LOG_SUSPENDED binds xdg-shell at version 6 and prints "suspended" and "resumed" whenever the toplevel's suspended
+// state changes.
 
 #include "color-management-v1-client-protocol.h"
 #include "content-type-v1-client-protocol.h"
@@ -116,6 +118,9 @@ namespace {
     bool requestMaximizedAfterFrame = false;
     bool maximizeRequested = false;
     bool logConfigures = false;
+    bool logSuspended = false;
+    bool logWmCapabilities = false;
+    bool suspended = false;
     xdg_toplevel* parentOnFirstConfigure = nullptr;
     bool requestFullscreen = false;
     bool fullscreenRequested = false;
@@ -325,11 +330,41 @@ namespace {
     wl_surface_commit(window.surface);
   }
 
+  // Sent only to a toplevel bound at version 4 and 5 or later, which LOG_SUSPENDED asks for.
+  void toplevelConfigureBounds(void*, xdg_toplevel*, int32_t, int32_t) {}
+  void auxiliaryToplevelWmCapabilities(void*, xdg_toplevel*, wl_array*) {}
+  void toplevelWmCapabilities(void* data, xdg_toplevel*, wl_array* capabilities) {
+    auto& state = *static_cast<State*>(data);
+    if (!state.logWmCapabilities) {
+      return;
+    }
+    const auto* values = static_cast<const uint32_t*>(capabilities->data);
+    const size_t count = capabilities->size / sizeof(uint32_t);
+    for (size_t index = 0; index < count; ++index) {
+      switch (values[index]) {
+      case XDG_TOPLEVEL_WM_CAPABILITIES_WINDOW_MENU:
+        std::println("wm-capability=window-menu");
+        break;
+      case XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE:
+        std::println("wm-capability=maximize");
+        break;
+      case XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN:
+        std::println("wm-capability=fullscreen");
+        break;
+      case XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE:
+        std::println("wm-capability=minimize");
+        break;
+      }
+    }
+    std::println("wm-capabilities-done");
+    std::fflush(stdout);
+  }
+
   constexpr xdg_toplevel_listener kAuxiliaryToplevelListener = {
       .configure = auxiliaryToplevelConfigure,
       .close = auxiliaryToplevelClose,
-      .configure_bounds = nullptr,
-      .wm_capabilities = nullptr,
+      .configure_bounds = toplevelConfigureBounds,
+      .wm_capabilities = auxiliaryToplevelWmCapabilities,
   };
 
   bool createAuxiliaryToplevel(State& state, AuxiliaryToplevel& window, const char* title, int width, int height) {
@@ -456,14 +491,20 @@ namespace {
     }
     const auto* configured = static_cast<const uint32_t*>(states->data);
     const size_t count = states->size / sizeof(uint32_t);
+    bool suspended = false;
     for (size_t index = 0; index < count; ++index) {
       fullscreen = fullscreen || configured[index] == XDG_TOPLEVEL_STATE_FULLSCREEN;
+      suspended = suspended || configured[index] == XDG_TOPLEVEL_STATE_SUSPENDED;
       if (configured[index] == XDG_TOPLEVEL_STATE_MAXIMIZED) {
         std::println("configured-maximized");
       }
     }
     if (state.logConfigures) {
       std::println("configured-state={}x{} {}", width, height, fullscreen ? "fullscreen" : "windowed");
+    }
+    if (state.logSuspended && suspended != state.suspended) {
+      state.suspended = suspended;
+      std::println("{}", suspended ? "suspended" : "resumed");
     }
     std::fflush(stdout);
   }
@@ -524,8 +565,8 @@ namespace {
   constexpr xdg_toplevel_listener kToplevelListener = {
       .configure = toplevelConfigure,
       .close = toplevelClose,
-      .configure_bounds = nullptr,
-      .wm_capabilities = nullptr,
+      .configure_bounds = toplevelConfigureBounds,
+      .wm_capabilities = toplevelWmCapabilities,
   };
 
   void wmBasePing(void*, xdg_wm_base* wmBase, uint32_t serial) { xdg_wm_base_pong(wmBase, serial); }
@@ -544,8 +585,10 @@ namespace {
     } else if (std::strcmp(interface, wl_shm_interface.name) == 0) {
       state.shm = static_cast<wl_shm*>(wl_registry_bind(registry, name, &wl_shm_interface, 1));
     } else if (std::strcmp(interface, xdg_wm_base_interface.name) == 0) {
-      state.wmBase =
-          static_cast<xdg_wm_base*>(wl_registry_bind(registry, name, &xdg_wm_base_interface, std::min(version, 1U)));
+      const uint32_t wanted = state.logSuspended ? 6U : (state.logWmCapabilities ? 5U : 1U);
+      state.wmBase = static_cast<xdg_wm_base*>(
+          wl_registry_bind(registry, name, &xdg_wm_base_interface, std::min(version, wanted))
+      );
       xdg_wm_base_add_listener(state.wmBase, &kWmBaseListener, &state);
     } else if (std::strcmp(interface, xdg_activation_v1_interface.name) == 0) {
       state.activation = static_cast<xdg_activation_v1*>(
@@ -776,6 +819,8 @@ int main(int argc, char** argv) {
   state.requestMaximizedAfterMap = std::getenv("REQUEST_MAXIMIZED_AFTER_MAP") != nullptr;
   state.requestMaximizedAfterFrame = std::getenv("REQUEST_MAXIMIZED_AFTER_FRAME") != nullptr;
   state.logConfigures = std::getenv("LOG_CONFIGURES") != nullptr;
+  state.logSuspended = std::getenv("LOG_SUSPENDED") != nullptr;
+  state.logWmCapabilities = std::getenv("LOG_WM_CAPABILITIES") != nullptr;
   state.requestFullscreen = std::getenv("REQUEST_FULLSCREEN") != nullptr;
   state.requestHdr = std::getenv("COLOR_HDR") != nullptr;
   state.requestWindowsScrgb = std::getenv("COLOR_WINDOWS_SCRGB") != nullptr;

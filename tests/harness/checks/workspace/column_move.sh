@@ -51,6 +51,17 @@ wait_for_workspace() {
   return 1
 }
 
+wait_for_output() {
+  local title=$1 output=$2 actual=
+  for _ in $(seq 50); do
+    actual=$(field_of "$title" workspace)
+    [[ $actual == "$output":* ]] && return 0
+    sleep 0.1
+  done
+  echo "expected '$title' on $output, got $actual"
+  return 1
+}
+
 workspace_id_named() {
   "$WORKSPACE" --all | awk -F'\t' -v name="$1" '$2 == name { print $1; exit }'
 }
@@ -195,4 +206,197 @@ wait_for_workspace column-bottom "$right_one_id"
 wait_for_workspace source-anchor "$one_id"
 wait_for_column_geometry "$normal_width"
 
-echo "direct and adjacent actions moved a focused two-row column within and across outputs"
+# A reconstructed column retains multiple groups, including the selection of the
+# group that does not hold workspace focus, and each group's bar override.
+spawn_client transfer-c
+wait_for_windows 4
+c_id=$(field_of transfer-c id)
+accepts window-consume-left
+accepts column-set-display:tabbed
+accepts window-move-down
+accepts "window-focus:$bottom_id"
+accepts column-hide-tab-bar
+accepts "window-focus:$c_id"
+accepts column-set-display:tabbed
+accepts column-show-tab-bar
+spawn_client transfer-d
+wait_for_windows 5
+d_id=$(field_of transfer-d id)
+accepts window-consume-left
+"$UMBRIEL" settle
+
+transfer_state() {
+  "$UMBRIEL" windows --json | jq -c '
+    [.[] | select(.title == "column-top" or .title == "column-bottom"
+      or .title == "transfer-c" or .title == "transfer-d")]
+    | sort_by(.title)
+    | map({title, y, h, tabbed, tab_index, tab_hidden})'
+}
+
+assert_transfer_groups() {
+  local windows
+  "$UMBRIEL" settle
+  windows=$("$UMBRIEL" windows --json)
+  if ! jq -e '
+    [.[] | select(.title == "column-top")][0] as $a
+    | [.[] | select(.title == "column-bottom")][0] as $b
+    | [.[] | select(.title == "transfer-c")][0] as $c
+    | [.[] | select(.title == "transfer-d")][0] as $d
+    | $a.tabbed and $b.tabbed and $c.tabbed and $d.tabbed
+      and $a.tab_hidden and ($b.tab_hidden | not)
+      and $c.tab_hidden and ($d.tab_hidden | not) and $d.active
+      and $a.tab_index == 0 and $b.tab_index == 1
+      and $c.tab_index == 0 and $d.tab_index == 1
+      and ([$a.x, $a.y, $a.w, $a.h] == [$b.x, $b.y, $b.w, $b.h])
+      and ([$c.x, $c.y, $c.w, $c.h] == [$d.x, $d.y, $d.w, $d.h])
+      and $b.x == $d.x and $b.y < $d.y
+  ' <<< "$windows" > /dev/null; then
+    echo "expected two transferred groups showing column-bottom and transfer-d: $windows"
+    exit 1
+  fi
+  if [[ $(transfer_state) != "$groups_before" ]]; then
+    echo "transfer changed group selections, bar reserves, or row geometry: $(transfer_state)"
+    exit 1
+  fi
+}
+
+groups_before=$(transfer_state)
+# Reloading the default affects new columns only. Rebuilding must replace the
+# destination's seeded one-tab group with the source's display, not join it.
+printf '\n[layout.tabs]\ndefault_display = "tabbed"\n' >> "$UMBRIEL_CONFIG"
+accepts config-reload
+accepts "column-move-to-workspace:TWO/HEADLESS-1"
+wait_for_workspace transfer-d "$two_id"
+assert_transfer_groups
+accepts column-move-to-output-right
+wait_for_workspace transfer-d "$right_one_id"
+assert_transfer_groups
+
+# Whole-workspace output moves rebuild all columns on the requested output.
+accepts workspace-move-to-output-left
+wait_for_output transfer-d HEADLESS-1
+transferred_workspace=$(field_of transfer-d workspace)
+for title in column-top column-bottom transfer-c; do
+  wait_for_workspace "$title" "$transferred_workspace"
+done
+assert_transfer_groups
+wait_for_workspace source-anchor "$one_id"
+accepts "column-move-to-workspace:THREE/HEADLESS-1"
+wait_for_workspace transfer-d "$three_id"
+
+# A master area can retain a whole-column group and its hidden bar, but not
+# separate groups inside one area. Remove the second group to make it representable.
+accepts "window-focus:$d_id"
+accepts window-close
+wait_for_windows 4
+accepts "window-focus:$c_id"
+accepts window-close
+wait_for_windows 3
+accepts "window-focus:$bottom_id"
+"$UMBRIEL" settle
+whole_group_top=$(field_of column-bottom y)
+accepts "workspace-switch:TWO/HEADLESS-1"
+accepts workspace-set-layout:master
+accepts "workspace-switch:THREE/HEADLESS-1"
+accepts "column-move-to-workspace:TWO/HEADLESS-1"
+wait_for_workspace column-bottom "$two_id"
+"$UMBRIEL" settle
+if ! "$UMBRIEL" windows --json | jq -e --argjson top "$whole_group_top" '
+  [.[] | select(.title == "column-top")][0] as $a
+  | [.[] | select(.title == "column-bottom")][0] as $b
+  | $a.tabbed and $b.tabbed and $a.tab_hidden and ($b.tab_hidden | not)
+    and $b.active and $a.tab_index == 0 and $b.tab_index == 1
+    and $b.y == $top
+    and ([$a.x, $a.y, $a.w, $a.h] == [$b.x, $b.y, $b.w, $b.h])
+' > /dev/null; then
+  echo "master transfer lost the whole-area group, selected tab, or hidden bar"
+  exit 1
+fi
+
+# Rebuilding a whole master workspace preserves both areas, rather than letting
+# new-window insertion policy demote a row out of an already rebuilt group.
+printf '\n[layout.master]\nnew_becomes_master = false\n' >> "$UMBRIEL_CONFIG"
+accepts config-reload
+spawn_client master-extra
+wait_for_windows 4
+extra_id=$(field_of master-extra id)
+accepts "window-focus:$bottom_id"
+"$UMBRIEL" settle
+master_state() {
+  "$UMBRIEL" windows --json | jq -c '
+    [.[] | select(.title == "column-top" or .title == "column-bottom" or .title == "master-extra")]
+    | sort_by(.title) | map({title, y, w, h, tabbed, tab_index, tab_hidden, active})'
+}
+master_before=$(master_state)
+accepts "workspace-switch:RIGHT_ONE/HEADLESS-2"
+accepts workspace-set-layout:master
+accepts "workspace-switch:RIGHT_TWO/HEADLESS-2"
+accepts workspace-set-layout:master
+accepts "workspace-switch:TWO/HEADLESS-1"
+accepts workspace-move-to-output-right
+wait_for_output column-bottom HEADLESS-2
+transferred_workspace=$(field_of column-bottom workspace)
+wait_for_workspace column-top "$transferred_workspace"
+wait_for_workspace master-extra "$transferred_workspace"
+"$UMBRIEL" settle
+if [[ $(master_state) != "$master_before" ]]; then
+  echo "whole-workspace output transfer changed master areas, tabs, bar reserve, or selection: $(master_state)"
+  exit 1
+fi
+# The reverse transfer also exercises master-to-scrolling group conversion.
+accepts "workspace-switch:TWO/HEADLESS-1"
+accepts workspace-set-layout:scrolling
+accepts "workspace-switch:THREE/HEADLESS-1"
+accepts workspace-set-layout:scrolling
+accepts "window-focus-warp:$bottom_id"
+accepts workspace-move-to-output-left
+wait_for_output column-bottom HEADLESS-1
+transferred_workspace=$(field_of column-bottom workspace)
+wait_for_workspace column-top "$transferred_workspace"
+wait_for_workspace master-extra "$transferred_workspace"
+accepts "window-focus:$extra_id"
+accepts window-close
+wait_for_windows 3
+accepts "window-focus:$bottom_id"
+accepts "column-move-to-workspace:THREE/HEADLESS-1"
+wait_for_workspace column-bottom "$three_id"
+accepts "workspace-switch:RIGHT_TWO/HEADLESS-2"
+accepts workspace-set-layout:scrolling
+accepts "workspace-switch:THREE/HEADLESS-1"
+
+# A normal source stays normal even when the destination creates tabbed areas.
+accepts column-set-display:normal
+accepts column-move-to-output-right
+wait_for_workspace column-bottom "$right_two_id"
+"$UMBRIEL" settle
+if [[ $(field_of column-top tabbed) != false || $(field_of column-bottom tabbed) != false ]]; then
+  echo "destination tabbed default changed a normal source column's display"
+  exit 1
+fi
+accepts "workspace-switch:TWO/HEADLESS-1"
+accepts workspace-set-layout:master
+accepts "workspace-switch:RIGHT_TWO/HEADLESS-2"
+accepts "column-move-to-workspace:TWO/HEADLESS-1"
+wait_for_workspace column-bottom "$two_id"
+"$UMBRIEL" settle
+if [[ $(field_of column-top tabbed) != false || $(field_of column-bottom tabbed) != false ]]; then
+  echo "destination tabbed default changed a normal source master area"
+  exit 1
+fi
+
+# Dwindle cannot represent groups and keeps every transferred member visible.
+accepts column-set-display:tabbed
+accepts "workspace-switch:RIGHT_TWO/HEADLESS-2"
+accepts workspace-set-layout:dwindle
+accepts "workspace-switch:TWO/HEADLESS-1"
+accepts "column-move-to-workspace:RIGHT_TWO/HEADLESS-2"
+wait_for_workspace column-top "$right_two_id"
+wait_for_workspace column-bottom "$right_two_id"
+"$UMBRIEL" settle
+if [[ $(field_of column-top tabbed) != false || $(field_of column-bottom tabbed) != false \
+  || $(field_of column-top tab_hidden) != false || $(field_of column-bottom tab_hidden) != false ]]; then
+  echo "dwindle did not flatten a transferred group into visible leaves"
+  exit 1
+fi
+
+echo "column and workspace transfers retained geometry, groups, selections, and display overrides"

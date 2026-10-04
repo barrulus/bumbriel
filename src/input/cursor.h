@@ -13,6 +13,7 @@ struct wlr_cursor;
 struct wl_event_source;
 struct wlr_input_device;
 struct wlr_output;
+struct wlr_pointer_axis_event;
 struct wlr_pointer_constraint_v1;
 struct wlr_seat_client;
 struct wlr_surface;
@@ -234,6 +235,9 @@ namespace umbriel {
     void handleMotionAbsolute(void* data);
     void handleButton(void* data);
     void handleAxis(void* data);
+    // Step through the tabs of the bar under the pointer by the wheel's notches. False when no bar that takes the
+    // wheel is there.
+    bool scrollTabBar(const wlr_pointer_axis_event* event, int orientation);
     void handleFrame();
     void handleConstraintDestroy();
     void handleTouchDown(void* data);

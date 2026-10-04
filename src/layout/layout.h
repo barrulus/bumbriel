@@ -1,5 +1,7 @@
 #pragma once
 
+#include "layout/tab_state.h"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -128,6 +130,37 @@ namespace umbriel {
     double widthFrac = 0.5;
     double savedWidthFrac = 0.0;
     std::vector<double> rememberedScrollingExtents;
+    // Runs of rows shown as tabs, each one unit of the stack.
+    ColumnTabs tabs;
+  };
+
+  // The tab group holding `view`, else null.
+  [[nodiscard]] const TabGroup* tabGroupOf(const Column& column, const View* view);
+  // The window the unit holding row `row` shows: the row itself, or the active tab of its group.
+  [[nodiscard]] View* unitEntry(const Column& column, size_t row);
+  // Where focus enters a column from outside it: the window its first unit shows.
+  [[nodiscard]] View* columnEntry(const Column& column);
+  // True for a tab its group is not showing.
+  [[nodiscard]] bool hiddenTab(const Column& column, const View* view);
+  // Whether a tab group of `tabs` tabs draws its bar: its own choice when it has one, else the configuration's.
+  [[nodiscard]] bool tabBarShown(const ResolvedLayoutConfig& config, size_t tabs, std::optional<bool> bar);
+
+  // Layouts whose columns can show runs of their rows as tabs. Layout::tabbedContainers() reaches it; a layout without
+  // multi-view containers has none. Every call names a tiled view and acts on the tab group around it.
+  class TabbedContainers {
+  public:
+    virtual ~TabbedContainers() = default;
+    // Show the rows around `view` as tabs, or stack its group's tabs again. False when nothing changed.
+    virtual bool setTabbed(const View* view, bool tabbed) = 0;
+    // Show `view` in its tab group. True only when the group now shows a different view.
+    virtual bool selectTab(const View* view) = 0;
+    // Add `view`, not yet in the layout, at row `row` of the group containing `member` in column `column`.
+    // Either boundary belongs to the named group. False, adding nothing, when the row lies outside that group.
+    virtual bool insertTab(View* view, int column, int row, const View* member) = 0;
+    // Move `view` one place among its tabs, `direction` negative for earlier. False at either end or outside a group.
+    virtual bool moveTab(const View* view, int direction) = 0;
+    // Draw or hide the bar of `view`'s tab group; nullopt toggles it. False outside a group.
+    virtual bool setTabBar(const View* view, std::optional<bool> shown) = 0;
   };
 
   struct LayoutTarget {
@@ -282,10 +315,23 @@ namespace umbriel {
     // Whether a column occupies the full viewport, however each layout gets there.
     [[nodiscard]] virtual bool isFullWidth(int columnIndex) const = 0;
 
+    // Null for a layout whose columns cannot be tabbed.
+    [[nodiscard]] virtual TabbedContainers* tabbedContainers() { return nullptr; }
+
     // Anything only one layout can answer lives on that layout. Reach it through the single downcast seam,
     // Workspace::scrollingLayout(), rather than by asking every layout a question most of them have no answer to.
 
   protected:
+    // Space a tab group of `tabs` tabs gives its bar on the bar's edge: the bar and one gap, or nothing while its bar
+    // is hidden.
+    [[nodiscard]] int tabBarReserve(size_t tabs, std::optional<bool> bar) const;
+    // The box every tab of a group shares: `box`, the group's unit, less the bar's reserve on the bar's edge.
+    [[nodiscard]] wlr_box tabbedBox(const wlr_box& box, size_t tabs, std::optional<bool> bar) const;
+    // Whether a column created now starts with its window as a tab.
+    [[nodiscard]] bool opensTabbed() const;
+    // The display an area created now starts with.
+    [[nodiscard]] TabState initialTabState() const;
+
     // The usable area minus edge padding on both axes: the box the layout has
     // to fill.
     [[nodiscard]] wlr_box contentArea(const wlr_box& usable) const;

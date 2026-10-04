@@ -54,6 +54,24 @@ namespace umbriel {
       return surface != nullptr && wlr_xdg_popup_try_from_wlr_surface(wlr_surface_get_root_surface(surface)) != nullptr;
     }
 
+    // The tab bar slot under a layout point on that output's active workspace. A bar is compositor-drawn, so the scene
+    // hit test never reports it: what the hit test did find wins when it sits above the bar. Windows, their popups, X11
+    // menus, and top or overlay panels do; background and bottom layer surfaces, a wallpaper, lie below it.
+    std::optional<TabHit> tabBarHitAt(
+        Server& server, double lx, double ly, const wlr_surface* hitSurface, const View* hitView,
+        const LayerSurface* hitLayer
+    ) {
+      const bool covered =
+          hitView != nullptr || (hitLayer != nullptr ? overviewPassthroughLayer(hitLayer) : hitSurface != nullptr);
+      if (covered) {
+        return std::nullopt;
+      }
+      Output* output = server.outputFromWlr(wlr_output_layout_output_at(server.outputLayout(), lx, ly));
+      WorkspaceGroup* group = output != nullptr ? output->workspaceGroup() : nullptr;
+      Workspace* workspace = group != nullptr ? group->active() : nullptr;
+      return workspace != nullptr ? workspace->tabs().tabAt(lx, ly) : std::nullopt;
+    }
+
     // `[input.touchpad] scroll_factor` (overridden per direction by `horizontal`/`vertical`) scales a touchpad's smooth
     // scroll delta, never the discrete value120 notches. Read per event so a reload applies on the next axis;
     // non-touchpads and unset values stay at 1.0.
@@ -1260,6 +1278,32 @@ namespace umbriel {
       return;
     }
 
+    // A press on a tab bar is the compositor's: no client sees it or its release. The left button selects the tab and
+    // holds it, so dragging it past the threshold pulls it out of its column like any tiled window.
+    if (const std::optional<TabHit> hit = tabBarHitAt(*m_server, m_cursor->x, m_cursor->y, surface, view, layer)) {
+      const bool keyboardFree = m_server->exclusiveKeyboardLayer() == nullptr;
+      Workspace* home = hit->tab->workspace();
+      if (hit->part != TabBarPart::Tab) {
+        // A cycle button selects the tab before or after the one on show, wrapping at the ends.
+        if (button == BTN_LEFT && keyboardFree && home != nullptr) {
+          if (View* target = home->tabs().cycleFrom(hit->tab, hit->part == TabBarPart::PreviousTab ? -1 : 1)) {
+            m_server->focusView(target, FocusReason::PointerPress);
+          }
+        }
+      } else if (button == BTN_LEFT && keyboardFree) {
+        m_server->focusView(hit->tab, FocusReason::PointerPress);
+        if (beginMove(hit->tab, button)) {
+          return;
+        }
+      } else if (
+          button == BTN_MIDDLE && keyboardFree && home != nullptr && home->layoutConfig().tabs.middleClickCloses
+      ) {
+        hit->tab->requestClose();
+      }
+      m_swallowedButtons.push_back(button);
+      return;
+    }
+
     const bool modHeld = (m_server->keyboardModifiers() & m_server->modKey()) != 0;
     if (button == BTN_LEFT && modHeld && view != nullptr) {
       m_server->focusView(view, FocusReason::Grab);
@@ -1385,6 +1429,10 @@ namespace umbriel {
     }
 
     const int orientation = isVertical ? 0 : 1;
+    // An unmodified wheel over a tab bar steps through its tabs.
+    if (!armed && effective == 0 && scrollTabBar(event, orientation)) {
+      return;
+    }
     if (!armed) {
       m_wheelAccum[orientation] = 0;
       const double scale = touchpadScrollFactor(event->pointer, isVertical);
@@ -1415,6 +1463,30 @@ namespace umbriel {
       }
       acc -= std::copysign(1.0, acc);
     }
+  }
+
+  bool Cursor::scrollTabBar(const wlr_pointer_axis_event* event, int orientation) {
+    double sx = 0;
+    double sy = 0;
+    wlr_surface* surface = nullptr;
+    LayerSurface* layer = nullptr;
+    View* view = m_server->viewAt(m_cursor->x, m_cursor->y, &surface, &sx, &sy, &layer);
+    const std::optional<TabHit> hit = tabBarHitAt(*m_server, m_cursor->x, m_cursor->y, surface, view, layer);
+    Workspace* workspace = hit ? hit->tab->workspace() : nullptr;
+    if (workspace == nullptr || !workspace->layoutConfig().tabs.scrollSwitchesTabs) {
+      return false;
+    }
+    double& accumulated = m_wheelAccum[orientation];
+    accumulated +=
+        event->delta_discrete != 0 ? static_cast<double>(event->delta_discrete) / 120.0 : event->delta / 15.0;
+    while (std::abs(accumulated) >= 1.0) {
+      const int direction = accumulated < 0 ? -1 : 1;
+      accumulated -= direction;
+      if (View* target = workspace->tabs().stepFrom(hit->tab, direction)) {
+        m_server->focusView(target, FocusReason::PointerPress);
+      }
+    }
+    return true;
   }
 
   void Cursor::handleFrame() {
@@ -1478,6 +1550,23 @@ namespace umbriel {
         overview->handleButton(BTN_LEFT, false, lx, ly, event->time_msec);
       }
       return;
+    }
+
+    if (!m_server->sessionLocked() && m_server->exclusiveKeyboardLayer() == nullptr) {
+      // A tap on a tab bar selects that tab, as a left click does.
+      if (const std::optional<TabHit> hit = tabBarHitAt(*m_server, lx, ly, surface, view, layer)) {
+        if (hit->part != TabBarPart::Tab) {
+          Workspace* home = hit->tab->workspace();
+          if (View* target = home != nullptr
+                  ? home->tabs().cycleFrom(hit->tab, hit->part == TabBarPart::PreviousTab ? -1 : 1)
+                  : nullptr) {
+            m_server->focusView(target, FocusReason::PointerPress);
+          }
+        } else {
+          m_server->focusView(hit->tab, FocusReason::PointerPress);
+        }
+        return;
+      }
     }
 
     if (surface != nullptr) {

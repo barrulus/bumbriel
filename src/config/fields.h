@@ -65,6 +65,8 @@ namespace umbriel {
   [[nodiscard]] const registry::Choices<VrrMode>& vrrModes();
   [[nodiscard]] const registry::Choices<HdrMode>& hdrModes();
   [[nodiscard]] const registry::Choices<ContentType>& contentTypes();
+  // Shared by [layout.tabs] and window rules.
+  [[nodiscard]] const registry::Choices<ColumnDisplay>& columnDisplays();
 
   // Why an action or rule may not name a scratchpad, or nullopt when it may. Scratchpads are read before every table
   // that names one.

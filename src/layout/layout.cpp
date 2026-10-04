@@ -69,6 +69,75 @@ namespace umbriel {
     return std::max(1, static_cast<int>(std::lround(fraction * (viewportPrimary + gap) - gap)));
   }
 
+  bool tabBarShown(const ResolvedLayoutConfig& config, size_t tabs, std::optional<bool> bar) {
+    if (bar) {
+      return *bar;
+    }
+    return config.tabs.barVisible && !(config.tabs.hideWhenSingle && tabs <= 1);
+  }
+
+  int Layout::tabBarReserve(size_t tabs, std::optional<bool> bar) const {
+    if (m_config == nullptr || !tabBarShown(*m_config, tabs, bar)) {
+      return 0;
+    }
+    return m_config->tabs.barHeight + m_config->gap;
+  }
+
+  wlr_box Layout::tabbedBox(const wlr_box& box, size_t tabs, std::optional<bool> bar) const {
+    const TabBarPosition position = m_config != nullptr ? m_config->tabs.barPosition : TabBarPosition::Top;
+    const bool across = tabBarAcross(position);
+    // A unit too small for its bar keeps one pixel for its tabs.
+    const int reserve = std::min(tabBarReserve(tabs, bar), std::max(0, (across ? box.height : box.width) - 1));
+    wlr_box shared = box;
+    (across ? shared.height : shared.width) -= reserve;
+    if (position == TabBarPosition::Top) {
+      shared.y += reserve;
+    } else if (position == TabBarPosition::Left) {
+      shared.x += reserve;
+    }
+    return shared;
+  }
+
+  bool Layout::opensTabbed() const {
+    return m_config != nullptr && m_config->tabs.defaultDisplay == ColumnDisplay::Tabbed;
+  }
+
+  TabState Layout::initialTabState() const {
+    TabState tabs;
+    tabs.setTabbed(opensTabbed(), 0);
+    return tabs;
+  }
+
+  namespace {
+    std::optional<size_t> rowIn(const Column& column, const View* view) {
+      const auto it = std::ranges::find(column.views, view);
+      if (view == nullptr || it == column.views.end()) {
+        return std::nullopt;
+      }
+      return static_cast<size_t>(it - column.views.begin());
+    }
+  } // namespace
+
+  const TabGroup* tabGroupOf(const Column& column, const View* view) {
+    const std::optional<size_t> row = rowIn(column, view);
+    return row ? column.tabs.groupAt(*row) : nullptr;
+  }
+
+  View* unitEntry(const Column& column, size_t row) {
+    if (row >= column.views.size()) {
+      return nullptr;
+    }
+    const size_t shown = column.tabs.unitShown(row);
+    return shown < column.views.size() ? column.views[shown] : column.views[row];
+  }
+
+  View* columnEntry(const Column& column) { return unitEntry(column, 0); }
+
+  bool hiddenTab(const Column& column, const View* view) {
+    const std::optional<size_t> row = rowIn(column, view);
+    return row && column.tabs.hidden(*row);
+  }
+
   std::vector<View*> Layout::focusPeers(const View* from, const View* target) const {
     if (target == nullptr) {
       return {};
@@ -77,7 +146,16 @@ namespace umbriel {
     if (column < 0 || column == columnOf(from)) {
       return {};
     }
-    return columns()[static_cast<size_t>(column)].views;
+    const Column& peers = columns()[static_cast<size_t>(column)];
+    // Entering a column lands on a window it shows, never on a hidden tab, however recently it was focused.
+    std::vector<View*> shown;
+    shown.reserve(peers.views.size());
+    for (size_t row = 0; row < peers.views.size(); ++row) {
+      if (!peers.tabs.hidden(row)) {
+        shown.push_back(peers.views[row]);
+      }
+    }
+    return shown;
   }
 
   View* directionalNeighbor(std::span<const LayoutTarget> targets, const View* view, bool horizontal, int direction) {

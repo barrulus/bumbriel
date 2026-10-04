@@ -49,6 +49,7 @@ floating or pinned state that it creates.
 | `default_pinned` | Open pinned above normal windows. |
 | `default_scrolling_column` | Join matching windows into one named scrolling column. |
 | `default_scrolling_column_order` | Set order inside a named scrolling column. |
+| `default_column_display` | Show the column the window opens in as `"tabbed"` or `"normal"`. |
 
 These values apply once when a window opens. Umbriel checks opening rules again
 when the first post-map title arrives and when the effective content type first
@@ -144,6 +145,10 @@ default_scrolling_column_order = 20
 
 The name is local to a workspace. The first matching window creates the column
 and sets its extent.
+
+Add `default_column_display = "tabbed"` to keep such a column as
+[tabs](layout.md#tab-groups): each matching window that opens tabs itself with
+the windows stacked beside it in the column it joins or creates.
 
 ## Settings updated while a window is open
 

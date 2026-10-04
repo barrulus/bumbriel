@@ -63,6 +63,24 @@ default_floating_size_px = { width = 300, height = 200 }
 default_scrolling_column = "browser-stack"
 default_scrolling_column_order = 12
 default_scrolling_extent = 0.25
+
+[[window_rule]]
+match.title = "^named-tab-later$"
+default_scrolling_column = "tab-order"
+default_scrolling_column_order = 20
+default_column_display = "tabbed"
+
+[[window_rule]]
+match.title = "^named-tab-first$"
+default_scrolling_column = "tab-order"
+default_scrolling_column_order = 10
+default_column_display = "tabbed"
+
+[[window_rule]]
+match.title = "^named-tab-middle$"
+default_scrolling_column = "tab-order"
+default_scrolling_column_order = 15
+default_column_display = "tabbed"
 EOF
 "$UMBRIEL" msg config-reload > /dev/null
 
@@ -175,6 +193,27 @@ if [[ $joiner_floating != false || $joiner_x != "$first_x" ]]; then
   failed=1
 elif ((unrelated_x - first_x != column_gap_before)); then
   echo "floating named member changed the established column extent: before=$column_gap_before after=$((unrelated_x - first_x))"
+  failed=1
+fi
+
+# Ordered arrivals join the existing tab group at its beginning or inside it.
+spawn_client named-tab-later
+wait_for_windows 11
+spawn_client named-tab-first
+wait_for_windows 12
+spawn_client named-tab-middle
+wait_for_windows 13
+"$UMBRIEL" settle
+windows=$("$UMBRIEL" windows --json)
+if ! jq -e '
+  [.[] | select(.title | startswith("named-tab-"))]
+  | length == 3 and all(.[]; .tabbed)
+    and (map([.x, .y, .w, .h]) | unique | length) == 1
+    and any(.[]; .title == "named-tab-first" and .tab_index == 0 and .tab_hidden)
+    and any(.[]; .title == "named-tab-middle" and .tab_index == 1 and (.tab_hidden | not) and .active)
+    and any(.[]; .title == "named-tab-later" and .tab_index == 2 and .tab_hidden)
+' <<< "$windows" > /dev/null; then
+  echo "ordered tab arrivals did not retain one group and select the arriving tab: $windows"
   failed=1
 fi
 

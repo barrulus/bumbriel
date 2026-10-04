@@ -31,9 +31,12 @@ namespace umbriel {
       return;
     }
     m_outputs = std::make_unique<XwaylandOutputs>(server.display(), server.outputLayout(), m_nativeResolution);
-    // wlroots keeps both and hands them to the window manager when Xwayland starts. Setting them from the ready
-    // handler instead makes X requests there that can leave the first client's MapRequest unread in xcb's queue.
-    wlr_xwayland_set_seat(m_wlr, server.seat()->wlr());
+    // wlroots drops the seat whenever the window manager goes away, which happens each time the lazy Xwayland exits
+    // with its last client, so hand it over again before every start. wlroots passes the seat to the window manager
+    // when Xwayland is ready; setting it from the ready handler instead makes X requests there that can leave the
+    // first client's MapRequest unread in xcb's queue.
+    m_serverStart.notify = onServerStart;
+    wl_signal_add(&m_wlr->server->events.start, &m_serverStart);
     applyCursor(server.cursor()->xcursorManager());
     m_ready.notify = onReady;
     wl_signal_add(&m_wlr->events.ready, &m_ready);
@@ -48,6 +51,7 @@ namespace umbriel {
     }
     // Windows only detach here; the server deletes views before destroying this.
     m_windows.clear();
+    wl_list_remove(&m_serverStart.link);
     wl_list_remove(&m_ready.link);
     wl_list_remove(&m_newSurface.link);
     wlr_xwayland_destroy(m_wlr);
@@ -97,6 +101,11 @@ namespace umbriel {
     for (const auto& window : m_windows) {
       window->syncGeometry();
     }
+  }
+
+  void Xwayland::onServerStart(wl_listener* listener, void* /*data*/) {
+    Xwayland* self = wl_container_of(listener, self, m_serverStart); // NOLINT(modernize-use-auto)
+    wlr_xwayland_set_seat(self->m_wlr, self->m_server.seat()->wlr());
   }
 
   void Xwayland::onReady(wl_listener* listener, void* /*data*/) {
