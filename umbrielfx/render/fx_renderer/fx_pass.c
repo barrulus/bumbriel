@@ -762,7 +762,8 @@ static void draw_animation_texture(
     struct fx_gles_render_pass* pass, struct wlr_texture* wlr_texture, struct fx_effect_shader* shader,
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* source_box,
     const struct wlr_box* logical_box, int expand, const struct fx_effect_geometry* geometry,
-    const float* corner_radius, const float* pointer, const struct fx_cursor_path* pointer_path, enum wl_output_transform transform, const pixman_region32_t* clip,
+    const float* corner_radius, const float* pointer, const struct fx_cursor_path* pointer_path,
+    enum wl_output_transform transform, const pixman_region32_t* clip,
     struct wlr_texture* previous_texture, const struct wlr_box* previous_source_box, const float projection[9],
     bool blend, bool mark_updated
 ) {
@@ -1124,8 +1125,8 @@ static void emit_light(
   const struct wlr_box local = {.width = box->width, .height = box->height};
   draw_animation_texture(
       pass, texture, composite->shader, composite->parameters, &local, source_box, logical_box, composite->expand,
-      geometry, composite->corner_radius, composite->pointer, composite->pointer_path, composite->transform, NULL, previous_texture,
-      previous_box, projection, false, false
+      geometry, composite->corner_radius, composite->pointer, composite->pointer_path, composite->transform, NULL,
+      previous_texture, previous_box, projection, false, false
   );
   // 2. Threshold into level 0 (half resolution, margin around).
   glBindFramebuffer(GL_FRAMEBUFFER, cache->framebuffers[0]);
@@ -1331,8 +1332,8 @@ static void effect_composite(
 fallback:
   draw_animation_texture(
       pass, texture, shader, parameters, box, source_box, logical_box, expand, geometry, corner_radius,
-      composite->pointer, composite->pointer_path, transform, output_clip, previous_texture, previous_texture != NULL ? &previous_box : NULL,
-      pass->projection_matrix, !composite->replace, true
+      composite->pointer, composite->pointer_path, transform, output_clip, previous_texture,
+      previous_texture != NULL ? &previous_box : NULL, pass->projection_matrix, !composite->replace, true
   );
   if (composite->light != NULL) {
     emit_light(
@@ -1507,8 +1508,8 @@ bool fx_render_pass_end_animation_shadow(
   glUseProgram(horizontal->program);
   glUniform2f(glGetUniformLocation(horizontal->program, "shadow_step"), softness / (8.0f * full.width), 0);
   draw_animation_texture(
-      pass, caster, horizontal, &params, &reduced, &full, &full, 0, NULL, NULL, NULL, NULL, WL_OUTPUT_TRANSFORM_NORMAL, NULL,
-      NULL, NULL, pass->projection_matrix, true, true
+      pass, caster, horizontal, &params, &reduced, &full, &full, 0, NULL, NULL, NULL, NULL,
+      WL_OUTPUT_TRANSFORM_NORMAL, NULL, NULL, NULL, pass->projection_matrix, true, true
   );
   struct wlr_texture* blurred = pop_animation_capture(pass);
   pop_animation_capture(pass);
@@ -1528,8 +1529,8 @@ bool fx_render_pass_end_animation_shadow(
   glBindTexture(GL_TEXTURE_2D, fx_get_texture(caster)->tex);
   glUniform1i(glGetUniformLocation(vertical->program, "shadow_mask"), 1);
   draw_animation_texture(
-      pass, blurred, vertical, &params, &full, &reduced, &reduced, 0, NULL, NULL, NULL, NULL, WL_OUTPUT_TRANSFORM_NORMAL,
-      clip, NULL, NULL, pass->projection_matrix, true, true
+      pass, blurred, vertical, &params, &full, &reduced, &reduced, 0, NULL, NULL, NULL, NULL,
+      WL_OUTPUT_TRANSFORM_NORMAL, clip, NULL, NULL, pass->projection_matrix, true, true
   );
   glActiveTexture(GL_TEXTURE1);
   glBindTexture(GL_TEXTURE_2D, 0);

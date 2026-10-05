@@ -4220,9 +4220,10 @@ void wlr_scene_output_set_effect_time(struct wlr_scene_output* output, uint64_t 
   if (effects->motion_count > 0) {
     output_effects_damage_cursor(effects);
   }
+  const unsigned lifetime = fx_effect_shader_reads(effects->cursor, "umbriel_pointer_path") ? 2000u : 300u;
   unsigned expired = 0;
   while (expired < effects->motion_count
-      && (msec < effects->motion[expired].time || msec - effects->motion[expired].time >= (fx_effect_shader_reads(effects->cursor, "umbriel_pointer_path") ? 2000u : 300u))) {
+      && (msec < effects->motion[expired].time || msec - effects->motion[expired].time >= lifetime)) {
     ++expired;
   }
   effects->motion_count -= expired;
@@ -4380,7 +4381,9 @@ static void render_output_effects(struct scene_output_effects* effects, const st
     return;
   }
   const struct wlr_box whole = {.width = data->logical.width, .height = data->logical.height};
-  render_output_effect(effects->screen, &effects->screen_parameters, &effects->screen_history, &whole, NULL, NULL, data);
+  render_output_effect(
+      effects->screen, &effects->screen_parameters, &effects->screen_history, &whole, NULL, NULL, data
+  );
   if (effects->cursor == NULL || !effects->pointer_visible) {
     return;
   }
