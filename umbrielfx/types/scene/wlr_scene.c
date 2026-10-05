@@ -4181,10 +4181,10 @@ static struct wlr_box output_effects_cursor_box(const struct scene_output_effect
   for (unsigned i = 0; i < effects->motion_count; ++i) {
     const int x = (int)floor(effects->motion[i].x - output->x) - r;
     const int y = (int)floor(effects->motion[i].y - output->y) - r;
-    const int right = fmax(box.x + box.width, x + 2 * r + 1);
-    const int bottom = fmax(box.y + box.height, y + 2 * r + 1);
-    box.x = fmin(box.x, x);
-    box.y = fmin(box.y, y);
+    const int right = box.x + box.width > x + 2 * r + 1 ? box.x + box.width : x + 2 * r + 1;
+    const int bottom = box.y + box.height > y + 2 * r + 1 ? box.y + box.height : y + 2 * r + 1;
+    box.x = x < box.x ? x : box.x;
+    box.y = y < box.y ? y : box.y;
     box.width = right - box.x;
     box.height = bottom - box.y;
   }
