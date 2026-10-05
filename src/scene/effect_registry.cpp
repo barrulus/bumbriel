@@ -281,17 +281,19 @@ vec4 animation(vec2 uv) {
   }
 
   void EffectRegistry::pointerMoved(double lx, double ly, bool visible) {
+    // History that starts here needs its instance re-bound so it asks for fade frames; while it lasts, those frames
+    // re-bind it and drop the request once it expires.
+    bool motionStarted = false;
     for (const auto& output : m_server->outputs()) {
-      wlr_scene_output_set_effect_time(output->sceneOutput(), m_server->animationClockMsec());
-      wlr_scene_output_set_effect_pointer(output->sceneOutput(), lx, ly, visible);
+      wlr_scene_output* sceneOutput = output->sceneOutput();
+      const bool motionBefore = wlr_scene_output_cursor_motion_active(sceneOutput);
+      wlr_scene_output_set_effect_time(sceneOutput, m_server->animationClockMsec());
+      wlr_scene_output_set_effect_pointer(sceneOutput, lx, ly, visible);
+      motionStarted = motionStarted || (!motionBefore && wlr_scene_output_cursor_motion_active(sceneOutput));
     }
     // The cursor instance's visibility follows the output under the pointer.
     const wlr_output* under = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly);
-    const auto* cursor = preset(m_server->cursorEffectSlot().effectiveName(), EffectKind::Cursor);
-    if (under != m_pointerWlrOutput
-        || visible != m_pointerVisible
-        || fx_effect_shader_reads(cursor, "umbriel_pointer_history")
-        || fx_effect_shader_reads(cursor, "umbriel_pointer_path")) {
+    if (under != m_pointerWlrOutput || visible != m_pointerVisible || motionStarted) {
       m_pointerWlrOutput = under;
       m_pointerVisible = visible;
       applyOutputEffects();
