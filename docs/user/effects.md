@@ -41,6 +41,7 @@ Bundled presets:
 | `vignette` | screen | `[effects] screen = "vignette"` |
 | `glow` | cursor | `[effects] cursor = "glow"` |
 | `trail` | cursor | Noctalia-inspired purple, lavender and moon-yellow motion tail; include `cursor/trail/effect.toml`, then set `[effects] cursor = "trail"`. |
+| `trail-path` | cursor | Two-second curved tail coloured along its length; include `cursor/trail-path/effect.toml`, then set `[effects] cursor = "trail-path"`. |
 
 ## Turn a default off for one window or output
 
@@ -317,7 +318,10 @@ and particle seed. Positions and ages have the same units as short history.
 Long paths follow the same expiry, damage, frame gating and reset rules.
 
 The bundled `trail` uses a fixed Noctalia-inspired palette, independent of the
-desktop theme. Its colours can be edited in `cursor/trail/shader.glsl`.
+desktop theme. Its colours can be edited in `cursor/trail/shader.glsl`. Both
+`trail` and `trail-path` draw a Catmull-Rom curve through the samples, so fast
+circles stay round; `trail-path` reads `umbriel_pointer_path` and is the
+starting point for longer tails.
 
 ### What a window effect sees
 

@@ -1,15 +1,11 @@
-// The bundled trail, drawn as a Catmull-Rom curve through the motion samples.
-// Tangents follow sample times, so the short newest segment does not overshoot.
-const float kLife = 0.3;
-const float kMaxWidth = 3.5;
-
-vec3 trailTint(float life) {
-    vec3 tint = mix(vec3(0.22, 0.16, 0.38), vec3(0.65, 0.61, 0.91), smoothstep(0.0, 0.65, life));
-    return mix(tint, vec3(0.98, 0.93, 0.61), smoothstep(0.75, 1.0, life));
-}
+// Two-second path drawn as a Catmull-Rom curve: segments fade with age; hue
+// follows each sample's birth phase. Tangents follow sample times, so the short
+// newest segment does not overshoot.
+const float kLife = 2.0;
+const float kMaxWidth = 5.0;
 
 // Curve from p1 to p2; p0 and p3 are its neighbours (repeated at the ends).
-void trailSegment(vec2 uv, vec4 p0, vec4 p1, vec4 p2, vec4 p3, inout float coverage, inout vec3 colour) {
+void pathSegment(vec2 uv, vec4 p0, vec4 p1, vec4 p2, vec4 p3, inout float coverage, inout vec3 colour) {
     vec2 here = uv * umbriel_size;
     vec2 a = p1.xy * umbriel_size;
     vec2 b = p2.xy * umbriel_size;
@@ -38,13 +34,14 @@ void trailSegment(vec2 uv, vec4 p0, vec4 p1, vec4 p2, vec4 p3, inout float cover
         vec2 piece = point - previous;
         vec2 rel = here - previous;
         float u = clamp(dot(rel, piece) / max(dot(piece, piece), 0.001), 0.0, 1.0);
-        float life = clamp(1.0 - mix(p1.z, p2.z, (float(j) - 1.0 + u) / 6.0) / kLife, 0.0, 1.0);
+        float along = (float(j) - 1.0 + u) / 6.0;
+        float life = clamp(1.0 - mix(p1.z, p2.z, along) / kLife, 0.0, 1.0);
         float d = length(rel - piece * u);
-        float width = mix(0.5, kMaxWidth, life);
-        float glow = exp(-d * d / (width * width)) * life * life;
+        float width = mix(1.0, kMaxWidth, life);
+        float glow = exp(-d * d / (width * width)) * life;
         if (glow > coverage) {
             coverage = glow;
-            colour = trailTint(life);
+            colour = 0.5 + 0.5 * cos(6.2832 * (mix(p1.w, p2.w, along) * 0.5 + vec3(0.0, 0.33, 0.67)));
         }
         previous = point;
     }
@@ -59,9 +56,9 @@ vec4 cursor(vec2 uv) {
     vec4 p1 = p0;
     vec4 p2 = p0;
     vec4 p3 = p0;
-    for (int k = 0; k < 8; ++k) {
+    for (int k = 0; k < 64; ++k) {
         if (k < umbriel_pointer_count) {
-            vec4 next = umbriel_pointer_history[k];
+            vec4 next = umbriel_pointer_path[k];
             if (k == 0) {
                 p1 = next;
                 p2 = next;
@@ -72,12 +69,12 @@ vec4 cursor(vec2 uv) {
             p2 = p3;
             p3 = next;
             if (k >= 2) {
-                trailSegment(uv, p0, p1, p2, p3, coverage, colour);
+                pathSegment(uv, p0, p1, p2, p3, coverage, colour);
             }
         }
     }
     if (umbriel_pointer_count >= 2) {
-        trailSegment(uv, p1, p2, p3, p3, coverage, colour);
+        pathSegment(uv, p1, p2, p3, p3, coverage, colour);
     }
     return mix(background, vec4(colour, 1.0), coverage * 0.85);
 }

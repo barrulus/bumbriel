@@ -26,14 +26,15 @@ advance 40
 move 400 400
 "$UMBRIEL" settle > /dev/null
 grim -s 1 -o HEADLESS-1 "$IMAGE"
-read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 350 300)
+# Near the oldest sample: the curve bows off the chord midpoint before the corner.
+read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 310 300)
 (( r > 30 && g > 30 && b > 30 )) || { echo "trail did not follow previous segment: $r $g $b"; exit 1; }
 read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 350 350)
 (( r < 15 && g < 15 && b < 15 )) || { echo 'trail cut across the corner'; exit 1; }
 advance 400
 "$UMBRIEL" settle > /dev/null
 grim -s 1 -o HEADLESS-1 "$IMAGE"
-read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 350 300)
+read -r r g b < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" pixel 310 300)
 (( r < 15 && g < 15 && b < 15 )) || { echo 'expired trail left pixels'; exit 1; }
 "$UMBRIEL" clock-resume > /dev/null
 move 600 400
