@@ -3,6 +3,7 @@
 #include "check.h"
 
 #include <cstdio>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unistd.h>
@@ -255,6 +256,36 @@ UMBRIEL_TEST(effectsCommandReportsStatesSuppressionAndDeclarationOrder) {
   CHECK(output.contains("window window-1 (terminal)\tborder"));
   CHECK(output.contains("output vendor/panel\tscreen"));
   CHECK_EQ(captureHumanOutput(*spec, payload), output);
+}
+
+UMBRIEL_TEST(audioRequestsAcceptOnlyTheCompleteBoundedLevelContract) {
+  using umbriel::IpcCommands;
+  nlohmann::json request = {{"cmd", "effect-audio"}, {"version", 1}, {"level", 0}};
+  CHECK_EQ(IpcCommands::audioLevel(request), std::optional<float>(0.0F));
+  request["level"] = 1;
+  CHECK_EQ(IpcCommands::audioLevel(request), std::optional<float>(1.0F));
+  request["level"] = 0.25;
+  CHECK_EQ(IpcCommands::audioLevel(request), std::optional<float>(0.25F));
+  for (const auto& level :
+       {nlohmann::json(-0.01), nlohmann::json(1.01), nlohmann::json(true), nlohmann::json("0.5"),
+        nlohmann::json(nullptr), nlohmann::json(std::numeric_limits<double>::infinity()),
+        nlohmann::json(std::numeric_limits<double>::quiet_NaN())}) {
+    request["level"] = level;
+    CHECK(!IpcCommands::audioLevel(request));
+  }
+  request["level"] = 0;
+  for (const auto& version : {nlohmann::json(0), nlohmann::json(2), nlohmann::json(1.0), nlohmann::json(true)}) {
+    request["version"] = version;
+    CHECK(!IpcCommands::audioLevel(request));
+  }
+  request["version"] = 1;
+  request["source"] = "extra";
+  CHECK(!IpcCommands::audioLevel(request));
+  request.erase("source");
+  request.erase("level");
+  CHECK(!IpcCommands::audioLevel(request));
+  CHECK(!IpcCommands::audioLevel(nlohmann::json::array()));
+  CHECK(!IpcCommands::audioLevel(nullptr));
 }
 
 int main() { return RUN_TESTS(); }

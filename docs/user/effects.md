@@ -37,6 +37,7 @@ Bundled presets:
 | `reveal` | animation | `[animation.windows_in] effect = "reveal"` (also `windows_out`) |
 | `squash` | animation | `[animation.windows_move] effect = "squash"` |
 | `pulse` | border | `[effects] border = "pulse"` |
+| `audio` | border | `[effects] border = "audio"`; brightness follows the external audio level. |
 | `scanlines` | window | `[effects] window = "scanlines"` |
 | `vignette` | screen | `[effects] screen = "vignette"` |
 | `glow` | cursor | `[effects] cursor = "glow"` |
@@ -322,6 +323,23 @@ desktop theme. Its colours can be edited in `cursor/trail/shader.glsl`. Both
 `trail` and `trail-path` draw a Catmull-Rom curve through the samples, so fast
 circles stay round; `trail-path` reads `umbriel_pointer_path` and is the
 starting point for longer tails.
+
+### Audio input
+
+Every effect kind can read `umbriel_audio_level()` and
+`umbriel_audio_available()`. An [external analyser](ipc.md#audio-input) supplies
+one shared level from 0 to 1. Availability is 1 while measurements are fresh;
+both values are zero without a feed. Levels represent visual intensity, not
+calibrated loudness. The analyser chooses the audio source and smoothing.
+
+Audio works without `umbriel_time`; `animated` and `speed` only affect time.
+Changed input redraws visible consumers at `effects.max_fps`. Identical input
+does not request frames. Each output holds its value between eligible frames,
+and all passes of a composition use that value. Closing copies retain their
+copied input. Existing `in_capture` behavior applies.
+
+Include `border/audio/effect.toml` from the installed effect directory and select
+`border = "audio"` for a simple example. It remains dim without a feed.
 
 ### What a window effect sees
 

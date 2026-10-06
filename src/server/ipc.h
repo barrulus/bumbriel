@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <wayland-server-core.h>
 
 struct wl_event_source;
 
@@ -51,6 +52,7 @@ namespace umbriel {
     void notifyWorkspacesChanged();
     void notifySubmapChanged();
     void notifyScreenCastChanged();
+    void clearAudio();
     // End of an output frame: answers frame waits (settle, clock-advance) once every output has drawn a frame.
     void notifyOutputFrame(const Output& output);
 
@@ -75,6 +77,8 @@ namespace umbriel {
       std::string waitReply;
     };
 
+    static void onSessionActive(wl_listener* listener, void* data);
+    void handleSessionActive();
     static int onListenReadable(int fd, uint32_t mask, void* data);
     static int onConnectionEvent(int fd, uint32_t mask, void* data);
     static int onConnectionTimeout(void* data);
@@ -95,6 +99,8 @@ namespace umbriel {
 
     Server* m_server;
     std::string m_socketPath;
+    Connection* m_audio = nullptr;
+    wl_listener m_sessionActive{};
     int m_listenFd = -1;
     wl_event_source* m_eventSource = nullptr;
     std::vector<std::unique_ptr<Connection>> m_connections;

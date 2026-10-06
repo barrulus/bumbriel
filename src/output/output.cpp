@@ -124,6 +124,20 @@ namespace umbriel {
     wlr_output_schedule_frame(m_output);
   }
 
+  void Output::scheduleAudioFrame() {
+    if (m_server->sessionLocked() || !outputFrameAllowed(m_server->stopping(), m_server->session())) {
+      m_effectAudio = {};
+      wlr_scene_output_set_effect_audio(m_sceneOutput, m_effectAudio.data());
+      return;
+    }
+    if (!wlr_scene_output_audio_active(m_sceneOutput)) {
+      return;
+    }
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    armEffectFrame(static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000);
+  }
+
   void Output::applyOutputEffects() {
     EffectRegistry& registry = m_server->effects();
     const Effects& settings = config().effects;
@@ -1318,9 +1332,11 @@ namespace umbriel {
     // A frame is an effect frame when one was asked for, or when an instance here is eligible and the max_fps interval
     // has elapsed (a delay of 1 ms is the helper's "due now"), whichever timeline scheduled the frame. The output's own
     // timer supplies the frames nothing else asks for.
+    const bool audioPending =
+        m_effectAudio != m_server->effects().audio() && wlr_scene_output_audio_active(m_sceneOutput);
     const bool effectFrame = m_effectFrameDue
         || (!m_server->sessionLocked()
-            && effectEligible() > 0
+            && (effectEligible() > 0 || audioPending)
             && effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec) <= 1);
     m_effectFrameDue = false;
     if (effectFrame) {
@@ -1339,6 +1355,10 @@ namespace umbriel {
     if (stampEffectTime) {
       m_effectSeconds = effects.clockSeconds();
     }
+    if (effectFrame) {
+      m_effectAudio = effects.audio();
+    }
+    wlr_scene_output_set_effect_audio(m_sceneOutput, m_effectAudio.data());
     m_server->tickAnimations(m_server->animationClockMsec());
     if (stampEffectTime && m_outputEffectsTimed) {
       applyOutputEffects();
@@ -1557,7 +1577,8 @@ namespace umbriel {
       break;
     }
 
-    if (effectsEligible && !commitFailed) {
+    if ((effectsEligible || (m_effectAudio != effects.audio() && wlr_scene_output_audio_active(m_sceneOutput)))
+        && !commitFailed) {
       armEffectFrame(nowMsec);
     } else {
       disarmEffectFrame();

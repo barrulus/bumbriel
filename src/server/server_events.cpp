@@ -1599,6 +1599,9 @@ namespace umbriel {
       }
 
       m_sessionLocked = true;
+      if (m_ipc != nullptr) {
+        m_ipc->clearAudio();
+      }
       m_effects.setSuspended(true);
       m_effects.applyOutputEffects();
       cancelModifierTap();

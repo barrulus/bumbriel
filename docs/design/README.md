@@ -10,6 +10,7 @@ boundaries, or regression-sensitive behavior.
 
 - [Configuration reload](configuration-reload.md)
 - [Effects](effects.md)
+- [Audio shader input](audio-shader-input-spec.md)
 - [Workspace lifecycle](workspace-lifecycle.md)
 - [Overview rendering](overview-rendering.md)
 - [Touchpad gestures](touchpad-gestures.md)

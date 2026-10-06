@@ -5,6 +5,7 @@
 #include "output/frame_schedule.h"
 #include "scene/effect_selection.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -69,6 +70,7 @@ namespace umbriel {
     void markDirty(Dirty what);
     // Asks for a frame on behalf of persistent effects.
     void scheduleEffectFrame();
+    void scheduleAudioFrame();
     // Pushes the effect capture policy and the screen and cursor presets to this output's scene. Detached while
     // effects are suspended; the instances are visible only while the output is enabled.
     void applyOutputEffects();
@@ -234,6 +236,7 @@ namespace umbriel {
     EffectSlot m_screenEffectSlot;
     uint64_t m_effectFrames = 0;
     float m_effectSeconds = 0.0F;
+    std::array<float, 2> m_effectAudio{};
     bool m_outputEffectsTimed = false; // a visible screen or cursor instance here reads umbriel_time
     char m_cursorEffectOwner{};        // ledger identity of the cursor slot; the screen slot uses `this`
     bool m_effectCaptureBuilt = false; // the last built frame had an effect capture pending

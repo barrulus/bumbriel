@@ -134,6 +134,11 @@ namespace umbriel {
   } // namespace
 
   Ipc::Ipc(Server& server, const std::string& waylandSocketName) : m_server(&server) {
+    wl_list_init(&m_sessionActive.link);
+    if (server.session() != nullptr) {
+      m_sessionActive.notify = onSessionActive;
+      wl_signal_add(&server.session()->events.active, &m_sessionActive);
+    }
     const char* runtimeDir = std::getenv("XDG_RUNTIME_DIR");
     if (runtimeDir == nullptr || runtimeDir[0] == '\0') {
       kLog.error("XDG_RUNTIME_DIR not set, IPC socket disabled");
@@ -189,6 +194,7 @@ namespace umbriel {
   }
 
   Ipc::~Ipc() {
+    wl_list_remove(&m_sessionActive.link);
     if (m_eventSource != nullptr) {
       wl_event_source_remove(m_eventSource);
       m_eventSource = nullptr;
@@ -209,6 +215,27 @@ namespace umbriel {
   int Ipc::onListenReadable(int /*fd*/, uint32_t /*mask*/, void* data) {
     static_cast<Ipc*>(data)->acceptConnections();
     return 0;
+  }
+
+  void Ipc::clearAudio() {
+    if (m_audio != nullptr) {
+      removeConnection(m_audio);
+    }
+    // Clear output values still waiting for a capped frame.
+    for (const auto& output : m_server->outputs()) {
+      output->scheduleAudioFrame();
+    }
+  }
+
+  void Ipc::onSessionActive(wl_listener* listener, void* /*data*/) {
+    Ipc* self = wl_container_of(listener, self, m_sessionActive);
+    self->handleSessionActive();
+  }
+
+  void Ipc::handleSessionActive() {
+    if (!m_server->session()->active) {
+      clearAudio();
+    }
   }
 
   void Ipc::acceptConnections() {
@@ -268,7 +295,7 @@ namespace umbriel {
       if (keep && connection->responding) {
         keep = owner->writeResponse(*connection);
       }
-      if (!keep || connection->responding || !connection->input.contains('\n')) {
+      if (!keep || connection == owner->m_audio || connection->responding || !connection->input.contains('\n')) {
         break;
       }
     }
@@ -293,6 +320,9 @@ namespace umbriel {
       const ssize_t size = recv(connection.fd, chunk, sizeof(chunk), 0);
       if (size > 0) {
         connection.input.append(chunk, static_cast<size_t>(size));
+        if (&connection == m_audio && connection.input.size() > 256) {
+          return false;
+        }
         if (connection.input.size() > kMaxRequestSize) {
           prepareResponse(connection, R"({"err":"request too long"})");
           return true;
@@ -341,7 +371,7 @@ namespace umbriel {
       }
       return false;
     }
-    if (connection.subscribedEvents != 0) {
+    if (connection.subscribedEvents != 0 || &connection == m_audio) {
       connection.output.clear();
       connection.writeOffset = 0;
       connection.responding = false;
@@ -437,6 +467,10 @@ namespace umbriel {
     if (entry == m_connections.end()) {
       return;
     }
+    if (connection == m_audio) {
+      m_audio = nullptr;
+      m_server->effects().setAudio({});
+    }
     closeConnection(**entry);
     m_connections.erase(entry);
     refreshScreenCastActive();
@@ -465,6 +499,29 @@ namespace umbriel {
 
   std::optional<std::string> Ipc::handleRequest(Connection& connection, std::string_view line) {
     auto req = nlohmann::json::parse(line, nullptr, false);
+    if (&connection == m_audio || (req.is_object() && req.contains("cmd") && req["cmd"] == "effect-audio")) {
+      const auto level = IpcCommands::audioLevel(req);
+      if (!level
+          || line.size() + 1 > 256
+          || !connection.input.empty()
+          || connection.subscribedEvents != 0
+          || connection.screenCastActive
+          || m_server->sessionLocked()
+          || !outputFrameAllowed(m_server->stopping(), m_server->session())) {
+        if (&connection == m_audio) {
+          m_audio = nullptr;
+          m_server->effects().setAudio({});
+        }
+        return R"({"err":"invalid audio request"})";
+      }
+      if (m_audio != nullptr && m_audio != &connection) {
+        return R"({"err":"audio producer already connected"})";
+      }
+      m_audio = &connection;
+      m_server->effects().setAudio({*level, 1.0F});
+      wl_event_source_timer_update(connection.deadline, 250);
+      return R"({"ok":true})";
+    }
     if (req.is_discarded() || !req.is_object() || !req.contains("cmd") || !req["cmd"].is_string()) {
       return R"({"err":"malformed request"})";
     }
