@@ -66,12 +66,20 @@ namespace umbriel {
     m_newSurface.notify = onNewSurface;
     wl_signal_add(&m_wlr->events.new_surface, &m_newSurface);
     m_focusClearTimer = wl_event_loop_add_timer(wl_display_get_event_loop(server.display()), onFocusClearTimer, this);
+    m_selectionRefreshTimer =
+        wl_event_loop_add_timer(wl_display_get_event_loop(server.display()), onSelectionRefreshTimer, this);
+    m_keyboardFocusChange.notify = onKeyboardFocusChange;
+    wl_signal_add(&server.seat()->wlr()->keyboard_state.events.focus_change, &m_keyboardFocusChange);
     kLog.info("Xwayland listening on DISPLAY={}", m_wlr->display_name);
   }
 
   Xwayland::~Xwayland() {
     if (m_wlr == nullptr) {
       return;
+    }
+    wl_list_remove(&m_keyboardFocusChange.link);
+    if (m_selectionRefreshTimer != nullptr) {
+      wl_event_source_remove(m_selectionRefreshTimer);
     }
     // Windows only detach here; the server deletes views before destroying this.
     m_windows.clear();
@@ -162,6 +170,25 @@ namespace umbriel {
     self->handleNewSurface(static_cast<wlr_xwayland_surface*>(data));
   }
 
+  void Xwayland::onKeyboardFocusChange(wl_listener* listener, void* data) {
+    Xwayland* self = wl_container_of(listener, self, m_keyboardFocusChange); // NOLINT(modernize-use-auto)
+    self->handleKeyboardFocusChange(data);
+  }
+
+  int Xwayland::onSelectionRefreshTimer(void* data) {
+    auto* self = static_cast<Xwayland*>(data);
+    wlr_seat* seat = self->m_server.seat()->wlr();
+    if (seat->keyboard_state.focused_surface == nullptr
+        || wlr_xwayland_surface_try_from_wlr_surface(seat->keyboard_state.focused_surface) == nullptr
+        || self->m_wlr->xwm == nullptr) {
+      return 0;
+    }
+    // Wine reads targets on notification, including while unfocused when wlroots denies the read. Rebinding the
+    // same seat republishes native selections after activation without replacing X11-owned sources.
+    wlr_xwayland_set_seat(self->m_wlr, seat);
+    return 0;
+  }
+
   int Xwayland::onFocusClearTimer(void* data) {
     auto* self = static_cast<Xwayland*>(data);
     wlr_surface* focused = self->m_server.seat()->wlr()->keyboard_state.focused_surface;
@@ -181,6 +208,18 @@ namespace umbriel {
 
   void Xwayland::handleNewSurface(wlr_xwayland_surface* xsurface) {
     m_windows.push_back(std::make_unique<XwaylandWindow>(m_server, *this, xsurface));
+  }
+
+  void Xwayland::handleKeyboardFocusChange(void* data) {
+    auto* event = static_cast<wlr_seat_keyboard_focus_change_event*>(data);
+    if (event->new_surface == nullptr
+        || wlr_xwayland_surface_try_from_wlr_surface(event->new_surface) == nullptr
+        || (event->old_surface != nullptr && wlr_xwayland_surface_try_from_wlr_surface(event->old_surface) != nullptr)
+        || m_selectionRefreshTimer == nullptr) {
+      return;
+    }
+    // Unmanaged X11 windows can activate after entering the seat. Wait until this dispatch has completed.
+    wl_event_source_timer_update(m_selectionRefreshTimer, 1);
   }
 
   void Xwayland::clearFocus() {

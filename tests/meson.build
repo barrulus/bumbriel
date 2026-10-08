@@ -367,6 +367,13 @@ xwayland_focus_client = executable(
   dependencies: [xcb_dep],
 )
 
+# Eager X11 selection reader and owner for clipboard focus transitions.
+xwayland_selection_client = executable(
+  'xwayland-selection-client',
+  ['harness/clients/xwayland_selection_client.cpp'],
+  dependencies: [xcb_dep, dependency('xcb-xfixes')],
+)
+
 # Harness pair that proves only Xwayland-owned theme cursor surfaces are
 # promoted to compositor Xcursors. The X11 fixture also supplies an unmatched
 # custom cursor, while the native fixture supplies matching theme pixels as an
@@ -442,6 +449,7 @@ harness_client_targets = [
   security_context_client,
   seat_log_client,
   xwayland_focus_client,
+  xwayland_selection_client,
   xwayland_cursor_client,
   wayland_cursor_client,
   output_management_client,
