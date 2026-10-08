@@ -36,19 +36,36 @@ namespace umbriel {
   }
 
   wlr_box View::floatingMaximizedBox(const wlr_box& usable) const {
-    if (m_maximizedToEdges || usable.width <= 0 || usable.height <= 0) {
+    if (usable.width <= 0 || usable.height <= 0) {
       return usable;
     }
-    const LayoutStruts& struts = m_workspace != nullptr ? m_workspace->layoutConfig().struts : config().layout.struts;
-    const int pad = m_workspace != nullptr ? m_workspace->layoutConfig().edgePad : config().layoutEdgePad();
-    const wlr_box inside = applyLayoutStruts(usable, struts);
-    const wlr_box box{
-        .x = inside.x + pad,
-        .y = inside.y + pad,
-        .width = inside.width - (2 * pad),
-        .height = inside.height - (2 * pad),
+    wlr_box area = usable;
+    if (!m_maximizedToEdges) {
+      const LayoutStruts& struts =
+          m_workspace != nullptr ? m_workspace->layoutConfig().struts : config().layout.struts;
+      const int pad = m_workspace != nullptr ? m_workspace->layoutConfig().edgePad : config().layoutEdgePad();
+      const wlr_box inside = applyLayoutStruts(usable, struts);
+      const wlr_box inset{
+          .x = inside.x + pad,
+          .y = inside.y + pad,
+          .width = inside.width - (2 * pad),
+          .height = inside.height - (2 * pad),
+      };
+      if (inset.width > 0 && inset.height > 0) {
+        area = inset;
+      }
+    }
+    // A client whose maximum size is below the area (a fixed-size splash) keeps that size, centered in the area
+    // rather than pinned to its corner.
+    const SizeHints hints = sizeHints();
+    const int width = std::min(area.width, clampWidth(area.width, hints));
+    const int height = std::min(area.height, clampHeight(area.height, hints));
+    return {
+        .x = area.x + ((area.width - width) / 2),
+        .y = area.y + ((area.height - height) / 2),
+        .width = width,
+        .height = height,
     };
-    return box.width > 0 && box.height > 0 ? box : usable;
   }
 
   wlr_box View::openingUsableArea(Output* targetOutput) const {

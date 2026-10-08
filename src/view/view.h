@@ -333,6 +333,7 @@ namespace umbriel {
     // The home output's usable area.
     [[nodiscard]] wlr_box floatingUsableArea() const;
     // `usable` less the margin a maximized tile keeps (struts, then gap and border), so the border stays on screen.
+    // A client capped below that box by its maximum size keeps the capped size, centered in it.
     [[nodiscard]] wlr_box floatingMaximizedBox(const wlr_box& usable) const;
     // Put a maximized float back in the box its settings give it now, after a layout, border, strut, or usable area
     // change. Does nothing unless that box moved, so every arrange can ask.
