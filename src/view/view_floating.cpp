@@ -41,8 +41,7 @@ namespace umbriel {
     }
     wlr_box area = usable;
     if (!m_maximizedToEdges) {
-      const LayoutStruts& struts =
-          m_workspace != nullptr ? m_workspace->layoutConfig().struts : config().layout.struts;
+      const LayoutStruts& struts = m_workspace != nullptr ? m_workspace->layoutConfig().struts : config().layout.struts;
       const int pad = m_workspace != nullptr ? m_workspace->layoutConfig().edgePad : config().layoutEdgePad();
       const wlr_box inside = applyLayoutStruts(usable, struts);
       const wlr_box inset{
