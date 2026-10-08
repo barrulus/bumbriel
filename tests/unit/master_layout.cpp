@@ -743,4 +743,20 @@ UMBRIEL_TEST(emptyStacksOfferOnlyEmptySidesBesideAMaster) {
   CHECK(!center.layout.openStack(stub(9), 0));
 }
 
+UMBRIEL_TEST(emptyMasterBoxIsWhereTheFirstWindowLandsInEveryPosition) {
+  for (const auto position :
+       {umbriel::MasterPosition::Left, umbriel::MasterPosition::Right, umbriel::MasterPosition::Center}) {
+    Fixture fixture;
+    fixture.config.master.position = position;
+    const wlr_box expected = fixture.layout.emptyMasterBox(kUsable);
+    fixture.layout.insertViewIntoColumn(stub(0), 0, 0);
+    fixture.layout.arrange(kUsable);
+    const wlr_box box = fixture.layout.targetBox(stub(0));
+    CHECK_EQ(box.x, expected.x);
+    CHECK_EQ(box.y, expected.y);
+    CHECK_EQ(box.width, expected.width);
+    CHECK_EQ(box.height, expected.height);
+  }
+}
+
 int main() { return RUN_TESTS(); }

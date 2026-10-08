@@ -322,6 +322,10 @@ namespace umbriel {
     // Null for a layout whose columns cannot be tabbed.
     [[nodiscard]] virtual TabbedContainers* tabbedContainers() { return nullptr; }
 
+    // The usable area minus edge padding on both axes: the box the layout has
+    // to fill.
+    [[nodiscard]] wlr_box contentArea(const wlr_box& usable) const;
+
     // Anything only one layout can answer lives on that layout. Reach it through the single downcast seam,
     // Workspace::scrollingLayout(), rather than by asking every layout a question most of them have no answer to.
 
@@ -336,9 +340,6 @@ namespace umbriel {
     // The display an area created now starts with.
     [[nodiscard]] TabState initialTabState() const;
 
-    // The usable area minus edge padding on both axes: the box the layout has
-    // to fill.
-    [[nodiscard]] wlr_box contentArea(const wlr_box& usable) const;
     // Gap-aware width of a column occupying `fraction` of the viewport. Solving sum(w) + (N-1)g = V with w = p*(V+g) -
     // g makes N columns whose fractions sum to 1 tile the viewport exactly.
     [[nodiscard]] int fractionalWidth(int viewportPrimary, double fraction) const;

@@ -527,6 +527,16 @@ namespace umbriel {
     return stacks;
   }
 
+  wlr_box MasterStackLayout::emptyMasterBox(const wlr_box& usable) const {
+    const wlr_box content = contentArea(usable);
+    if (!masterIsCenter()) {
+      return content;
+    }
+    const int gap = m_config != nullptr ? m_config->totalGap : 0;
+    const CenterWidths widths = centerWidths(content.width, gap, masterFrac());
+    return {.x = content.x + widths.side + gap, .y = content.y, .width = widths.master, .height = content.height};
+  }
+
   bool MasterStackLayout::openStack(View* view, int gap) {
     const Area* stack = emptyStackAt(gap);
     if (view == nullptr || stack == nullptr || areaOf(view) != nullptr) {

@@ -42,6 +42,8 @@ namespace umbriel {
     void insertView(View* view, int columnIndex) override;
     void insertViewIntoColumn(View* view, int columnIndex, int rowIndex) override;
     [[nodiscard]] std::vector<EmptyStack> emptyStacks(const wlr_box& usable) const;
+    // Where arrange puts the master area once a window starts it in an empty layout.
+    [[nodiscard]] wlr_box emptyMasterBox(const wlr_box& usable) const;
     // Starts the empty stack at gap index `gap` with `view`, which must not be in the layout. False when no empty stack
     // lies there.
     bool openStack(View* view, int gap);

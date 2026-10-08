@@ -291,8 +291,9 @@ namespace umbriel {
     MasterTarget computeMasterTarget(
         const Workspace& workspace, const MasterStackLayout& layout, const wlr_box& usable, double worldX, double worldY
     ) {
+      // The first window starts the master area.
       if (layout.columns().empty()) {
-        return {};
+        return {.hint = layout.emptyMasterBox(usable)};
       }
 
       // An empty stack owns its side up to the middle of the gap it would open, so a drop there starts the stack
@@ -426,6 +427,9 @@ namespace umbriel {
       result.edge = target.edge;
       if (target.view != nullptr && target.edge != 0) {
         result.hintBox = target.hint;
+      } else if (dwindle->columns().empty()) {
+        // The first window takes the whole area.
+        result.hintBox = dwindle->contentArea(usable);
       }
     } else if (const MasterStackLayout* master = workspace.masterLayout()) {
       const MasterTarget target = computeMasterTarget(workspace, *master, usable, worldX, worldY);
