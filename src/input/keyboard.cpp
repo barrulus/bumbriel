@@ -54,13 +54,14 @@ namespace umbriel {
     const std::string& layout = device != nullptr && device->layout ? *device->layout : input.keyboard.layout;
     const std::string& variant = device != nullptr && device->variant ? *device->variant : input.keyboard.variant;
     const std::string& options = device != nullptr && device->options ? *device->options : input.keyboard.options;
+    const std::string& model = device != nullptr && device->model ? *device->model : input.keyboard.model;
     const int repeatRate = device != nullptr && device->repeatRate ? *device->repeatRate : input.keyboard.repeatRate;
     const int repeatDelay =
         device != nullptr && device->repeatDelay ? *device->repeatDelay : input.keyboard.repeatDelay;
     xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     const xkb_rule_names names{
         .rules = nullptr,
-        .model = nullptr,
+        .model = model.empty() ? nullptr : model.c_str(),
         .layout = layout.empty() ? nullptr : layout.c_str(),
         .variant = variant.empty() ? nullptr : variant.c_str(),
         .options = options.empty() ? nullptr : options.c_str(),

@@ -990,6 +990,7 @@ namespace umbriel {
         std::string layout;
         std::string variant;
         std::string options;
+        std::string model;
         int repeatRate = 25;
         int repeatDelay = 600;
         bool numlockToggle = false;
@@ -1087,6 +1088,7 @@ namespace umbriel {
         std::optional<std::string> layout;
         std::optional<std::string> variant;
         std::optional<std::string> options;
+        std::optional<std::string> model;
         std::optional<int> repeatRate;
         std::optional<int> repeatDelay;
         std::optional<bool> tap;

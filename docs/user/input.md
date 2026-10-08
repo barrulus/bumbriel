@@ -41,6 +41,7 @@ pinning a fullscreen window, leave the window unchanged.
 layout = ""           # empty uses the system default
 variant = ""
 options = ""
+model = ""
 repeat_rate = 25
 repeat_delay = 600
 numlock_toggle = true
@@ -63,8 +64,8 @@ options = "grp:alt_shift_toggle"
 ```
 
 `options` accepts XKB options such as `caps:escape` or `compose:ralt`. Invalid
-layouts and variants are reported in the log and fall back to the system
-default. Run `xkbcli list` to inspect available values.
+layouts, variants, and models are reported in the log and fall back to the
+system default. Run `xkbcli list` to inspect available values.
 
 Run `umbriel keyboard-layouts` to list the configured layouts. The active one
 is prefixed with `*`.
@@ -183,6 +184,7 @@ the `Device` value from `libinput list-devices`:
 name = "Acme Split Keyboard"
 layout = "us"
 variant = "colemak_dh"
+model = "pc104angle"
 repeat_rate = 40
 repeat_delay = 250
 
