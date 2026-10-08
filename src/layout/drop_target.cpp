@@ -3,6 +3,7 @@
 #include "config/config.h"
 #include "layout/dwindle.h"
 #include "layout/layout.h"
+#include "layout/master.h"
 #include "layout/scrolling.h"
 #include "output/output.h"
 #include "server/server.h"
@@ -36,6 +37,7 @@ namespace umbriel {
       wlr_box hint{};
     };
 
+    // row < 0 starts the empty stack at gap index `column`.
     struct MasterTarget {
       int column = 0;
       int row = 0;
@@ -287,10 +289,21 @@ namespace umbriel {
     }
 
     MasterTarget computeMasterTarget(
-        const Workspace& workspace, const Layout& layout, const wlr_box& /*usable*/, double worldX, double worldY
+        const Workspace& workspace, const MasterStackLayout& layout, const wlr_box& usable, double worldX, double worldY
     ) {
       if (layout.columns().empty()) {
         return {};
+      }
+
+      // An empty stack owns its side up to the middle of the gap it would open, so a drop there starts the stack
+      // instead of joining the master area that currently spans it.
+      const double halfGap = workspace.layoutConfig().totalGap / 2.0;
+      for (const MasterStackLayout::EmptyStack& stack : layout.emptyStacks(usable)) {
+        const bool hit =
+            stack.gap == 0 ? worldX < stack.box.x + stack.box.width + halfGap : worldX >= stack.box.x - halfGap;
+        if (hit) {
+          return {.column = stack.gap, .row = -1, .hint = stack.box};
+        }
       }
 
       int selectedColumn = 0;
@@ -414,8 +427,8 @@ namespace umbriel {
       if (target.view != nullptr && target.edge != 0) {
         result.hintBox = target.hint;
       }
-    } else if (workspace.layoutMode() == LayoutMode::Master) {
-      const MasterTarget target = computeMasterTarget(workspace, workspace.layout(), usable, worldX, worldY);
+    } else if (const MasterStackLayout* master = workspace.masterLayout()) {
+      const MasterTarget target = computeMasterTarget(workspace, *master, usable, worldX, worldY);
       result.column = target.column;
       result.row = target.row;
       result.hintBox = target.hint;
@@ -543,16 +556,18 @@ namespace umbriel {
       if (!joinedTabs) {
         target.layout().insertViewIntoColumn(&view, std::max(0, drop.column), drop.row);
       }
-    } else {
+    } else if (
+        MasterStackLayout* master = target.masterLayout(); master == nullptr || !master->openStack(&view, drop.column)
+    ) {
       target.layout().insertView(&view, std::max(0, drop.column));
-    }
-    if (columnWidth != nullptr && drop.row < 0) {
-      const int column = target.layout().columnOf(&view);
-      target.layout().setWidthFraction(column, columnWidth->fraction);
-      if (columnWidth->fullWidth) {
-        target.layout().toggleFullWidth(column);
+      if (columnWidth != nullptr) {
+        const int column = target.layout().columnOf(&view);
+        target.layout().setWidthFraction(column, columnWidth->fraction);
+        if (columnWidth->fullWidth) {
+          target.layout().toggleFullWidth(column);
+        }
+        view.setMaximizedState(columnWidth->fullWidth);
       }
-      view.setMaximizedState(columnWidth->fullWidth);
     }
     restoreSceneParent();
     target.markArrange(animate);

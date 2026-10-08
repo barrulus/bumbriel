@@ -328,6 +328,21 @@ namespace umbriel {
     return nullptr;
   }
 
+  const MasterStackLayout::Area* MasterStackLayout::emptyStackAt(int gap) const {
+    if (m_master.views.empty()) {
+      return nullptr;
+    }
+    // Stacks sit outside the master area, so an empty one is always first or last in visual order.
+    const std::array<const Area*, 3> areas = orderedAreas();
+    const Area* edge = nullptr;
+    if (gap == 0) {
+      edge = areas[0];
+    } else if (gap == static_cast<int>(m_columns.size())) {
+      edge = areas[2] != nullptr ? areas[2] : areas[1];
+    }
+    return edge != nullptr && edge != &m_master && edge->views.empty() ? edge : nullptr;
+  }
+
   int MasterStackLayout::rowInArea(const Area& area, const View* view) const {
     const auto it = std::ranges::find(area.views, view);
     return it == area.views.end() ? -1 : static_cast<int>(it - area.views.begin());
@@ -488,6 +503,38 @@ namespace umbriel {
     const int row = std::clamp(rowIndex, 0, static_cast<int>(destination->views.size()));
     insertRow(*destination, static_cast<size_t>(row), view, 1.0);
     rebuildColumns();
+  }
+
+  std::vector<MasterStackLayout::EmptyStack> MasterStackLayout::emptyStacks(const wlr_box& usable) const {
+    std::vector<EmptyStack> stacks;
+    const wlr_box content = contentArea(usable);
+    const int gap = m_config != nullptr ? m_config->totalGap : 0;
+    for (const int index : {0, static_cast<int>(m_columns.size())}) {
+      const Area* stack = emptyStackAt(index);
+      if (stack == nullptr) {
+        continue;
+      }
+      int width = 0;
+      if (masterIsCenter()) {
+        const CenterWidths widths = centerWidths(content.width, gap, masterFrac());
+        width = stack == &m_stack ? widths.side : widths.secondSide;
+      } else {
+        width = columnWidths(content.width, gap, masterFrac()).second;
+      }
+      const int x = index == 0 ? content.x : content.x + content.width - width;
+      stacks.push_back({.gap = index, .box = {.x = x, .y = content.y, .width = width, .height = content.height}});
+    }
+    return stacks;
+  }
+
+  bool MasterStackLayout::openStack(View* view, int gap) {
+    const Area* stack = emptyStackAt(gap);
+    if (view == nullptr || stack == nullptr || areaOf(view) != nullptr) {
+      return false;
+    }
+    insertRow(const_cast<Area&>(*stack), 0, view, 1.0);
+    rebuildColumns();
+    return true;
   }
 
   bool MasterStackLayout::consume(View* view, int direction) {

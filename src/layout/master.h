@@ -8,7 +8,9 @@
 #include <optional>
 #include <vector>
 
-struct wlr_box;
+extern "C" {
+#include <wlr/util/box.h>
+}
 
 namespace umbriel {
 
@@ -22,6 +24,13 @@ namespace umbriel {
       TabState tabs;
     };
 
+    // An empty stack a drop can start beside the master area: `gap` is the gap index openStack takes (0 before every
+    // area, columns().size() after them), `box` where arrange puts the stack once a window joins it.
+    struct EmptyStack {
+      int gap = 0;
+      wlr_box box{};
+    };
+
     [[nodiscard]] LayoutMode mode() const override { return LayoutMode::Master; }
 
     [[nodiscard]] const std::vector<Column>& columns() const override { return m_columns; }
@@ -32,6 +41,10 @@ namespace umbriel {
 
     void insertView(View* view, int columnIndex) override;
     void insertViewIntoColumn(View* view, int columnIndex, int rowIndex) override;
+    [[nodiscard]] std::vector<EmptyStack> emptyStacks(const wlr_box& usable) const;
+    // Starts the empty stack at gap index `gap` with `view`, which must not be in the layout. False when no empty stack
+    // lies there.
+    bool openStack(View* view, int gap);
     bool consume(View* view, int direction) override;
     bool expel(View* view, int direction) override;
     bool consumeFrom(View* view, int direction) override;
@@ -104,6 +117,8 @@ namespace umbriel {
     [[nodiscard]] const Area* areaOf(const View* view) const;
     [[nodiscard]] Area* visualArea(int columnIndex);
     [[nodiscard]] const Area* visualArea(int columnIndex) const;
+    // The empty stack at the outer gap index `gap` beside a non-empty master area, else null.
+    [[nodiscard]] const Area* emptyStackAt(int gap) const;
     [[nodiscard]] int rowInArea(const Area& area, const View* view) const;
     [[nodiscard]] uint32_t resizableEdges(const View* view) const;
     void eraseFromAreas(View* view);
