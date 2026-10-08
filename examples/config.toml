@@ -84,7 +84,8 @@ radius = 3
 # files = ["/usr/share/umbriel/effects/border/pulse/effect.toml"]
 # For a cursor tail, include /usr/share/umbriel/effects/cursor/trail/effect.toml
 # and set cursor = "trail" in [effects].
-# For external audio input, include border/audio/effect.toml and select border = "audio".
+# For audio-reactive borders, include /usr/share/umbriel/effects/border/audio/effect.toml
+# and set border = "audio" in [effects].
 # Pools accept matching presets defined/included separately. This one-member
 # example uses the bundled pulse preset; add other border names to choose.
 # [effects.pool.borders]
