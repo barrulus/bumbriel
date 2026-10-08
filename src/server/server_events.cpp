@@ -775,9 +775,8 @@ namespace umbriel {
     }
   }
 
-  void Server::handleConfigReload() {
+  void Server::handleConfigReload(const ConfigReloadResult& result) {
     cancelModifierTap();
-    const ConfigReloadResult result = reloadConfig();
     if (result.success) {
       if (result.change.drm) {
         kLog.warn("DRM configuration changed; restart Umbriel to apply it");

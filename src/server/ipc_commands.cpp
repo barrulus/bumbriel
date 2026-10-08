@@ -1,5 +1,6 @@
 #include "server/ipc_commands.h"
 
+#include "config/change.h"
 #include "config/config.h"
 #include "input/cursor.h"
 #include "layer/layer_surface.h"
@@ -826,6 +827,28 @@ namespace umbriel {
     return nlohmann::json{{"ok", nullptr}};
   }
 
+  nlohmann::json IpcCommands::configReplace(Server& server, std::string_view arg) {
+    const std::filesystem::path path(arg);
+
+    if (path.empty()) {
+      return nlohmann::json{{"err", "usage: config-replace <path>"}};
+    }
+
+    if (!path.is_absolute()) {
+      return nlohmann::json{{"err", "path must be an absolute path"}};
+    }
+
+    std::string errors;
+    const ConfigReloadResult result = replaceConfig(path, errors);
+
+    if (!result.success) {
+      return nlohmann::json{{"err", errors.empty() ? "config replace failed" : errors}};
+    }
+
+    server.handleConfigReload(result);
+    return nlohmann::json{{"ok", nullptr}};
+  }
+
   nlohmann::json IpcCommands::settle(Server& /*server*/, std::string_view /*arg*/) {
     return nlohmann::json{{"ok", nullptr}};
   }
@@ -937,6 +960,8 @@ namespace umbriel {
        IpcCommandGroup::Control, true, &IpcCommands::outputCreate, &printOutputName},
       {"output-destroy", "<name>", "destroy a virtual output", IpcCommandGroup::Control, true,
        &IpcCommands::outputDestroy, nullptr},
+      {"config-replace", "<path>", "load and watch a different config file", IpcCommandGroup::Control, true,
+       &IpcCommands::configReplace, nullptr},
       {"effects", "", "inspect effect presets, pools, and owner selections", IpcCommandGroup::Inspect, false,
        &IpcCommands::effects, &printEffects},
       {"windows", "", "list windows (app id and title)", IpcCommandGroup::Inspect, false, &IpcCommands::windows,

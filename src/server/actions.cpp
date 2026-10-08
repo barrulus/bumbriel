@@ -527,7 +527,8 @@ namespace umbriel {
     }
 
     bool actionConfigReload(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
-      server.handleConfigReload();
+      const ConfigReloadResult result = reloadConfig();
+      server.handleConfigReload(result);
       return true;
     }
 

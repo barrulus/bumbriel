@@ -1146,6 +1146,7 @@ namespace umbriel {
 
   [[nodiscard]] const Config& config();
   [[nodiscard]] bool loadConfig(const char* explicitPath);
+  [[nodiscard]] ConfigReloadResult replaceConfig(const std::filesystem::path& explicitPath, std::string& errors);
   [[nodiscard]] ConfigReloadResult reloadConfig();
   [[nodiscard]] const std::vector<std::filesystem::path>& configWatchPaths();
   [[nodiscard]] const std::vector<ConfigDiagnostic>& configDiagnostics();

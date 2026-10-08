@@ -1086,8 +1086,10 @@ namespace umbriel {
     for (const std::string& command : config().general.autostart) {
       spawn(command.c_str());
     }
-    m_configWatcher =
-        std::make_unique<ConfigWatcher>(wl_display_get_event_loop(m_display), [this] { handleConfigReload(); });
+    m_configWatcher = std::make_unique<ConfigWatcher>(wl_display_get_event_loop(m_display), [this] {
+      const ConfigReloadResult result = reloadConfig();
+      handleConfigReload(result);
+    });
     m_configBanner = std::make_unique<ConfigBanner>(*this, m_bannerTree);
     m_configWatcher->watch(configWatchPaths());
     showConfigDiagnostics();

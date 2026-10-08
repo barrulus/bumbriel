@@ -1,4 +1,5 @@
 #pragma once
+#include "config/change.h"
 #include "config/value_parse.h"
 #include "core/animation.h"
 #include "core/application_scope.h"
@@ -324,7 +325,7 @@ namespace umbriel {
     void relayoutCheatsheet();
     void relayoutQuitConfirm();
     void spawn(const char* command, const char* description = nullptr, bool withActivationToken = false);
-    void handleConfigReload();
+    void handleConfigReload(const ConfigReloadResult& result);
     // Re-evaluate application idle inhibitors after a surface's presentation
     // visibility changes.
     void updateIdleInhibit();

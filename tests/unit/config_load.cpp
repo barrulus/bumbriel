@@ -4130,4 +4130,210 @@ action = 'effect-window-set:window'
   CHECK(umbriel::effectActionReference(*store.config().hotCorners.corners[0].action)->name == "window");
 }
 
+UMBRIEL_TEST(replaceAdoptsTheNewFileAndPinsLaterReloadsToIt) {
+  const TempConfigTree tree;
+  tree.write("old.toml", "[layout]\ngap = 17\n");
+  tree.write("new.toml", "[layout]\ngap = 23\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("old.toml").c_str()));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(tree.path("new.toml"), errors);
+
+  CHECK(result.success);
+  CHECK(errors.empty());
+  CHECK_EQ(store.rootPath(), tree.path("new.toml"));
+  CHECK_EQ(store.config().layout.gap, 23);
+  CHECK_EQ(store.generation(), generation + 1);
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("new.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old.toml")) == store.watchPaths().end());
+
+  tree.write("new.toml", "[layout]\ngap = 31\n");
+  tree.write("old.toml", "[layout]\ngap = 99\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.rootPath(), tree.path("new.toml"));
+  CHECK_EQ(store.config().layout.gap, 31);
+}
+
+UMBRIEL_TEST(replaceMovesTheWatchSetToTheNewFileAndItsIncludes) {
+  const TempConfigTree tree;
+  tree.write("old_inc.toml", "[layout]\ngap = 5\n");
+  tree.write("old_config.toml", "[include]\nfiles = [\"old_inc.toml\"]\n");
+  tree.write("new_inc.toml", "[layout]\ngap = 6\n");
+  tree.write("new_config.toml", "[include]\nfiles = [\"new_inc.toml\"]\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("old_config.toml").c_str()));
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_config.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_inc.toml")) != store.watchPaths().end());
+
+  std::string errors;
+  CHECK(store.replace(tree.path("new_config.toml"), errors).success);
+
+  CHECK_EQ(store.config().layout.gap, 6);
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("new_config.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("new_inc.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_config.toml")) == store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_inc.toml")) == store.watchPaths().end());
+}
+
+UMBRIEL_TEST(replaceAcceptsAFileThatOnlyProducesWarnings) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "[layout]\ngap = 17\n");
+  tree.write("warn.toml", "invalid_key = true\n[layout]\ngap = 23\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(tree.path("warn.toml"), errors);
+
+  CHECK(result.success);
+  CHECK(errors.empty());
+  CHECK_EQ(store.rootPath(), tree.path("warn.toml"));
+  CHECK_EQ(store.config().layout.gap, 23);
+  CHECK(containsDiagnostic(store, "unknown key invalid_key"));
+}
+
+UMBRIEL_TEST(replaceRejectsAMissingFileAndLeavesTheLiveStateUntouched) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "[layout]\ngap = 17\n");
+  const std::filesystem::path missing = tree.path("missing.toml");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(missing, errors);
+
+  CHECK(!result.success);
+  CHECK(errors.contains("config file not found: " + missing.string()));
+  CHECK_EQ(store.config().layout.gap, 17);
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("live.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), missing) == store.watchPaths().end());
+
+  // The original file still drives reloads.
+  tree.write("live.toml", "[layout]\ngap = 19\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK_EQ(store.config().layout.gap, 19);
+}
+
+UMBRIEL_TEST(replaceRejectsABrokenFileAndLeavesTheLiveStateUntouched) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "[layout]\ngap = 17\n");
+  tree.write("broken.toml", "[layout\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult malformed = store.replace(tree.path("broken.toml"), errors);
+
+  CHECK(!malformed.success);
+  CHECK(!errors.empty());
+  CHECK_EQ(store.config().layout.gap, 17);
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.missingIncludes(), false);
+  CHECK_EQ(store.fileMissing(), false);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("live.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("broken.toml")) == store.watchPaths().end());
+}
+
+UMBRIEL_TEST(replaceRejectsSemanticErrorsAndPreservesTheLiveState) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "unknown_key = true\n[include]\nfiles = [\"pending.toml\"]\n[layout]\ngap = 17\n");
+  tree.write("rejected_inc.toml", "[layout]\ngap = 80\n");
+  tree.write("invalid.toml", "[include]\nfiles = [\"rejected_inc.toml\"]\n[[workspace]]\nname = \"chat\"\nindex = 3\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+  CHECK(store.missingIncludes());
+  const auto previousConfig = store.config();
+  const auto previousDiagnostics = store.diagnostics();
+  const auto previousWatchPaths = store.watchPaths();
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(tree.path("invalid.toml"), errors);
+
+  CHECK(!result.success);
+  CHECK(errors.contains(tree.path("invalid.toml").string()));
+  CHECK(store.config() == previousConfig);
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK(store.missingIncludes());
+  CHECK(!store.fileMissing());
+  CHECK(store.watchPaths() == previousWatchPaths);
+  CHECK(
+      std::ranges::equal(
+          store.diagnostics(), previousDiagnostics,
+          [](const ConfigDiagnostic& current, const ConfigDiagnostic& previous) {
+            return current.severity == previous.severity
+                && current.message == previous.message
+                && current.file == previous.file
+                && current.line == previous.line
+                && current.column == previous.column;
+          }
+      )
+  );
+
+  tree.write("live.toml", "[layout]\ngap = 19\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK_EQ(store.config().layout.gap, 19);
+}
+
+UMBRIEL_TEST(replaceRejectionRestoresPendingMissingIncludes) {
+  const TempConfig file;
+  file.write("[include]\nfiles = [\"" + file.includeName() + "\"]\n");
+
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  CHECK(store.load(file.path().c_str()));
+  const uint64_t generation = store.generation();
+  CHECK(store.missingIncludes());
+
+  std::string errors;
+  CHECK(!store.replace(file.path().parent_path() / "no-such-config.toml", errors).success);
+
+  CHECK(store.missingIncludes());
+  CHECK(!errors.empty());
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.fileMissing(), false);
+}
+
+UMBRIEL_TEST(replaceRejectionDoesNotDisturbAnImplicitStore) {
+  const TempConfigTree tree;
+  const std::filesystem::path userHome = tree.path("user");
+  const std::filesystem::path systemDir = tree.path("system");
+  tree.write("system/umbriel/config.toml", "[layout]\ngap = 17\n");
+  const ScopedEnvironment configHome("XDG_CONFIG_HOME", userHome.string());
+  const ScopedEnvironment configDirs("XDG_CONFIG_DIRS", systemDir.string());
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(nullptr));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  CHECK(!store.replace(tree.path("missing.toml"), errors).success);
+  CHECK(!errors.empty());
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.missingIncludes(), false);
+  CHECK_EQ(store.fileMissing(), false);
+  CHECK_EQ(store.rootPath(), tree.path("system/umbriel/config.toml"));
+
+  tree.write("user/umbriel/config.toml", "[layout]\ngap = 19\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.rootPath(), userHome / "umbriel/config.toml");
+  CHECK_EQ(store.config().layout.gap, 19);
+}
+
 int main() { return RUN_TESTS(); }
