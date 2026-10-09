@@ -294,6 +294,20 @@ namespace umbriel {
     m_server->refreshOutputPolicies();
   }
 
+  void LayerSurface::focusForPopupGrab() {
+    if (m_server->sessionLocked() || !acceptsKeyboard() || hasKeyboardFocus()) {
+      return;
+    }
+    if (const LayerSurface* exclusive = m_server->exclusiveKeyboardLayer(); exclusive != nullptr && exclusive != this) {
+      return;
+    }
+
+    m_server->deactivateViews(nullptr);
+    // focus() would end the popup's keyboard grab, and wlroots answers that by dismissing the popup. Enter past it.
+    m_server->notifyKeyboardEnter(m_layerSurface->surface, Server::KeyboardGrab::Bypass);
+    m_server->refreshOutputPolicies();
+  }
+
   SurfaceBlurOptions LayerSurface::blurOptions() const {
     return SurfaceBlurOptions{
         .ignoreAlpha = static_cast<float>(m_rule.ignoreAlpha.value_or(0.0)),

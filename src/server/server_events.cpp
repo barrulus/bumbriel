@@ -2933,7 +2933,7 @@ namespace umbriel {
     return true;
   }
 
-  void Server::notifyKeyboardEnter(wlr_surface* surface) {
+  void Server::notifyKeyboardEnter(wlr_surface* surface, KeyboardGrab grab) {
     wlr_seat* seat = m_seat->wlr();
     wlr_surface* previous = seat->keyboard_state.focused_surface;
     const bool leavesXwayland = m_xwayland != nullptr
@@ -2965,9 +2965,20 @@ namespace umbriel {
       }
     }
 
+    // An active grab's enter handler decides where focus goes; an xdg_popup grab ignores it entirely.
+    const auto enter =
+        [seat,
+         grab](wlr_surface* target, const uint32_t* keycodes, size_t count, const wlr_keyboard_modifiers* modifiers) {
+          if (grab == KeyboardGrab::Bypass) {
+            wlr_seat_keyboard_enter(seat, target, keycodes, count, modifiers);
+          } else {
+            wlr_seat_keyboard_notify_enter(seat, target, keycodes, count, modifiers);
+          }
+        };
+
     wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat);
     if (keyboard == nullptr) {
-      wlr_seat_keyboard_notify_enter(seat, surface, nullptr, 0, nullptr);
+      enter(surface, nullptr, 0, nullptr);
       if (leavesXwayland) {
         m_xwayland->scheduleFocusClear();
       }
@@ -2985,7 +2996,7 @@ namespace umbriel {
       }
     }
     if (consumed == nullptr || consumed->empty()) {
-      wlr_seat_keyboard_notify_enter(seat, surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+      enter(surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
       if (leavesXwayland) {
         m_xwayland->scheduleFocusClear();
       }
@@ -2998,7 +3009,7 @@ namespace umbriel {
         forwarded[count++] = keyboard->keycodes[i];
       }
     }
-    wlr_seat_keyboard_notify_enter(seat, surface, forwarded.data(), count, &keyboard->modifiers);
+    enter(surface, forwarded.data(), count, &keyboard->modifiers);
     if (leavesXwayland) {
       m_xwayland->scheduleFocusClear();
     }

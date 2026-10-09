@@ -338,8 +338,10 @@ namespace umbriel {
 
     // The one way keyboard focus reaches a surface. Toplevels, layer-shell
     // surfaces and the lock screen all route through here so that
-    // input.keyboard.track_layout sees every focus change.
-    void notifyKeyboardEnter(wlr_surface* surface);
+    // input.keyboard.track_layout sees every focus change. Bypass delivers the
+    // enter through an active keyboard grab instead of letting the grab swallow it.
+    enum class KeyboardGrab : uint8_t { Respect, Bypass };
+    void notifyKeyboardEnter(wlr_surface* surface, KeyboardGrab grab = KeyboardGrab::Respect);
     void notifyKeyboardClearFocus();
     // Drop every keyboard's consumed-press bookkeeping, for transitions that
     // eat the matching releases.

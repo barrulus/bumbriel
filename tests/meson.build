@@ -176,7 +176,13 @@ drag_client = executable(
 # restoration checks use it to reproduce a panel returning after windows do.
 layer_client = executable(
   'layer-client',
-  ['harness/clients/layer_client.cpp', layer_shell_client_h, layer_shell_client_c, xdg_shell_client_c],
+  [
+    'harness/clients/layer_client.cpp',
+    layer_shell_client_h,
+    layer_shell_client_c,
+    xdg_shell_client_h,
+    xdg_shell_client_c,
+  ],
   dependencies: [wayland_client_dep],
 )
 

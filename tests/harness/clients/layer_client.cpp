@@ -1,13 +1,16 @@
 // Maps a top exclusive zone, a full-output background layer when the height is zero, or a 200x200 bottom-layer or
 // red overlay-layer square. It stays mapped until that output closes the layer surface. `keyboard=none|on-demand|
 // exclusive` picks the layer surface's keyboard interactivity, and every keyboard enter and leave the surface receives
-// is logged. `release-on-escape` drops the interactivity to none when Escape is released.
+// is logged. `release-on-escape` drops the interactivity to none when Escape is released. `popup-on-click` behaves like
+// a bar opening a menu: the first left press switches the layer to on-demand and opens a grabbing xdg_popup.
 
 #include <wayland-client.h>
 
 #define namespace namespace_
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #undef namespace
+
+#include "xdg-shell-client-protocol.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -43,6 +46,14 @@ namespace {
     zwlr_layer_shell_v1* layerShell = nullptr;
     wl_seat* seat = nullptr;
     wl_keyboard* keyboard = nullptr;
+    wl_pointer* pointer = nullptr;
+    xdg_wm_base* wmBase = nullptr;
+    wl_surface* popupSurface = nullptr;
+    xdg_surface* popupXdgSurface = nullptr;
+    xdg_popup* popup = nullptr;
+    Buffer popupBuffer;
+    bool popupMapped = false;
+    bool popupOnClick = false;
     std::vector<std::unique_ptr<Output>> outputs;
     wl_surface* surface = nullptr;
     zwlr_layer_surface_v1* layerSurface = nullptr;
@@ -175,6 +186,99 @@ namespace {
   void keyboardModifiers(void*, wl_keyboard*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
   void keyboardRepeatInfo(void*, wl_keyboard*, int32_t, int32_t) {}
 
+  constexpr int kPopupSize = 80;
+
+  void popupSurfaceConfigure(void* data, xdg_surface* xdgSurface, uint32_t serial) {
+    auto& state = *static_cast<State*>(data);
+    xdg_surface_ack_configure(xdgSurface, serial);
+    if (state.popupMapped) {
+      return;
+    }
+    state.popupMapped = true;
+    wl_surface_attach(state.popupSurface, state.popupBuffer.resource, 0, 0);
+    wl_surface_damage_buffer(state.popupSurface, 0, 0, kPopupSize, kPopupSize);
+    wl_surface_commit(state.popupSurface);
+    std::println("popup-mapped");
+  }
+
+  constexpr xdg_surface_listener kPopupXdgSurfaceListener = {.configure = popupSurfaceConfigure};
+
+  void popupConfigure(void*, xdg_popup*, int32_t, int32_t, int32_t, int32_t) {}
+  void popupDone(void*, xdg_popup*) { std::println("popup-done"); }
+  void popupRepositioned(void*, xdg_popup*, uint32_t) {}
+
+  constexpr xdg_popup_listener kPopupListener = {
+      .configure = popupConfigure,
+      .popup_done = popupDone,
+      .repositioned = popupRepositioned,
+  };
+
+  // Mirrors a bar opening a menu: the layer surface only asks for the keyboard right before its popup grabs it.
+  void openPopup(State& state, uint32_t serial) {
+    zwlr_layer_surface_v1_set_keyboard_interactivity(
+        state.layerSurface, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND
+    );
+    wl_surface_commit(state.surface);
+
+    state.popupSurface = wl_compositor_create_surface(state.compositor);
+    state.popupXdgSurface = xdg_wm_base_get_xdg_surface(state.wmBase, state.popupSurface);
+    xdg_surface_add_listener(state.popupXdgSurface, &kPopupXdgSurfaceListener, &state);
+    xdg_positioner* positioner = xdg_wm_base_create_positioner(state.wmBase);
+    xdg_positioner_set_size(positioner, kPopupSize, kPopupSize);
+    xdg_positioner_set_anchor_rect(positioner, 0, 0, 1, 1);
+    xdg_positioner_set_anchor(positioner, XDG_POSITIONER_ANCHOR_BOTTOM_LEFT);
+    xdg_positioner_set_gravity(positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+    state.popup = xdg_surface_get_popup(state.popupXdgSurface, nullptr, positioner);
+    xdg_positioner_destroy(positioner);
+    xdg_popup_add_listener(state.popup, &kPopupListener, &state);
+    zwlr_layer_surface_v1_get_popup(state.layerSurface, state.popup);
+    xdg_popup_grab(state.popup, state.seat, serial);
+    wl_surface_commit(state.popupSurface);
+    std::println("popup-requested");
+  }
+
+  void pointerEnter(void*, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t, wl_fixed_t) {}
+  void pointerLeave(void*, wl_pointer*, uint32_t, wl_surface*) {}
+  void pointerMotion(void*, wl_pointer*, uint32_t, wl_fixed_t, wl_fixed_t) {}
+  void pointerButton(void* data, wl_pointer*, uint32_t serial, uint32_t, uint32_t button, uint32_t buttonState) {
+    constexpr uint32_t kLeftButton = 0x110;
+    auto& state = *static_cast<State*>(data);
+    if (button == kLeftButton && buttonState == WL_POINTER_BUTTON_STATE_PRESSED && state.popup == nullptr) {
+      openPopup(state, serial);
+    }
+  }
+  void pointerAxis(void*, wl_pointer*, uint32_t, uint32_t, wl_fixed_t) {}
+  void pointerFrame(void*, wl_pointer*) {}
+  void pointerAxisSource(void*, wl_pointer*, uint32_t) {}
+  void pointerAxisStop(void*, wl_pointer*, uint32_t, uint32_t) {}
+  void pointerAxisDiscrete(void*, wl_pointer*, uint32_t, int32_t) {}
+  void pointerAxisValue120(void*, wl_pointer*, uint32_t, int32_t) {}
+  void pointerAxisRelativeDirection(void*, wl_pointer*, uint32_t, uint32_t) {}
+#ifdef WL_POINTER_WARP_SINCE_VERSION
+  void pointerWarp(void*, wl_pointer*, wl_fixed_t, wl_fixed_t) {}
+#endif
+
+  constexpr wl_pointer_listener kPointerListener = {
+      .enter = pointerEnter,
+      .leave = pointerLeave,
+      .motion = pointerMotion,
+      .button = pointerButton,
+      .axis = pointerAxis,
+      .frame = pointerFrame,
+      .axis_source = pointerAxisSource,
+      .axis_stop = pointerAxisStop,
+      .axis_discrete = pointerAxisDiscrete,
+      .axis_value120 = pointerAxisValue120,
+      .axis_relative_direction = pointerAxisRelativeDirection,
+#ifdef WL_POINTER_WARP_SINCE_VERSION
+      .warp = pointerWarp,
+#endif
+  };
+
+  void wmBasePing(void*, xdg_wm_base* wmBase, uint32_t serial) { xdg_wm_base_pong(wmBase, serial); }
+
+  constexpr xdg_wm_base_listener kWmBaseListener = {.ping = wmBasePing};
+
   constexpr wl_keyboard_listener kKeyboardListener = {
       .keymap = keyboardKeymap,
       .enter = keyboardEnter,
@@ -194,6 +298,10 @@ namespace {
     } else if (!hasKeyboard && state.keyboard != nullptr) {
       wl_keyboard_release(state.keyboard);
       state.keyboard = nullptr;
+    }
+    if (state.popupOnClick && (capabilities & WL_SEAT_CAPABILITY_POINTER) != 0 && state.pointer == nullptr) {
+      state.pointer = wl_seat_get_pointer(seat);
+      wl_pointer_add_listener(state.pointer, &kPointerListener, &state);
     }
   }
 
@@ -217,6 +325,10 @@ namespace {
       state.layerShell = static_cast<zwlr_layer_shell_v1*>(
           wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, std::min(version, 4U))
       );
+    } else if (std::strcmp(interface, xdg_wm_base_interface.name) == 0) {
+      state.wmBase =
+          static_cast<xdg_wm_base*>(wl_registry_bind(registry, name, &xdg_wm_base_interface, std::min(version, 6U)));
+      xdg_wm_base_add_listener(state.wmBase, &kWmBaseListener, &state);
     } else if (std::strcmp(interface, wl_output_interface.name) == 0) {
       auto output = std::make_unique<Output>();
       output->resource =
@@ -241,7 +353,7 @@ int main(int argc, char** argv) {
     std::println(
         "usage: layer-client <output> <exclusive-height-or-zero-background> [bottom-layer|overlay-layer] "
         "[log-configures] "
-        "[keyboard=none|on-demand|exclusive] [release-on-escape]"
+        "[keyboard=none|on-demand|exclusive] [release-on-escape] [popup-on-click]"
     );
     return EXIT_FAILURE;
   }
@@ -272,6 +384,8 @@ int main(int argc, char** argv) {
       state.releaseOnEscape = true;
     } else if (option == "log-configures") {
       state.logConfigures = true;
+    } else if (option == "popup-on-click") {
+      state.popupOnClick = true;
     } else {
       std::println(stderr, "layer-client: unknown option '{}'", option);
       return EXIT_FAILURE;
@@ -301,9 +415,17 @@ int main(int argc, char** argv) {
   if (state.compositor == nullptr
       || state.shm == nullptr
       || state.layerShell == nullptr
+      || (state.popupOnClick && (state.wmBase == nullptr || state.seat == nullptr))
       || selected == state.outputs.end()) {
     std::println(stderr, "layer-client: missing protocol or output '{}'", outputName);
     return EXIT_FAILURE;
+  }
+  if (state.popupOnClick) {
+    state.popupBuffer = createBuffer(state, kPopupSize, kPopupSize);
+    if (state.popupBuffer.resource == nullptr) {
+      std::println(stderr, "layer-client: failed to allocate the popup buffer");
+      return EXIT_FAILURE;
+    }
   }
 
   uint32_t layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
@@ -346,6 +468,18 @@ int main(int argc, char** argv) {
 
   if (state.frame != nullptr) {
     wl_callback_destroy(state.frame);
+  }
+  if (state.popup != nullptr) {
+    xdg_popup_destroy(state.popup);
+    xdg_surface_destroy(state.popupXdgSurface);
+    wl_surface_destroy(state.popupSurface);
+  }
+  destroyBuffer(state.popupBuffer);
+  if (state.pointer != nullptr) {
+    wl_pointer_release(state.pointer);
+  }
+  if (state.wmBase != nullptr) {
+    xdg_wm_base_destroy(state.wmBase);
   }
   zwlr_layer_surface_v1_destroy(state.layerSurface);
   wl_surface_destroy(state.surface);
