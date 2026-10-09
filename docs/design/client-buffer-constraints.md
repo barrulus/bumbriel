@@ -32,19 +32,21 @@ still presented at the size it committed.
 
 ## Capture readback format
 
-`fx_texture_preferred_read_format` in `umbrielfx` never reports packed
-24-bit. It is the only shm format the capture protocols offer clients, and the
-NVIDIA blob reports `GL_RGB` / `GL_UNSIGNED_BYTE` for opaque targets, which maps
-to `DRM_FORMAT_BGR888`. Clients assume a 4-byte pixel, derive `width * 4`, and
+`fx_texture_preferred_read_format` in `umbrielfx` never reports packed 24-bit or
+packed 10-bit for shared-memory capture. For XR30 and XB30 targets it publishes
+XRGB8888 when BGRA readback is available, and XBGR8888 otherwise. GLES performs
+the depth conversion during readback. The NVIDIA blob reports `GL_RGB` /
+`GL_UNSIGNED_BYTE` for opaque 8-bit targets, which maps to
+`DRM_FORMAT_BGR888`. Clients assume a 4-byte pixel, derive `width * 4`, and
 wlroots rejects it because a stride must divide by the pixel size. GLES2 always
-allows `GL_RGBA` / `GL_UNSIGNED_BYTE` readback, so the clamp to 32-bit costs
-nothing at 8bpc.
+allows `GL_RGBA` / `GL_UNSIGNED_BYTE` readback, so publishing a 32-bit format
+avoids that mismatch.
 
 Do not fix this by dropping `DRM_FORMAT_BGR888` from `umbrielfx`'s pixel format
 table: the table also drives `wl_shm` advertisement and texture upload, and it
 is identical to wlroots' gles2 table.
 
-Readback support must also accept the bound framebuffer's
+Explicit texture readback must also accept the bound framebuffer's
 `GL_IMPLEMENTATION_COLOR_READ_FORMAT` / `GL_IMPLEMENTATION_COLOR_READ_TYPE`
 pair. NVIDIA supports AB30 readback without advertising its texture-upload
 extension. Applying only the upload capability check rejects valid 10-bit
@@ -128,11 +130,13 @@ causes the check to abort in the converter.
 
 ## HDR capture view
 
-Capture protocols negotiate their buffer constraints before they lock the
-output for an attach-render frame. The SDR capture sidecar must therefore keep
-the output buffer's DRM format while storing Gamma 2.2 SDR values. For an XR30
-HDR output, replacing that sidecar with XR24 after negotiation makes the client
-request packed 10-bit readback from an 8-bit framebuffer.
+Capture protocols advertise their shared-memory and DMA-BUF constraints before
+they lock the output for an attach-render frame. For XR30 and XB30 sources,
+shared-memory capture is advertised as 8-bit and GLES converts the SDR sidecar
+during readback. The sidecar itself must continue to use the output buffer's
+DRM format because DMA-BUF capture may already have negotiated that 10-bit
+storage, and texture substitution must remain storage-compatible. Its stored
+values are Gamma 2.2 SDR even when its DRM format is 10-bit.
 
 Each output owns one shared FP16 blend buffer and one shared SDR capture
 sidecar. Their lifetime is tied to that output, rather than to its swapchain

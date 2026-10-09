@@ -1197,15 +1197,19 @@ out:
 }
 
 // Capture publishes the texture's preferred read format as its only SHM format.
-// Every 8-bit target must publish the BGRA byte order when the driver can read
-// it, and the published format must read back in its own byte order.
+// Every 8-bit target and packed 10-bit target must publish an 8-bit format in
+// the BGRA byte order when the driver can read it. The published format must
+// also read back in its own byte order.
 static bool test_capture_read_format(struct fixture *fixture) {
 	const uint32_t targets[] = {
 		DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888,
 		DRM_FORMAT_XBGR8888, DRM_FORMAT_ABGR8888,
+		DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010,
+		DRM_FORMAT_XBGR2101010, DRM_FORMAT_ABGR2101010,
 	};
 	bool bgra = fx_get_renderer(fixture->renderer)->exts.EXT_read_format_bgra;
 	bool ok = true;
+	bool tested_10bit = false;
 	for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
 		char message[128];
 		struct wlr_buffer *target = create_output_buffer(fixture,
@@ -1215,6 +1219,12 @@ static bool test_capture_read_format(struct fixture *fixture) {
 				"allocate 0x%08X target", targets[i]);
 			ok = check(targets[i] != DRM_FORMAT_XRGB8888, message) && ok;
 			continue;
+		}
+		if (targets[i] == DRM_FORMAT_XRGB2101010 ||
+				targets[i] == DRM_FORMAT_ARGB2101010 ||
+				targets[i] == DRM_FORMAT_XBGR2101010 ||
+				targets[i] == DRM_FORMAT_ABGR2101010) {
+			tested_10bit = true;
 		}
 
 		struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
@@ -1230,7 +1240,9 @@ static bool test_capture_read_format(struct fixture *fixture) {
 		}
 
 		bool alpha = targets[i] == DRM_FORMAT_ARGB8888 ||
-			targets[i] == DRM_FORMAT_ABGR8888;
+			targets[i] == DRM_FORMAT_ABGR8888 ||
+			targets[i] == DRM_FORMAT_ARGB2101010 ||
+			targets[i] == DRM_FORMAT_ABGR2101010;
 		uint32_t expected = bgra
 			? (alpha ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888)
 			: (alpha ? DRM_FORMAT_ABGR8888 : DRM_FORMAT_XBGR8888);
@@ -1244,22 +1256,23 @@ static bool test_capture_read_format(struct fixture *fixture) {
 		bool read = wlr_texture_read_pixels(texture,
 			&(struct wlr_texture_read_pixels_options) {
 				.data = pixels,
-				.format = published,
+				.format = expected,
 				.stride = TEST_WIDTH * 4,
 			});
 		const uint8_t bgra_red[4] = { 128, 64, 255, 255 };
 		const uint8_t rgba_red[4] = { 255, 64, 128, 255 };
-		bool bgra_order = published == DRM_FORMAT_XRGB8888 ||
-			published == DRM_FORMAT_ARGB8888;
+		bool bgra_order = expected == DRM_FORMAT_XRGB8888 ||
+			expected == DRM_FORMAT_ARGB8888;
 		uint8_t actual[4] = { pixels[0], pixels[1], pixels[2], 255 };
 		snprintf(message, sizeof(message),
-			"0x%08X target reads back as 0x%08X in its byte order", targets[i], published);
+			"0x%08X target reads back as 0x%08X in its byte order", targets[i], expected);
 		ok = check(read && codes_close(actual, bgra_order ? bgra_red : rgba_red, 1),
 			message) && ok;
 
 		wlr_texture_destroy(texture);
 		wlr_buffer_drop(target);
 	}
+	ok = check(tested_10bit, "allocate packed 10-bit capture target") && ok;
 	return ok;
 }
 

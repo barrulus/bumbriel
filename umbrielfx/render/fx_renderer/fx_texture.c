@@ -274,6 +274,21 @@ static uint32_t fx_texture_preferred_read_format(struct wlr_texture *wlr_texture
 	// targets) has rows that are not 4-byte aligned, which clients assuming a
 	// 4-byte pixel turn into a stride wl_shm rejects, so it is read as 32-bit.
 	bool bgra = texture->fx_renderer->exts.EXT_read_format_bgra;
+	// Shared-memory capture is the portable SDR path. Keep packed 10-bit
+	// framebuffers intact for rendering and DMA-BUF, but publish an 8-bit format
+	// that glReadPixels can produce through normalized depth conversion.
+	if (texture->buffer != NULL) {
+		switch (texture->buffer->drm_format) {
+		case DRM_FORMAT_XRGB2101010:
+		case DRM_FORMAT_XBGR2101010:
+			fmt = bgra ? DRM_FORMAT_XRGB8888 : DRM_FORMAT_XBGR8888;
+			goto out;
+		case DRM_FORMAT_ARGB2101010:
+		case DRM_FORMAT_ABGR2101010:
+			fmt = bgra ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_ABGR8888;
+			goto out;
+		}
+	}
 	const struct fx_pixel_format *pix_fmt =
 		get_fx_format_from_gl(gl_format, gl_type, alpha_size > 0);
 	switch (pix_fmt != NULL ? pix_fmt->drm_format : DRM_FORMAT_INVALID) {
