@@ -116,7 +116,9 @@ struct fx_animation_parameters {
 static inline struct fx_uniform* fx_parameters_add_uniform(
     struct fx_animation_parameters* parameters, const char* name, enum fx_uniform_type type, unsigned count
 ) {
-  if (parameters->uniform_count >= FX_UNIFORMS_MAX || strlen(name) >= FX_UNIFORM_NAME_MAX || count == 0
+  if (parameters->uniform_count >= FX_UNIFORMS_MAX
+      || strlen(name) >= FX_UNIFORM_NAME_MAX
+      || count == 0
       || count * fx_uniform_components(type) > FX_UNIFORM_FLOATS_MAX
       || ((type == FX_UNIFORM_INT || type == FX_UNIFORM_BOOL) && count > 4)) {
     return NULL;
@@ -132,9 +134,8 @@ static inline struct fx_uniform* fx_parameters_add_uniform(
 // Compilation happens with the renderer's context current. Sources provide the
 // kind's entry point (vec4 animation(vec2 uv), border, window, screen, cursor),
 // not a main function, version, or precision declaration.
-struct fx_effect_shader* fx_effect_shader_create(
-    struct wlr_renderer* renderer, enum fx_effect_kind kind, const char* source, const char* label
-);
+struct fx_effect_shader*
+fx_effect_shader_create(struct wlr_renderer* renderer, enum fx_effect_kind kind, const char* source, const char* label);
 struct fx_effect_shader* fx_effect_shader_ref(struct fx_effect_shader* shader);
 void fx_effect_shader_unref(struct fx_effect_shader* shader);
 // A shape-preserving shader only scales its input's alpha uniformly. Shadows

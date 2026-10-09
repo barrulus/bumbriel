@@ -11,7 +11,7 @@ struct wlr_surface;
  * state and stores its point, or returns NULL when the surface has none.
  * wlroots keeps these fields private.
  */
-struct wlr_drm_syncobj_timeline *umbrielfx_linux_drm_syncobj_release_point(
-	struct wlr_surface *surface, uint64_t *point);
+struct wlr_drm_syncobj_timeline*
+umbrielfx_linux_drm_syncobj_release_point(struct wlr_surface* surface, uint64_t* point);
 
 #endif

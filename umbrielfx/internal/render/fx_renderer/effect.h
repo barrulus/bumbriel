@@ -50,8 +50,8 @@ void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct
 // Same validation, cached lookup and active-array clamping for dedicated draw
 // inputs larger than fx_uniform's inline storage. data_bytes bounds the input.
 void fx_effect_shader_bind_uniform_data(
-    struct fx_effect_shader* shader, const char* name, enum fx_uniform_type type,
-    unsigned element_count, const void* data, size_t data_bytes
+    struct fx_effect_shader* shader, const char* name, enum fx_uniform_type type, unsigned element_count,
+    const void* data, size_t data_bytes
 );
 void fx_effect_shader_bind_parameters(
     struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
@@ -110,7 +110,7 @@ struct fx_effect_composite {
   const float* corner_radius;                // tl, tr, br, bl logical px for umbriel_corner_radius; may be NULL
   const float* pointer;                      // umbriel_pointer, uv in the drawn box; NULL unless a cursor kind
   const struct fx_cursor_path* pointer_path;
-  const float* audio;                        // umbriel_audio level and availability; NULL supplies zero
+  const float* audio; // umbriel_audio level and availability; NULL supplies zero
 };
 
 // Pops the capture begun by fx_render_pass_begin_animation and draws it

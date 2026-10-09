@@ -780,9 +780,8 @@ static void draw_animation_texture(
     const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* source_box,
     const struct wlr_box* logical_box, int expand, const struct fx_effect_geometry* geometry,
     const float* corner_radius, const float* pointer, const struct fx_cursor_path* pointer_path, const float* audio,
-    enum wl_output_transform transform, const pixman_region32_t* clip,
-    struct wlr_texture* previous_texture, const struct wlr_box* previous_source_box, const float projection[9],
-    bool blend, bool mark_updated
+    enum wl_output_transform transform, const pixman_region32_t* clip, struct wlr_texture* previous_texture,
+    const struct wlr_box* previous_source_box, const float projection[9], bool blend, bool mark_updated
 ) {
   TRACY_BOTH_ZONES_START(pass->buffer->renderer);
   struct fx_texture* texture = fx_get_texture(wlr_texture);
@@ -842,8 +841,8 @@ static void draw_animation_texture(
     fx_effect_shader_bind_uniform(shader, &at);
     if (pointer_path != NULL && pointer_path->count > 0) {
       fx_effect_shader_bind_uniform_data(
-          shader, "umbriel_pointer_path", FX_UNIFORM_VEC4, pointer_path->count,
-          pointer_path->points, sizeof(pointer_path->points)
+          shader, "umbriel_pointer_path", FX_UNIFORM_VEC4, pointer_path->count, pointer_path->points,
+          sizeof(pointer_path->points)
       );
     }
   }
@@ -1432,9 +1431,9 @@ void fx_render_pass_effect_in_place(struct fx_gles_render_pass* pass, const stru
 }
 
 void fx_render_pass_end_animation(
-    struct fx_gles_render_pass* pass, struct fx_effect_shader* shader,
-    const struct fx_animation_parameters* parameters, const struct wlr_box* box, const struct wlr_box* logical_box,
-    enum wl_output_transform transform, const pixman_region32_t* clip, int expand
+    struct fx_gles_render_pass* pass, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters,
+    const struct wlr_box* box, const struct wlr_box* logical_box, enum wl_output_transform transform,
+    const pixman_region32_t* clip, int expand
 ) {
   const struct fx_effect_composite composite = {
       .shader = shader,

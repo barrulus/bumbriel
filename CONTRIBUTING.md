@@ -53,7 +53,7 @@ The README covers routine builds and running Umbriel. Contributor checks and spe
 | `just check-stress <name> [n]` | Run `n` copies (default 32) of one harness check at once, to expose races that load reveals |
 | `just check-names` | List every harness check name. Builds nothing |
 | `just lint [file ...]` | Build the compositor, unit tests, and harness clients, then run clang-tidy on everything or only the given files |
-| `just format` | Format source and test files |
+| `just format` | Format the C++ and umbrielfx C sources, tests, and GLSL shaders (including `examples/effects`) |
 | `just install` | Build a release binary and install it with `meson install` |
 | `just clean <mode>` | Remove a build directory |
 | `just rebuild <mode>` | Clean and rebuild a build directory |
@@ -252,7 +252,8 @@ narrate history, migrations, rejected alternatives, or "why we don't do X"; git 
 
 This project uses [clang-format](https://clang.llvm.org/docs/ClangFormat.html) for formatting, with the same
 `.clang-format` as noctalia-shell (LLVM base, 2-space indent, 120 columns, left pointer alignment, regrouped includes).
-Run `just format` before committing.
+The same file covers the umbrielfx C sources and the GLSL shaders (`.frag`, `.vert`, `.glsl`). Wrap hand-aligned
+tables such as matrices in `// clang-format off` and `// clang-format on`. Run `just format` before committing.
 
 Static analysis uses [clang-tidy](https://clang.llvm.org/extra/clang-tidy/) with the same `.clang-tidy` check set as
 noctalia-shell. Run `just lint` (warnings are errors). Prefer the modern idioms the checks enforce: `auto`, ranges,

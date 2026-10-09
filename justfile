@@ -177,9 +177,10 @@ check-stress name n="32": (_ensure-configured mode) (_enable-tests mode "yes")
 check-names:
     @bash tests/harness/check.sh ./build-{{mode}}/umbriel --list
 
+# C++ and C sources plus GLSL shaders, all under the root .clang-format.
 format:
-    find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 | xargs -0 clang-format -i
-    find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 | xargs -0 grep -ZlP '\s+$' | xargs -0 -r sed -i 's/[[:space:]]*$//'
+    find src tests umbrielfx examples/effects \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.frag' -o -name '*.vert' -o -name '*.glsl' \) -print0 | xargs -0 clang-format -i
+    find src tests umbrielfx examples/effects \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.frag' -o -name '*.vert' -o -name '*.glsl' \) -print0 | xargs -0 grep -ZlP '\s+$' | xargs -0 -r sed -i 's/[[:space:]]*$//'
 
 # clang-tidy over src and tests, or only the given files: `just lint`, `just lint src/core/animation.cpp`. Headers are
 # checked through the sources that include them. Another build directory is `mode=`, as in `just mode=asan lint`.

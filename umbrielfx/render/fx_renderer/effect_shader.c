@@ -1,13 +1,12 @@
+#include "render/egl.h"
 #include "render/fx_renderer/effect.h"
+#include "render/fx_renderer/fx_renderer.h"
+#include "render/fx_renderer/shaders.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wlr/util/log.h>
-
-#include "render/egl.h"
-#include "render/fx_renderer/fx_renderer.h"
-#include "render/fx_renderer/shaders.h"
 
 // Shared by every kind. Its names are the shared preamble contract.
 static const char kPreamble[] =
@@ -60,12 +59,11 @@ static const char kPreamble[] =
     "  return mix(from, to, scaled - index);\n"
     "}\n";
 
-static const char kAnimationSection[] =
-    "uniform float umbriel_progress;\n"
-    "uniform float umbriel_linear_progress;\n"
-    "uniform float umbriel_direction;\n"
-    "uniform vec4 umbriel_random_seed;\n"
-    "#define umbriel_clamped_progress clamp(umbriel_progress, 0.0, 1.0)\n";
+static const char kAnimationSection[] = "uniform float umbriel_progress;\n"
+                                        "uniform float umbriel_linear_progress;\n"
+                                        "uniform float umbriel_direction;\n"
+                                        "uniform vec4 umbriel_random_seed;\n"
+                                        "#define umbriel_clamped_progress clamp(umbriel_progress, 0.0, 1.0)\n";
 static const char kAnimationSuffix[] = "\nvoid main() { gl_FragColor = animation(v_texcoord); }\n";
 
 // Hole and radii describe the client rectangle inside the drawn rectangle. The
@@ -108,11 +106,10 @@ static const char kWindowSuffix[] =
     "\nvoid main() { gl_FragColor = mix(umbriel_sample(v_texcoord), window(v_texcoord), umbriel_mask(v_texcoord)); }\n";
 static const char kScreenSuffix[] = "\nvoid main() { gl_FragColor = screen(v_texcoord); }\n";
 // The cursor kind is in place too, so it needs the mask helper before its own uniform.
-static const char kCursorSection[] =
-    "uniform vec2 umbriel_pointer;\n"
-    "uniform int umbriel_pointer_count;\n"
-    "uniform vec4 umbriel_pointer_history[8];\n"
-    "uniform vec4 umbriel_pointer_path[64];\n";
+static const char kCursorSection[] = "uniform vec2 umbriel_pointer;\n"
+                                     "uniform int umbriel_pointer_count;\n"
+                                     "uniform vec4 umbriel_pointer_history[8];\n"
+                                     "uniform vec4 umbriel_pointer_path[64];\n";
 static const char kCursorSuffix[] =
     "\nvoid main() { gl_FragColor = mix(umbriel_sample(v_texcoord), cursor(v_texcoord), umbriel_mask(v_texcoord)); }\n";
 
@@ -276,8 +273,8 @@ static GLenum gl_type(enum fx_uniform_type type) {
 }
 
 void fx_effect_shader_bind_uniform_data(
-    struct fx_effect_shader* shader, const char* name, enum fx_uniform_type type,
-    unsigned element_count, const void* data, size_t data_bytes
+    struct fx_effect_shader* shader, const char* name, enum fx_uniform_type type, unsigned element_count,
+    const void* data, size_t data_bytes
 ) {
   struct fx_effect_uniform* cached = (struct fx_effect_uniform*)fx_effect_shader_uniform(shader, name);
   if (cached == NULL) {
@@ -350,15 +347,18 @@ static void reset_optional_uniforms(struct fx_effect_shader* shader) {
   }
 }
 
-void fx_effect_shader_bind_parameters(struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters) {
+void fx_effect_shader_bind_parameters(
+    struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
+) {
   reset_optional_uniforms(shader);
   for (unsigned i = 0; i < parameters->uniform_count && i < FX_UNIFORMS_MAX; i++) {
     fx_effect_shader_bind_uniform(shader, &parameters->uniforms[i]);
   }
 }
 
-struct fx_effect_shader*
-fx_effect_shader_create(struct wlr_renderer* renderer, enum fx_effect_kind kind, const char* source, const char* label) {
+struct fx_effect_shader* fx_effect_shader_create(
+    struct wlr_renderer* renderer, enum fx_effect_kind kind, const char* source, const char* label
+) {
   if (source == NULL || !wlr_renderer_is_fx(renderer)) {
     return NULL;
   }

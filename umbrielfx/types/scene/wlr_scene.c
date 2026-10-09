@@ -169,9 +169,7 @@ static void scene_effects_destroy(struct wlr_addon* addon) {
   struct scene_effects* effects = wl_container_of(addon, effects, addon);
   // Frames of a scene without effect state neither save nor release captures.
   struct wlr_scene_output* output;
-  wl_list_for_each(output, &effects->scene->outputs, link) {
-    output_effects_release_capture(output);
-  }
+  wl_list_for_each(output, &effects->scene->outputs, link) { output_effects_release_capture(output); }
   // Scene teardown finishes the root's addons before destroying descendants
   // that still carry slots; they leave an empty list of their own.
   struct scene_animation *animation, *tmp;
@@ -1329,9 +1327,7 @@ static void scene_effects_light_layer_destroy(struct wl_listener* listener, void
   wl_list_remove(&effects->light_layer_destroy.link);
   effects->light_layer = NULL;
   struct scene_animation* animation;
-  wl_list_for_each(animation, &effects->animations, link) {
-    scene_light_remove(animation);
-  }
+  wl_list_for_each(animation, &effects->animations, link) { scene_light_remove(animation); }
   if (wl_list_empty(&effects->animations)) {
     scene_effects_destroy(&effects->addon);
   }
@@ -1345,9 +1341,7 @@ void wlr_scene_set_effect_light_layer(struct wlr_scene* scene, struct wlr_scene_
   struct scene_animation* animation;
   if (effects->light_layer != NULL) {
     wl_list_remove(&effects->light_layer_destroy.link);
-    wl_list_for_each(animation, &effects->animations, link) {
-      scene_light_remove(animation);
-    }
+    wl_list_for_each(animation, &effects->animations, link) { scene_light_remove(animation); }
   }
   effects->light_layer = layer;
   if (layer == NULL) {
@@ -1358,9 +1352,7 @@ void wlr_scene_set_effect_light_layer(struct wlr_scene* scene, struct wlr_scene_
   }
   effects->light_layer_destroy.notify = scene_effects_light_layer_destroy;
   wl_signal_add(&layer->node.events.destroy, &effects->light_layer_destroy);
-  wl_list_for_each(animation, &effects->animations, link) {
-    scene_light_sync(effects, animation);
-  }
+  wl_list_for_each(animation, &effects->animations, link) { scene_light_sync(effects, animation); }
 }
 
 static void scene_update_region(struct wlr_scene* scene, const pixman_region32_t* update_region) {
@@ -1603,7 +1595,8 @@ static void scene_effect_damage_subtree(struct wlr_scene_node* node) {
 static void scene_effect_damage_margins(struct wlr_scene_node* node) {
   int x, y;
   // The root goes down with its outputs; nothing is left to damage.
-  if (node->parent == NULL || scene_effects_get(scene_node_get_root(node), false) == NULL
+  if (node->parent == NULL
+      || scene_effects_get(scene_node_get_root(node), false) == NULL
       || !wlr_scene_node_coords(node, &x, &y)) {
     return;
   }
@@ -1704,8 +1697,8 @@ void wlr_scene_node_set_animation(
       && parameters->transition_id == animation->parameters[slot].transition_id;
   // A transient slot restarts when its transition changes; a persistent slot only when its program does
   // (a reload with a new source). Either resets the slot's feedback history.
-  const bool restarted = previous != NULL && shader != NULL
-      && (fx_slot_persistent(slot) ? previous != shader : !same_transition);
+  const bool restarted =
+      previous != NULL && shader != NULL && (fx_slot_persistent(slot) ? previous != shader : !same_transition);
   if (previous != NULL
       && shader != NULL
       && parameters != NULL
@@ -1838,8 +1831,8 @@ struct fx_effect_requirements wlr_scene_node_effect_requirements(struct wlr_scen
   if (animation != NULL) {
     requirements.persistent = animation->persistent;
     requirements.in_place = animation->in_place;
-    requirements.light = animation->shaders[FX_SLOT_BORDER_EFFECT] != NULL
-        && animation->parameters[FX_SLOT_BORDER_EFFECT].light.enabled;
+    requirements.light =
+        animation->shaders[FX_SLOT_BORDER_EFFECT] != NULL && animation->parameters[FX_SLOT_BORDER_EFFECT].light.enabled;
   }
   if (node->type == WLR_SCENE_NODE_TREE) {
     struct wlr_scene_node* child;
@@ -4156,7 +4149,10 @@ struct scene_output_effects {
   int cursor_radius;
   uint64_t motion_time;
   unsigned motion_count;
-  struct { double x, y; uint64_t time; } motion[64];
+  struct {
+    double x, y;
+    uint64_t time;
+  } motion[64];
   double pointer_x, pointer_y; // layout coordinates
   bool pointer_visible;        // shown and inside the output
 };
@@ -4233,8 +4229,9 @@ bool wlr_scene_output_audio_active(struct wlr_scene_output* output) {
     return false;
   }
   struct scene_output_effects* out = scene_output_effects_get(output, false);
-  if (out != NULL && (fx_effect_shader_reads(out->screen, "umbriel_audio")
-      || (out->pointer_visible && fx_effect_shader_reads(out->cursor, "umbriel_audio")))) {
+  if (out != NULL
+      && (fx_effect_shader_reads(out->screen, "umbriel_audio")
+          || (out->pointer_visible && fx_effect_shader_reads(out->cursor, "umbriel_audio")))) {
     return true;
   }
   struct scene_effects* effects = scene_effects_get(output->scene, false);
@@ -4246,7 +4243,8 @@ bool wlr_scene_output_audio_active(struct wlr_scene_output* output) {
   struct scene_animation* animation;
   wl_list_for_each(animation, &effects->animations, link) {
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
-      if (!animation->audio_frozen[slot] && fx_effect_shader_reads(animation->shaders[slot], "umbriel_audio")
+      if (!animation->audio_frozen[slot]
+          && fx_effect_shader_reads(animation->shaders[slot], "umbriel_audio")
           && wlr_scene_node_visible_in_box(animation->node, &box)) {
         return true;
       }
@@ -4351,7 +4349,7 @@ void wlr_scene_output_set_effect_time(struct wlr_scene_output* output, uint64_t 
   const unsigned lifetime = fx_effect_shader_reads(effects->cursor, "umbriel_pointer_path") ? 2000u : 300u;
   unsigned expired = 0;
   while (expired < effects->motion_count
-      && (msec < effects->motion[expired].time || msec - effects->motion[expired].time >= lifetime)) {
+         && (msec < effects->motion[expired].time || msec - effects->motion[expired].time >= lifetime)) {
     ++expired;
   }
   effects->motion_count -= expired;
@@ -4440,9 +4438,11 @@ void wlr_scene_output_set_effect_pointer(struct wlr_scene_output* output, double
   }
   if (!shown) {
     effects->motion_count = 0;
-  } else if ((fx_effect_shader_reads(effects->cursor, "umbriel_pointer_history")
-      || fx_effect_shader_reads(effects->cursor, "umbriel_pointer_path"))
-      && (!effects->pointer_visible || effects->pointer_x != lx || effects->pointer_y != ly)) {
+  } else if (
+      (fx_effect_shader_reads(effects->cursor, "umbriel_pointer_history")
+       || fx_effect_shader_reads(effects->cursor, "umbriel_pointer_path"))
+      && (!effects->pointer_visible || effects->pointer_x != lx || effects->pointer_y != ly)
+  ) {
     // Keep the newest event while spacing older samples by about one 30 Hz frame.
     unsigned count = effects->motion_count;
     if (count >= 2 && effects->motion_time - effects->motion[count - 2].time < 32) {
@@ -4473,8 +4473,7 @@ static bool output_effects_active(const struct scene_output_effects* effects) {
 static void render_output_effect(
     struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters,
     struct fx_animation_history* history, const struct wlr_box* logical_box, const float* pointer,
-    const struct fx_cursor_path* pointer_path,
-    const struct render_data* data
+    const struct fx_cursor_path* pointer_path, const struct render_data* data
 ) {
   struct fx_gles_render_pass* pass = fx_get_render_pass(data->render_pass);
   if (shader == NULL || shader->renderer != pass->buffer->renderer) {
@@ -5562,9 +5561,9 @@ bool wlr_scene_output_build_state(
     list_con.render_list->size = 0;
     scene_nodes_in_box(&scene_output->scene->tree.node, &list_walk_box, construct_render_list_iterator, &list_con);
     array_realloc(list_con.render_list, list_con.render_list->size);
-    TRACY_WHEN_CONNECTED(TRACY_ZONE_TEXT_f(
-        "%s %zu", output->name, list_con.render_list->size / sizeof(struct render_list_entry)
-    );)
+    TRACY_WHEN_CONNECTED(
+        TRACY_ZONE_TEXT_f("%s %zu", output->name, list_con.render_list->size / sizeof(struct render_list_entry));
+    )
     TRACY_ZONE_END_QUIET;
   }
 
@@ -5609,8 +5608,7 @@ bool wlr_scene_output_build_state(
     fx_renderer_clear_animation_buffers(output);
   }
 
-  bool unfiltered_pass =
-      capture_pending && in_place_visible && (output_effects == NULL || !output_effects->in_capture);
+  bool unfiltered_pass = capture_pending && in_place_visible && (output_effects == NULL || !output_effects->in_capture);
   if (unfiltered_pass && output_effects == NULL) {
     output_effects = scene_output_effects_get(scene_output, true);
     unfiltered_pass = output_effects != NULL;

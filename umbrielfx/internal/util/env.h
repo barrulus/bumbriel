@@ -9,7 +9,7 @@
  *
  * On success, the parsed value is returned. On error, false is returned.
  */
-bool env_parse_bool(const char *option);
+bool env_parse_bool(const char* option);
 
 /**
  * Pick a choice from an environment variable.
@@ -18,6 +18,6 @@ bool env_parse_bool(const char *option);
  *
  * switches is a NULL-terminated array.
  */
-size_t env_parse_switch(const char *option, const char **switches);
+size_t env_parse_switch(const char* option, const char** switches);
 
 #endif
