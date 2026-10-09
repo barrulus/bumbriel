@@ -14,19 +14,25 @@ completion, disable and renderer replacement detach it through the native slide
 lifecycle. Failed composition abandons reveal at the current progress and resumes
 native slide without committing the incomplete frame.
 
-The shader receives `umbriel_workspace_rect`, the target bounds normalized to the
-output, and `umbriel_workspace_axis`, a signed horizontal or vertical axis.
-Incoming and outgoing roots share output coordinates and transition identity.
-Their `umbriel_direction` values are +1 and -1 respectively. Bounds refresh before
-rendering, including while the test animation clock is frozen.
+The roots retain their isolation identities and native transition parameters.
+At output composition, the existing capture stack renders each complete scene,
+filtering out the other workspace while retaining shared strata in their native
+stacking positions. One shader combines the two full-output textures. No scene
+nodes are moved or enabled temporarily for capture.
+
+`umbriel_sample` reads the outgoing scene and `umbriel_sample_incoming` reads the
+incoming scene. UVs cover the logical output; `umbriel_workspace_rect` is the unit
+rectangle. `umbriel_workspace_axis` retains the signed navigation axis. Native
+progress, reversal, cancellation and the transition seed remain unchanged.
 
 ## Blur and capture
 
-An opaque isolation identity groups a workspace's scene roots. The existing
-animation capture stack and recursive scene renderer replay the native lower
-layers for blur, excluding other workspace groups. Replay does not emit duplicate
-client sampling events or advance effect feedback. Shared layers retain normal
-stacking. Allocation, texture and capture failures reject the whole reveal frame.
+Each scene's blur reads its own lower layers. Shared content renders into both
+inputs, but emits sampling events and advances feedback only once per output
+composition. Both inputs remain live at held progress. The cursor and output
+postprocessing remain after the transition. Display and unfiltered capture use
+their existing separate histories; feedback is not the incoming scene sampler.
+Allocation, texture and capture failures reject the whole reveal frame.
 
 ## Coverage
 

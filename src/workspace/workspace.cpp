@@ -2697,6 +2697,11 @@ namespace umbriel {
     return progress == 0 && incoming == nullptr ? m_slide.previous : incoming;
   }
 
+  wlr_scene_node* WorkspaceGroup::revealRoot(bool incoming) const {
+    auto* workspace = incoming ? revealIncoming(m_slide.progress) : m_slide.base;
+    return revealActive() && workspace != nullptr ? &workspace->tileShadowLayer()->node.parent->node : nullptr;
+  }
+
   void WorkspaceGroup::refreshReveal() {
     if (m_slide.reveal == nullptr) {
       return;
@@ -2718,12 +2723,7 @@ namespace umbriel {
       if (workspace == nullptr) {
         continue;
       }
-      const bool participating = workspace == m_slide.base || workspace == incoming;
       for (auto* tree : {workspace->tileShadowLayer()->node.parent, workspace->fullscreenTree()}) {
-        if (!participating) {
-          wlr_scene_node_set_animation(&tree->node, FX_SLOT_WORKSPACES, nullptr, nullptr);
-          continue;
-        }
         fx_animation_parameters parameters{};
         parameters.progress = static_cast<float>(std::clamp(std::abs(progress), 0.0, 1.0));
         parameters.linear_progress = parameters.progress;
@@ -2734,16 +2734,8 @@ namespace umbriel {
           auto& registry = effectRegistry();
           registry.fillTimeUniforms(parameters, registry.clockSeconds(), *m_slide.revealPreset, m_slide.reveal);
         }
-        wlr_box bounds{};
-        wlr_scene_node_effect_bounds(&tree->node, &bounds);
-        int x = 0;
-        int y = 0;
-        wlr_scene_node_coords(&tree->node, &x, &y);
         if (auto* rect = fx_parameters_add_uniform(&parameters, "umbriel_workspace_rect", FX_UNIFORM_VEC4, 1)) {
-          rect->floats[0] = static_cast<float>(bounds.x + x - output.x) / output.width;
-          rect->floats[1] = static_cast<float>(bounds.y + y - output.y) / output.height;
-          rect->floats[2] = static_cast<float>(bounds.width) / output.width;
-          rect->floats[3] = static_cast<float>(bounds.height) / output.height;
+          rect->floats[2] = rect->floats[3] = 1.0F;
         }
         if (auto* direction = fx_parameters_add_uniform(&parameters, "umbriel_workspace_axis", FX_UNIFORM_VEC2, 1)) {
           direction->floats[0] = m_workspaceAxis == WorkspaceAxis::Horizontal ? axis : 0.0F;
