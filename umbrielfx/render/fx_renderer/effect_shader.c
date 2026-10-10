@@ -40,6 +40,7 @@ static const char kPreamble[] =
     "vec4 umbriel_sample_incoming(vec2 uv) {\n"
     "  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0);\n"
     "  vec2 p = (vec3(uv, 1.0) * umbriel_sample_matrix).xy;\n"
+    "  if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) return vec4(0.0);\n"
     "  return texture2D(umbriel_incoming_texture, p);\n"
     "}\n"
     "vec4 umbriel_sample_previous(vec2 uv) {\n"

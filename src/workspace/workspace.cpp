@@ -2711,11 +2711,6 @@ namespace umbriel {
       slideFinish();
       return;
     }
-    wlr_box output{};
-    wlr_output_layout_get_box(m_server->outputLayout(), m_output->wlr(), &output);
-    if (output.width <= 0 || output.height <= 0) {
-      return;
-    }
     const double progress = m_slide.progress;
     Workspace* incoming = revealIncoming(progress);
     const float axis = incoming == m_slide.previous ? -1.0F : 1.0F;
@@ -2733,9 +2728,6 @@ namespace umbriel {
         if (m_slide.revealPreset) {
           auto& registry = effectRegistry();
           registry.fillTimeUniforms(parameters, registry.clockSeconds(), *m_slide.revealPreset, m_slide.reveal);
-        }
-        if (auto* rect = fx_parameters_add_uniform(&parameters, "umbriel_workspace_rect", FX_UNIFORM_VEC4, 1)) {
-          rect->floats[2] = rect->floats[3] = 1.0F;
         }
         if (auto* direction = fx_parameters_add_uniform(&parameters, "umbriel_workspace_axis", FX_UNIFORM_VEC2, 1)) {
           direction->floats[0] = m_workspaceAxis == WorkspaceAxis::Horizontal ? axis : 0.0F;

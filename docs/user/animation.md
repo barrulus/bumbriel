@@ -238,5 +238,5 @@ Reveal shaders use `umbriel_sample(uv)` for the outgoing scene and
 `umbriel_sample_incoming(uv)` for the incoming scene, with output-wide UVs.
 The shader returns the final scene pixel; for example,
 `mix(umbriel_sample(uv), umbriel_sample_incoming(uv), umbriel_clamped_progress)`
-produces a crossfade. Existing per-workspace mask shaders must combine both
-samples instead. `umbriel_sample_previous` remains feedback history.
+produces a crossfade. A shader that reads only `umbriel_sample` shows only the
+outgoing scene. `umbriel_sample_previous` reads this effect's previous result.

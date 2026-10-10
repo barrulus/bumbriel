@@ -14,16 +14,16 @@ completion, disable and renderer replacement detach it through the native slide
 lifecycle. Failed composition abandons reveal at the current progress and resumes
 native slide without committing the incomplete frame.
 
-The roots retain their isolation identities and native transition parameters.
-At output composition, the existing capture stack renders each complete scene,
-filtering out the other workspace while retaining shared strata in their native
-stacking positions. One shader combines the two full-output textures. No scene
-nodes are moved or enabled temporarily for capture.
+Each participating root carries its workspace isolation identity and the
+transition parameters. At output composition, the capture stack renders each
+complete scene, filtering out the other workspace while keeping shared strata in
+their native stacking positions. One shader combines the two full-output
+textures. Capture neither moves nor enables scene nodes.
 
 `umbriel_sample` reads the outgoing scene and `umbriel_sample_incoming` reads the
-incoming scene. UVs cover the logical output; `umbriel_workspace_rect` is the unit
-rectangle. `umbriel_workspace_axis` retains the signed navigation axis. Native
-progress, reversal, cancellation and the transition seed remain unchanged.
+incoming scene. UVs cover the logical output. `umbriel_workspace_axis` is the
+signed navigation axis. Progress, reversal, cancellation and the transition seed
+come from native navigation.
 
 ## Blur and capture
 
