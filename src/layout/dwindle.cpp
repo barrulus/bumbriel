@@ -689,16 +689,14 @@ namespace umbriel {
   }
 
   bool DwindleLayout::cycleWidth(int columnIndex, int direction) {
-    Node* node = nodeAtFlatIndex(columnIndex);
-    const std::vector<Split> axisSplits = splits(node, Node::HSplit);
-    if (axisSplits.empty()) {
-      return false;
-    }
-    double current = 1.0;
-    for (const Split& split : axisSplits) {
-      current *= splitShare(split);
-    }
-    return applyFraction(axisSplits, nextFractionPreset(m_config->extentPresets, current, direction));
+    // Each step reads the splits afresh: applying a fraction can move outer splits, which the cached products miss.
+    return cycleFractionPreset(
+        m_config->extentPresets,
+        widthFraction(columnIndex),
+        direction,
+        [&](double fraction) { return setWidthFraction(columnIndex, fraction); },
+        [&] { return widthFraction(columnIndex); }
+    );
   }
 
   bool DwindleLayout::toggleFullWidth(int columnIndex) {

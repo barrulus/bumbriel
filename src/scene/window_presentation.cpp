@@ -771,7 +771,7 @@ namespace umbriel {
       if (owner.view)
         contributing.push_back(owner.view);
     state.server.effects().setSourceOccurrences(this, &state.output, contributing, true);
-    state.server.effects().bindSourceAudio(this);
+    state.server.effects().bindSourceEffects(this);
     state.server.effects().fillSceneAudio(frame, *state.bundle, &state.output);
     state.server.effects().fillScenePalette(frame, *state.bundle);
     if (!state.capture(specs, frame)) {
@@ -829,7 +829,7 @@ namespace umbriel {
       state.deadline = state.start + lifecycle.durationMs();
       wlr_output_lock_attach_render(state.output.wlr(), true);
       state.renderLocked = true;
-      state.server.effects().updateSceneAudio(this, &state.output, state.bundle.get(), true);
+      state.server.effects().updateSceneInputs(this, &state.output, state.bundle.get(), true);
     }
     const auto image = state.composition->candidate();
     if (!state.tree) {
@@ -907,7 +907,7 @@ namespace umbriel {
     }
     state.fallback = reason;
     state.lease.cancel(reason);
-    state.server.effects().clearSceneAudio(this);
+    state.server.effects().clearSceneInputs(this);
     state.server.effects().clearSourceOccurrences(this);
     if (state.tree) {
       wlr_scene_node_set_enabled(&state.tree->node, false);

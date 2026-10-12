@@ -7,6 +7,7 @@ extern "C" {
 
 #include "config/config.h"
 #include "core/log.h"
+#include "core/tracy.h"
 #include "input/cursor.h"
 #include "input/event_time.h"
 #include "input/gesture_physics.h"
@@ -75,6 +76,34 @@ namespace umbriel {
       premultiplied(out.data(), base, static_cast<float>(std::clamp(opacity, 0.0, 1.0)));
       return out;
     }
+    // A scene buffer's opaque region is in its destination coordinates, so a scaled copy of a surface needs the
+    // surface's region scaled with it. Edges round inward: a pixel the opaque area only partly covers stays
+    // see-through.
+    void setScaledOpaqueRegion(
+        wlr_scene_buffer* buffer, const pixman_region32_t& source, int sourceWidth, int sourceHeight, int destWidth,
+        int destHeight
+    ) {
+      pixman_region32_t scaled;
+      pixman_region32_init(&scaled);
+      if (sourceWidth > 0 && sourceHeight > 0) {
+        const double sx = static_cast<double>(destWidth) / sourceWidth;
+        const double sy = static_cast<double>(destHeight) / sourceHeight;
+        int count = 0;
+        const pixman_box32_t* rects = pixman_region32_rectangles(&source, &count);
+        for (int index = 0; index < count; ++index) {
+          const auto x1 = static_cast<int>(std::ceil(rects[index].x1 * sx));
+          const auto y1 = static_cast<int>(std::ceil(rects[index].y1 * sy));
+          const auto x2 = static_cast<int>(std::floor(rects[index].x2 * sx));
+          const auto y2 = static_cast<int>(std::floor(rects[index].y2 * sy));
+          if (x2 > x1 && y2 > y1) {
+            pixman_region32_union_rect(&scaled, &scaled, x1, y1, x2 - x1, y2 - y1);
+          }
+        }
+      }
+      wlr_scene_buffer_set_opaque_region(buffer, &scaled);
+      pixman_region32_fini(&scaled);
+    }
+
     void layoutWorkspaceBackground(
         wlr_scene_rect* background, const wlr_box& box, int radius, const std::array<float, 4>& color
     ) {
@@ -517,6 +546,7 @@ namespace umbriel {
   }
 
   void Overview::layoutOutput(OutputState& state) {
+    UMBRIEL_ZONE("Overview::layoutOutput");
     PreviewMetrics metrics{};
     if (!previewMetrics(state, *m_server, zoom(), metrics)) {
       return;
@@ -575,9 +605,12 @@ namespace umbriel {
             &mirror->buffer->node, full.x + static_cast<int>(std::lround(box.x * z)),
             full.y + static_cast<int>(std::lround(box.y * z))
         );
-        wlr_scene_buffer_set_dest_size(
-            mirror->buffer, std::max(1, static_cast<int>(std::lround(box.width * z))),
-            std::max(1, static_cast<int>(std::lround(box.height * z)))
+        const int destWidth = std::max(1, static_cast<int>(std::lround(box.width * z)));
+        const int destHeight = std::max(1, static_cast<int>(std::lround(box.height * z)));
+        wlr_scene_buffer_set_dest_size(mirror->buffer, destWidth, destHeight);
+        // Lets the scene skip the background beneath a wallpaper that declares itself opaque.
+        setScaledOpaqueRegion(
+            mirror->buffer, mirror->source->surface->opaque_region, box.width, box.height, destWidth, destHeight
         );
         // Only a surface spanning the whole output takes the preview's rounding; a smaller one keeps its own edges.
         const bool spansOutput = box.x <= 0
@@ -1535,6 +1568,7 @@ namespace umbriel {
   }
 
   void Overview::buildState() {
+    UMBRIEL_ZONE("Overview::buildState");
     m_tree = m_server->overviewTree();
     for (const auto& output : m_server->outputs()) {
       WorkspaceGroup* group = output->workspaceGroup();
@@ -1572,6 +1606,7 @@ namespace umbriel {
   // -: open/close
 
   bool Overview::beginPresentation() {
+    UMBRIEL_ZONE("Overview::beginPresentation");
     if (m_active) {
       return true;
     }
@@ -1668,6 +1703,7 @@ namespace umbriel {
   }
 
   void Overview::open() {
+    UMBRIEL_ZONE("Overview::open");
     if (m_active) {
       if (ScratchpadManager* scratchpad = m_server->scratchpadManager()) {
         scratchpad->hideAll();
@@ -2871,9 +2907,7 @@ namespace umbriel {
         continue;
       }
       const auto column = static_cast<int>(index);
-      const auto x = static_cast<double>(scrolling->columnX(column, viewport));
-      const auto width = static_cast<double>(scrolling->columnWidth(column, viewport));
-      for (const double position : {std::clamp(x, 0.0, maximum), std::clamp(x + width - viewport, 0.0, maximum)}) {
+      for (const double position : scrolling->snapScrolls(column, viewport)) {
         const double distance = std::abs(position - projected);
         if (distance < bestDistance) {
           bestDistance = distance;

@@ -1,8 +1,10 @@
 #include "server/ipc_commands.h"
 
+#include "config/change.h"
 #include "config/config.h"
 #include "input/cursor.h"
 #include "layer/layer_surface.h"
+#include "output/identity.h"
 #include "output/output.h"
 #include "scene/effect_registry.h"
 #include "scene/effect_selection.h"
@@ -17,14 +19,39 @@
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
+#include <cmath>
 #include <drm_fourcc.h>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <print>
+#include <sstream>
 #include <string>
+#include <utility>
+
+extern "C" {
+#include <umbrielfx/render/effect.h>
+}
 
 namespace umbriel {
+
+  std::optional<float> IpcCommands::parseAudioLevel(const nlohmann::json& request) {
+    if (!request.is_object()
+        || request.size() != 3
+        || !request.contains("cmd")
+        || request["cmd"] != "effect-audio"
+        || !request.contains("version")
+        || !request["version"].is_number_integer()
+        || request["version"] != 1
+        || !request.contains("level")
+        || !request["level"].is_number()) {
+      return std::nullopt;
+    }
+    const double level = request["level"].get<double>();
+    if (!(level >= 0.0 && level <= 1.0)) {
+      return std::nullopt;
+    }
+    return static_cast<float>(level);
+  }
 
   namespace {
     const char* layerName(uint32_t layer) {
@@ -41,6 +68,26 @@ namespace umbriel {
         return "unknown";
       }
     }
+
+    const char* keyboardInteractivityName(uint32_t interactivity) {
+      switch (interactivity) {
+      case ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE:
+        return "none";
+      case ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE:
+        return "exclusive";
+      case ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND:
+        return "on_demand";
+      default:
+        return "unknown";
+      }
+    }
+
+    constexpr std::pair<uint32_t, const char*> kLayerAnchors[] = {
+        {ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP, "top"},
+        {ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM, "bottom"},
+        {ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT, "left"},
+        {ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT, "right"},
+    };
 
     const char* layoutModeName(LayoutMode mode) {
       switch (mode) {
@@ -174,6 +221,99 @@ namespace umbriel {
     }
 
     void printOutputName(const nlohmann::json& ok) { std::println("{}", ok.get<std::string>()); }
+
+    const char* transformName(wl_output_transform transform) {
+      switch (transform) {
+      case WL_OUTPUT_TRANSFORM_NORMAL:
+        return "normal";
+      case WL_OUTPUT_TRANSFORM_90:
+        return "90";
+      case WL_OUTPUT_TRANSFORM_180:
+        return "180";
+      case WL_OUTPUT_TRANSFORM_270:
+        return "270";
+      case WL_OUTPUT_TRANSFORM_FLIPPED:
+        return "flipped";
+      case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+        return "flipped-90";
+      case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+        return "flipped-180";
+      case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+        return "flipped-270";
+      }
+      return "unknown";
+    }
+
+    void printOutputs(const nlohmann::json& ok) {
+      bool first = true;
+      for (const auto& output : ok) {
+        if (!first) {
+          std::println("");
+        }
+        first = false;
+        std::println("{} \"{}\"", output.value("name", ""), output.value("description", ""));
+        std::println("  Enabled: {}", output.value("enabled", false) ? "yes" : "no");
+        std::println("  Power: {}", output.value("powered", false) ? "on" : "off");
+        std::println("  Focused: {}", output.value("focused", false) ? "yes" : "no");
+        const std::string workspace = output.value("active_workspace", "");
+        std::println("  Active workspace: {}", workspace.empty() ? "-" : workspace);
+        if (output.at("config_name").is_string()) {
+          std::println("  Config name: \"{}\"", output.at("config_name").get<std::string>());
+          std::string identity;
+          for (const auto& [label, key] : {std::pair{"Make", "make"}, {"Model", "model"}, {"Serial", "serial"}}) {
+            const std::string value = output.value(key, "");
+            if (value.empty()) {
+              continue;
+            }
+            if (!identity.empty()) {
+              identity += "  ";
+            }
+            identity += std::format("{}: {}", label, value);
+          }
+          std::println("  {}", identity);
+        }
+        const auto& physical = output.at("physical_size");
+        const int widthMm = physical.value("width_mm", 0);
+        const int heightMm = physical.value("height_mm", 0);
+        if (widthMm > 0 || heightMm > 0) {
+          std::println("  Physical size: {}x{} mm", widthMm, heightMm);
+        }
+        const auto& position = output.at("position");
+        std::println("  Position: {},{}", position.value("x", 0), position.value("y", 0));
+        std::println("  Transform: {}", output.value("transform", "normal"));
+        std::println("  Scale: {:f}", output.value("scale", 1.0));
+        const auto& usable = output.at("usable_area");
+        std::println(
+            "  Usable area: {}x{}{:+}{:+}", usable.value("width", 0), usable.value("height", 0), usable.value("x", 0),
+            usable.value("y", 0)
+        );
+        if (output.at("adaptive_sync").is_boolean()) {
+          std::println("  Adaptive sync: {}", output.at("adaptive_sync").get<bool>() ? "enabled" : "disabled");
+        }
+        std::println("  HDR: {}", output.value("hdr_active", false) ? "on" : "off");
+        const auto& modes = output.at("modes");
+        if (modes.empty()) {
+          continue;
+        }
+        std::println("  Modes:");
+        for (const auto& mode : modes) {
+          const bool preferred = mode.value("preferred", false);
+          const bool current = mode.value("current", false);
+          std::print(
+              "    {}x{} @ {:.3f} Hz", mode.value("width", 0), mode.value("height", 0),
+              mode.value("refresh_mhz", 0) / 1000.0
+          );
+          if (preferred && current) {
+            std::print(" (preferred, current)");
+          } else if (preferred) {
+            std::print(" (preferred)");
+          } else if (current) {
+            std::print(" (current)");
+          }
+          std::println("");
+        }
+      }
+    }
 
     std::string fourccName(uint32_t format) {
       if (format == DRM_FORMAT_INVALID) {
@@ -365,6 +505,18 @@ namespace umbriel {
             "  supported transfer functions: {}; primaries: {}", joinNames(output.at("supported_transfer_functions")),
             joinNames(output.at("supported_primaries"))
         );
+        if (output.at("mastering_luminance").is_object()) {
+          const auto& luminance = output.at("mastering_luminance");
+          std::println(
+              "  output metadata: {} to {} cd/m2; MaxCLL: {}; MaxFALL: {}", luminance.value("min", 0.0),
+              luminance.value("max", 0.0), output.value("max_cll", 0.0), output.value("max_fall", 0.0)
+          );
+        } else if (output.value("hdr_active", false)) {
+          std::println(
+              "  output metadata: luminance unavailable; MaxCLL: {}; MaxFALL: {}", output.value("max_cll", 0.0),
+              output.value("max_fall", 0.0)
+          );
+        }
       }
       for (const auto& surface : ok.at("surfaces")) {
         std::println(
@@ -441,17 +593,37 @@ namespace umbriel {
       entry["xdg_tag"] = v->xdgTag().value_or("");
       entry["content_type"] = contentTypeName(v->contentType());
       entry["floating"] = v->floating();
+      entry["fullscreen"] = v->scheduledFullscreen();
+      entry["maximized"] = v->scheduledMaximized();
+      entry["maximized_to_edges"] = v->maximizedToEdges();
+      entry["pinned"] = v->pinned();
+      // Pinned windows show on every workspace of their output.
+      entry["visible"] = v->pinned() || (v->onActiveWorkspace() && !v->tabHidden());
+      const Output* output = v->currentOutput();
+      entry["output"] = output != nullptr ? output->wlr()->name : "";
+      const View* parent = v->shellParent();
+      entry["parent"] =
+          parent != nullptr && parent->extForeignIdentifier() != nullptr ? parent->extForeignIdentifier() : "";
       // Membership of a tab group, the tab's place among its tabs, and whether the group shows another tab.
       int tabIndex = -1;
+      int column = -1;
+      int row = -1;
       if (const Workspace* home = v->workspace()) {
         const Layout& layout = home->layout();
-        const int column = layout.columnOf(v.get());
+        const int layoutColumn = layout.columnOf(v.get());
         const TabGroup* group =
-            column >= 0 ? tabGroupOf(layout.columns()[static_cast<size_t>(column)], v.get()) : nullptr;
+            layoutColumn >= 0 ? tabGroupOf(layout.columns()[static_cast<size_t>(layoutColumn)], v.get()) : nullptr;
         if (group != nullptr) {
           tabIndex = layout.rowOf(v.get()) - static_cast<int>(group->first);
         }
+        // Only the scrolling strip has an order of columns and rows that holds still for clients.
+        if (layoutColumn >= 0 && home->scrollingLayout() != nullptr) {
+          column = layoutColumn;
+          row = layout.rowOf(v.get());
+        }
       }
+      entry["column"] = column;
+      entry["row"] = row;
       entry["tabbed"] = tabIndex >= 0;
       entry["tab_index"] = tabIndex;
       entry["tab_hidden"] = v->tabHidden();
@@ -503,7 +675,6 @@ namespace umbriel {
           {"name", preset.name},
           {"kind", effectKindName(preset.kind)},
           {"state", server.effects().programState(preset.name)},
-          {"audio", preset.audio},
       };
       if (preset.kind == EffectKind::Border) {
         entry["overlay"] = preset.overlay;
@@ -557,34 +728,9 @@ namespace umbriel {
            {"slots", {{"screen", effectSlotJson(output->screenEffectSlot())}}}}
       );
     }
-    nlohmann::json audio = nlohmann::json::array();
-    const uint64_t nowNs =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
-            .count();
-    for (const auto& source : config().effects.audioSources) {
-      const auto* receiver = server.effects().inspectAudio(source.name);
-      audio.push_back(
-          {{"name", source.name},
-           {"state", server.effects().audioState(source.name)},
-           {"mode", source.mode == AudioMode::Playback ? "playback" : "microphone"},
-           {"demanded", receiver != nullptr && receiver->epoch() != 0},
-           {"ready", receiver != nullptr && receiver->ready()},
-           {"available", receiver != nullptr && receiver->input().available},
-           {"epoch", receiver != nullptr ? receiver->epoch() : 0},
-           {"generation", receiver != nullptr ? receiver->generation() : 0},
-           {"sequence", receiver != nullptr ? receiver->sequence() : 0},
-           {"observation_ns", receiver != nullptr ? receiver->observationNs() : 0},
-           {"age_ns",
-            receiver != nullptr && receiver->observationNs() != 0 && nowNs >= receiver->observationNs()
-                ? nlohmann::json(nowNs - receiver->observationNs())
-                : nlohmann::json(nullptr)}}
-      );
-    }
     return nlohmann::json{
         {"ok",
-         {{"audio", std::move(audio)},
-          {"audio_demanded_sources", server.effects().audioDemandedSources()},
-          {"presets", std::move(presets)},
+         {{"presets", std::move(presets)},
           {"pools", std::move(pools)},
           {"cursor", effectSlotJson(server.cursorEffectSlot())},
           {"owners", std::move(owners)}}}
@@ -604,6 +750,10 @@ namespace umbriel {
         if (workspace == nullptr) {
           continue;
         }
+        const auto& views = workspace->allViews();
+        const View* focusedView = workspace->focusedView();
+        const char* focusedId =
+            focusedView != nullptr && focusedView->mapped() ? focusedView->extForeignIdentifier() : nullptr;
         workspaces.push_back({
             {"id", workspace->id()},
             {"name", workspace->name()},
@@ -613,7 +763,11 @@ namespace umbriel {
             {"active", workspace->active()},
             {"focused", output.get() == preferred && workspace->active()},
             {"occupied", workspace->hasViews()},
+            {"window_count", std::ranges::count_if(views, [](const View* view) { return view->mapped(); })},
+            {"focused_window", focusedId != nullptr ? focusedId : ""},
+            {"urgent", std::ranges::any_of(views, [](const View* view) { return view->urgent(); })},
             {"layout", layoutModeName(workspace->layoutMode())},
+            {"layout_override", workspace->layoutModeOverride().has_value()},
         });
       }
     }
@@ -636,13 +790,106 @@ namespace umbriel {
         continue;
       }
       nlohmann::json entry;
-      entry["layer"] = layerName(s->current.layer);
+      const wlr_layer_surface_v1_state& state = s->current;
+      entry["layer"] = layerName(state.layer);
       entry["namespace"] = s->namespace_ != nullptr ? s->namespace_ : "";
       entry["output"] = s->output != nullptr ? s->output->name : "";
       entry["mapped"] = l->mapped();
+      entry["pid"] = surfaceClientPid(s->surface);
+      entry["keyboard_interactivity"] = keyboardInteractivityName(state.keyboard_interactive);
+      entry["focused"] = l->hasKeyboardFocus();
+      entry["exclusive_zone"] = state.exclusive_zone;
+      nlohmann::json anchor = nlohmann::json::array();
+      for (const auto& [edge, name] : kLayerAnchors) {
+        if ((state.anchor & edge) != 0) {
+          anchor.push_back(name);
+        }
+      }
+      entry["anchor"] = std::move(anchor);
+      entry["margin"] = {
+          {"top", state.margin.top},
+          {"right", state.margin.right},
+          {"bottom", state.margin.bottom},
+          {"left", state.margin.left},
+      };
+      // Layout coordinates of the arranged surface; zero until its first arrange.
+      int x = 0;
+      int y = 0;
+      if (l->scene() != nullptr) {
+        wlr_scene_node_coords(&l->scene()->tree->node, &x, &y);
+      }
+      entry["x"] = x;
+      entry["y"] = y;
+      entry["w"] = state.actual_width;
+      entry["h"] = state.actual_height;
       layers.push_back(std::move(entry));
     }
     return nlohmann::json{{"ok", layers}};
+  }
+
+  nlohmann::json IpcCommands::outputs(Server& server, std::string_view /*arg*/) {
+    nlohmann::json outputs = nlohmann::json::array();
+    const Output* preferred = server.outputFromWlr(server.preferredOutput());
+    for (const auto& output : server.outputs()) {
+      wlr_output* wlrOutput = output->wlr();
+      nlohmann::json modes = nlohmann::json::array();
+      wlr_output_mode* mode = nullptr;
+      wl_list_for_each(mode, &wlrOutput->modes, link) {
+        modes.push_back({
+            {"width", mode->width},
+            {"height", mode->height},
+            {"refresh_mhz", mode->refresh},
+            {"preferred", mode->preferred},
+            {"current", mode == wlrOutput->current_mode},
+        });
+      }
+      // A custom mode (virtual outputs, `output-create` sizes) is listed as the current one.
+      if (wlrOutput->current_mode == nullptr && wlrOutput->width > 0 && wlrOutput->height > 0) {
+        modes.push_back({
+            {"width", wlrOutput->width},
+            {"height", wlrOutput->height},
+            {"refresh_mhz", wlrOutput->refresh},
+            {"preferred", false},
+            {"current", true},
+        });
+      }
+      // Unknown when the output can neither change nor report variable refresh.
+      nlohmann::json adaptiveSync = nullptr;
+      const bool adaptiveSyncEnabled = wlrOutput->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED;
+      if (wlrOutput->adaptive_sync_supported || adaptiveSyncEnabled) {
+        adaptiveSync = adaptiveSyncEnabled;
+      }
+      const OutputIdentity identity = output->identity();
+      const bool hasIdentity = !identity.make.empty() || !identity.model.empty() || !identity.serial.empty();
+      const bool desktopEnabled = output->desktopEnabled();
+      const wlr_box layoutBox = output->layoutBox();
+      const wlr_box usable = desktopEnabled ? output->usableArea() : wlr_box{};
+      const WorkspaceGroup* group = output->workspaceGroup();
+      const Workspace* activeWorkspace = group != nullptr ? group->active() : nullptr;
+      outputs.push_back({
+          {"name", wlrOutput->name},
+          {"description", wlrOutput->description != nullptr ? wlrOutput->description : ""},
+          {"make", identity.make},
+          {"model", identity.model},
+          {"serial", identity.serial},
+          {"config_name", hasIdentity ? nlohmann::json(outputDescriptor(identity)) : nlohmann::json(nullptr)},
+          {"physical_size", {{"width_mm", wlrOutput->phys_width}, {"height_mm", wlrOutput->phys_height}}},
+          {"enabled", desktopEnabled},
+          {"powered", desktopEnabled && !output->dpmsOff()},
+          {"focused", output.get() == preferred},
+          {"active_workspace", activeWorkspace != nullptr ? activeWorkspace->id() : ""},
+          {"position", {{"x", layoutBox.x}, {"y", layoutBox.y}}},
+          {"logical_size",
+           {{"width", desktopEnabled ? layoutBox.width : 0}, {"height", desktopEnabled ? layoutBox.height : 0}}},
+          {"usable_area", {{"x", usable.x}, {"y", usable.y}, {"width", usable.width}, {"height", usable.height}}},
+          {"transform", transformName(wlrOutput->transform)},
+          {"scale", wlrOutput->scale},
+          {"adaptive_sync", std::move(adaptiveSync)},
+          {"hdr_active", output->hdrActive()},
+          {"modes", std::move(modes)},
+      });
+    }
+    return nlohmann::json{{"ok", outputs}};
   }
 
   nlohmann::json IpcCommands::color(Server& server, std::string_view /*arg*/) {
@@ -650,13 +897,14 @@ namespace umbriel {
     for (const auto& output : server.outputs()) {
       const wlr_output* wlrOutput = output->wlr();
       const wlr_output_image_description* description = wlrOutput->image_description;
-      outputs.push_back({
+      const bool hdrRequested = output->hdrRequested();
+      nlohmann::json entry = {
           {"name", wlrOutput->name},
           {"enabled", wlrOutput->enabled},
           {"hdr_mode", hdrModeName(output->hdrMode())},
-          {"hdr_requested", output->hdrRequested()},
+          {"hdr_requested", hdrRequested},
           {"hdr_active", output->hdrActive()},
-          {"fallback_reason", output->hdrFallbackReason()},
+          {"fallback_reason", hdrRequested ? output->hdrFallbackReason() : ""},
           {"render_format", fourccName(wlrOutput->render_format)},
           {"transfer_function", description != nullptr ? transferFunctionName(description->transfer_function) : "none"},
           {"primaries", description != nullptr ? primariesName(description->primaries) : "none"},
@@ -666,7 +914,29 @@ namespace umbriel {
           {"bit_depth_fallback_reason", output->bitDepthFallbackReason()},
           {"supported_transfer_functions", supportedTransferFunctions(wlrOutput->supported_transfer_functions)},
           {"supported_primaries", supportedPrimaries(wlrOutput->supported_primaries)},
-      });
+          {"max_cll", description != nullptr ? description->max_cll : 0.0},
+          {"max_fall", description != nullptr ? description->max_fall : 0.0},
+      };
+      entry["mastering_display_primaries"] = nullptr;
+      entry["mastering_luminance"] = nullptr;
+      if (description != nullptr) {
+        const auto& primaries = description->mastering_display_primaries;
+        if (primaries.white.x != 0.0 || primaries.white.y != 0.0) {
+          entry["mastering_display_primaries"] = {
+              {"red", xy(primaries.red)},
+              {"green", xy(primaries.green)},
+              {"blue", xy(primaries.blue)},
+              {"white", xy(primaries.white)},
+          };
+        }
+        if (description->mastering_luminance.max > description->mastering_luminance.min) {
+          entry["mastering_luminance"] = {
+              {"min", description->mastering_luminance.min},
+              {"max", description->mastering_luminance.max},
+          };
+        }
+      }
+      outputs.push_back(std::move(entry));
     }
 
     nlohmann::json surfaces = nlohmann::json::array();
@@ -830,6 +1100,28 @@ namespace umbriel {
     return nlohmann::json{{"ok", nullptr}};
   }
 
+  nlohmann::json IpcCommands::configReplace(Server& server, std::string_view arg) {
+    const std::filesystem::path path(arg);
+
+    if (path.empty()) {
+      return nlohmann::json{{"err", "usage: config-replace <path>"}};
+    }
+
+    if (!path.is_absolute()) {
+      return nlohmann::json{{"err", "path must be an absolute path"}};
+    }
+
+    std::string errors;
+    const ConfigReloadResult result = replaceConfig(path, errors);
+
+    if (!result.success) {
+      return nlohmann::json{{"err", errors.empty() ? "config replace failed" : errors}};
+    }
+
+    server.handleConfigReload(result);
+    return nlohmann::json{{"ok", nullptr}};
+  }
+
   nlohmann::json IpcCommands::settle(Server& /*server*/, std::string_view /*arg*/) {
     return nlohmann::json{{"ok", nullptr}};
   }
@@ -848,12 +1140,71 @@ namespace umbriel {
   nlohmann::json IpcCommands::clockResume([[maybe_unused]] Server& server, std::string_view /*arg*/) {
 #ifdef UMBRIEL_TEST_IPC
     server.resumeAnimationClock();
-    server.effects().resumeAudioClock();
 #endif
     return nlohmann::json{{"ok", nullptr}};
   }
 
 #ifdef UMBRIEL_TEST_IPC
+  nlohmann::json IpcCommands::swipeForTest(Server& server, std::string_view arg) {
+    std::istringstream input{std::string(arg)};
+    std::string phase;
+    uint32_t time = 0;
+    double dx = 0, dy = 0;
+    int cancelled = 0;
+    input >> phase >> time;
+    if (phase == "update") {
+      input >> dx >> dy;
+    } else if (phase == "end") {
+      input >> cancelled;
+    }
+    std::string extra;
+    if (input.fail()
+        || (input >> extra)
+        || !std::isfinite(dx)
+        || !std::isfinite(dy)
+        || (phase != "begin" && phase != "update" && phase != "end")
+        || (cancelled != 0 && cancelled != 1)) {
+      return nlohmann::json{{"err", "expected begin <ms>, update <ms> <dx> <dy>, or end <ms> <cancelled:0|1>"}};
+    }
+    wlr_cursor* cursor = server.cursor()->wlr();
+    if (phase == "begin") {
+      wlr_pointer_swipe_begin_event event{.pointer = nullptr, .time_msec = time, .fingers = 3};
+      wl_signal_emit_mutable(&cursor->events.swipe_begin, &event);
+    } else if (phase == "update") {
+      wlr_pointer_swipe_update_event event{.pointer = nullptr, .time_msec = time, .fingers = 3, .dx = dx, .dy = dy};
+      wl_signal_emit_mutable(&cursor->events.swipe_update, &event);
+    } else {
+      wlr_pointer_swipe_end_event event{.pointer = nullptr, .time_msec = time, .cancelled = cancelled != 0};
+      wl_signal_emit_mutable(&cursor->events.swipe_end, &event);
+    }
+    Output* output = server.outputFromWlr(server.preferredOutput());
+    WorkspaceGroup* group = output != nullptr ? output->workspaceGroup() : nullptr;
+    return nlohmann::json{
+        {"ok",
+         {{"progress", group != nullptr ? group->slideProgress() : 0.0},
+          {"reveal", group != nullptr && group->revealActive()}}}
+    };
+  }
+
+  nlohmann::json IpcCommands::animationCaptureFail(Server& server, std::string_view arg) {
+    if (arg != "on" && arg != "off") {
+      return nlohmann::json{{"err", "expected on or off"}};
+    }
+    fx_renderer_fail_animation_capture_for_test(server.renderer(), arg == "on");
+    return nlohmann::json{{"ok", nullptr}};
+  }
+
+  nlohmann::json IpcCommands::blurCompositeSplit(Server& server, std::string_view arg) {
+    if (arg != "on" && arg != "off") {
+      return nlohmann::json{{"err", "expected on or off"}};
+    }
+    fx_renderer_split_blur_composite_for_test(server.renderer(), arg == "on");
+    for (const auto& output : server.outputs()) {
+      output->scheduleFullFrame();
+    }
+    return nlohmann::json{{"ok", nullptr}};
+  }
+
   nlohmann::json IpcCommands::presentationInputProbe(Server& server, std::string_view arg) {
     Cursor* cursor = server.cursor();
     if (arg == "arm" || arg == "cancel") {
@@ -940,70 +1291,12 @@ namespace umbriel {
     return nlohmann::json{{"ok", nullptr}};
   }
 
-  nlohmann::json IpcCommands::audioInject(Server& server, std::string_view arg) {
-    const auto value = nlohmann::json::parse(arg, nullptr, false);
-    if (value.is_discarded() || !value.is_object() || !value.contains("source") || !value["source"].is_string()) {
-      return {{"err", "expected JSON with source, rms, peak, envelope and sixteen bands"}};
-    }
-    audio::Features features;
-    for (const char* field : {"rms", "peak", "envelope"}) {
-      if (!value.contains(field) || !value[field].is_number()) {
-        return {{"err", "audio amplitudes must be numbers in [0,1]"}};
-      }
-    }
-    if (!value.contains("bands") || !value["bands"].is_array() || value["bands"].size() != 16) {
-      return {{"err", "expected sixteen audio bands"}};
-    }
-    features.rms = value["rms"].get<float>();
-    features.peak = value["peak"].get<float>();
-    features.envelope = value["envelope"].get<float>();
-    for (size_t i = 0; i < features.bands.size(); ++i) {
-      if (!value["bands"][i].is_number()) {
-        return {{"err", "audio bands must be numbers in [0,1]"}};
-      }
-      features.bands[i] = value["bands"][i].get<float>();
-    }
-    if (!server.effects().injectAudio(value["source"].get<std::string>(), features)) {
-      return {{"err", "invalid audio source or amplitude"}};
-    }
-    return {{"ok", nullptr}};
-  }
-
   nlohmann::json IpcCommands::planeCursor(Server& server, std::string_view arg) {
     std::string error;
     if (!server.injectPlaneCursor(arg, &error)) {
       return nlohmann::json{{"err", error}};
     }
     return nlohmann::json{{"ok", nullptr}};
-  }
-
-  nlohmann::json IpcCommands::effectFrames(Server& server, std::string_view /*arg*/) {
-    nlohmann::json outputs = nlohmann::json::array();
-    for (const auto& output : server.outputs()) {
-      nlohmann::json audio = nlohmann::json::array();
-      for (const auto& source : config().effects.audioSources) {
-        if (const auto* latch = server.effects().inspectAudioLatch(output.get(), source.name)) {
-          audio.push_back({
-              {"source", source.name},
-              {"latched_rms", latch->input().features.rms},
-              {"presented_rms", latch->presented().features.rms},
-              {"pending", latch->pending()},
-              {"revision", latch->revision()},
-              {"consumed_revision", latch->consumedRevision()},
-          });
-        }
-      }
-      outputs.push_back({
-          {"name", output->wlr()->name},
-          {"effect_frames", output->effectFrames()},
-          {"buffer_commits", output->successfulBufferCommits()},
-          {"rejected_buffer_commits", output->rejectedBufferCommits()},
-          {"commit_held", output->testCommitHeld()},
-          {"audio", std::move(audio)},
-          {"eligible", output->effectEligible()},
-      });
-    }
-    return nlohmann::json{{"ok", {{"outputs", std::move(outputs)}}}};
   }
 
   nlohmann::json IpcCommands::outputCommitHold(Server& server, std::string_view arg) {
@@ -1019,6 +1312,43 @@ namespace umbriel {
       }
     }
     return {{"err", "unknown output"}};
+  }
+
+  nlohmann::json IpcCommands::effectFrames(Server& server, std::string_view /*arg*/) {
+    nlohmann::json outputs = nlohmann::json::array();
+    for (const auto& output : server.outputs()) {
+      outputs.push_back({
+          {"name", output->wlr()->name},
+          {"effect_frames", output->effectFrames()},
+          {"buffer_commits", output->successfulBufferCommits()},
+          {"rejected_buffer_commits", output->rejectedBufferCommits()},
+          {"commit_held", output->testCommitHeld()},
+          {"eligible", output->effectEligible()},
+      });
+    }
+    return nlohmann::json{{"ok", {{"outputs", std::move(outputs)}}}};
+  }
+
+  nlohmann::json IpcCommands::cursorState(Server& server, std::string_view /*arg*/) {
+    const Cursor* cursor = server.cursor();
+    nlohmann::json image = nullptr;
+    if (const std::optional<Cursor::RenderedCursorStateForTest> rendered = cursor->renderedCursorStateForTest()) {
+      image = {
+          {"texture_width", rendered->textureWidth},
+          {"texture_height", rendered->textureHeight},
+          {"render_width", rendered->renderWidth},
+          {"render_height", rendered->renderHeight},
+      };
+    }
+    return nlohmann::json{{
+        "ok",
+        {
+            {"source", cursor->clientCursorSourceForTest()},
+            {"name", cursor->clientCursorNameForTest()},
+            {"xwayland", cursor->clientCursorFromXwaylandForTest()},
+            {"image", std::move(image)},
+        },
+    }};
   }
 #endif
 
@@ -1061,6 +1391,8 @@ namespace umbriel {
        IpcCommandGroup::Control, true, &IpcCommands::outputCreate, &printOutputName},
       {"output-destroy", "<name>", "destroy a virtual output", IpcCommandGroup::Control, true,
        &IpcCommands::outputDestroy, nullptr},
+      {"config-replace", "<path>", "load and watch a different config file", IpcCommandGroup::Control, true,
+       &IpcCommands::configReplace, nullptr},
       {"effects", "", "inspect effect presets, pools, and owner selections", IpcCommandGroup::Inspect, false,
        &IpcCommands::effects, &printEffects},
       {"windows", "", "list windows (app id and title)", IpcCommandGroup::Inspect, false, &IpcCommands::windows,
@@ -1070,6 +1402,7 @@ namespace umbriel {
       {"submap", "", "show the active keybind submap", IpcCommandGroup::Inspect, false, &IpcCommands::submap,
        &printSubmap},
       {"layers", "", "list layer-shell surfaces", IpcCommandGroup::Inspect, false, &IpcCommands::layers, &printLayers},
+      {"outputs", "", "list outputs and modes", IpcCommandGroup::Inspect, false, &IpcCommands::outputs, &printOutputs},
       {"color", "", "show color-management state", IpcCommandGroup::Inspect, false, &IpcCommands::color, &printColor},
       {"tearing", "", "show tearing-control state", IpcCommandGroup::Inspect, false, &IpcCommands::tearing,
        &printTearing},
@@ -1085,17 +1418,24 @@ namespace umbriel {
        IpcCommandGroup::Harness, true, &IpcCommands::clockAdvance, nullptr, 35},
       {"clock-resume", "", "let animation time follow the monotonic clock again, from where it stopped",
        IpcCommandGroup::Harness, false, &IpcCommands::clockResume, nullptr},
+      {"swipe-test", "<begin|update|end> <ms> [dx dy|cancelled]", "inject three-finger swipe events (harness only)",
+       IpcCommandGroup::Harness, true, &IpcCommands::swipeForTest, nullptr},
+      {"animation-capture-fail", "<on|off>", "inject animation capture failure (harness only)",
+       IpcCommandGroup::Harness, true, &IpcCommands::animationCaptureFail, nullptr},
+      {"blur-composite-split", "<on|off>",
+       "composite backdrop blur through an effect buffer and wait until every output has drawn it (harness only)",
+       IpcCommandGroup::Harness, true, &IpcCommands::blurCompositeSplit, nullptr, 35},
       {"renderer-recover", "", "emit renderer loss and exercise recovery", IpcCommandGroup::Harness, false,
        &IpcCommands::rendererRecover, nullptr},
-      {"audio-inject", "<json>", "inject a deterministic audio snapshot", IpcCommandGroup::Harness, true,
-       &IpcCommands::audioInject, nullptr},
-      {"output-commit-hold", "<output> <on|off>", "hold buffer commits to exercise retry paths",
-       IpcCommandGroup::Harness, true, &IpcCommands::outputCommitHold, nullptr},
       {"plane-cursor", "<output> <x> <y> <visible> <image> [width height hotspot_x hotspot_y]",
        "synthesize a hardware cursor plane sample (harness only)", IpcCommandGroup::Harness, true,
        &IpcCommands::planeCursor, nullptr},
+      {"output-commit-hold", "<output> <on|off>", "hold buffer commits to exercise retry paths",
+       IpcCommandGroup::Harness, true, &IpcCommands::outputCommitHold, nullptr},
       {"effect-frames", "", "count frames drawn for persistent effects per output", IpcCommandGroup::Harness, false,
        &IpcCommands::effectFrames, nullptr},
+      {"cursor-state", "", "inspect the current client cursor source (harness only)", IpcCommandGroup::Harness, false,
+       &IpcCommands::cursorState, nullptr},
       {"swipe-inject", "<begin fingers ms|update dx dy ms|end ms|cancel ms|remove>",
        "test swipe device through the native cursor signal path", IpcCommandGroup::Harness, true,
        &IpcCommands::swipeInject, nullptr},

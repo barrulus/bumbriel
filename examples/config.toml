@@ -82,6 +82,10 @@ radius = 3
 # https://docs.noctalia.dev/umbriel/effects/
 # [include]
 # files = ["/usr/share/umbriel/effects/border/pulse/effect.toml"]
+# For a cursor tail, include /usr/share/umbriel/effects/cursor/trail/effect.toml
+# and set cursor = "trail" in [effects].
+# For audio-reactive borders, include /usr/share/umbriel/effects/border/audio/effect.toml
+# and set border = "audio" in [effects].
 # Pools accept matching presets defined/included separately. This one-member
 # example uses the bundled pulse preset; add other border names to choose.
 # [effects.pool.borders]
@@ -96,17 +100,6 @@ radius = 3
 
 # [effects]
 # border = "pulse"
-
-# Audio-responsive example (optional umbriel-audio helper required): add
-# "effects/border/spectrum/effect.toml" to [include].files and select
-# border = "spectrum" in [effects]. The included definition explicitly uses
-# playback with follow_default = true; microphone input is a separate choice.
-# A custom shader binds a named source with audio = "desktop":
-# [effects.audio.sources.desktop]
-# provider = "pipewire"
-# mode = "playback"
-# follow_default = true
-# See docs/user/audio-effects.md for the complete setup and shader inputs.
 
 # ==============================================================================
 # Input
@@ -165,6 +158,8 @@ numlock_toggle = true
 "Mod+Shift+R" = "window-cycle-primary-extent-back"
 "Mod+Comma" = "window-consume-left"
 "Mod+Period" = "window-consume-right"
+"Mod+Ctrl+Comma" = "window-consume-from-left"
+"Mod+Ctrl+Period" = "window-consume-from-right"
 "Mod+W" = { action = "column-toggle-tabbed", repeat = false }
 "Mod+Alt+Right" = "column-focus-tab-next"
 "Mod+Alt+Left" = "column-focus-tab-previous"
@@ -262,6 +257,11 @@ default_position = { x = 0, y = 0, anchor = "bottom_right" }
 default_focused = false
 default_pinned = true
 
+# Keep game menus inside their window; a focus or workspace keybind releases the pointer.
+# [[window_rule]]
+# match.app_id = "^steam_app_.*$"
+# confine_pointer = true
+
 # Named scratchpads can launch an application when toggled while empty.
 # [[scratchpad]]
 # name = "music"
@@ -304,3 +304,11 @@ blur_optimized = false
 enabled = true
 delay_ms = 500
 action = "overview-open"
+
+# Optional live workspace reveal (see docs/user/animation.md).
+# Add the bundled effects/animation/workspace_wipe/effect.toml to your includes.
+# [animation.workspaces]
+# style = "reveal"          # Default: "slide"
+# effect = "workspace_wipe"
+# duration_ms = 300
+# curve = "easeout"

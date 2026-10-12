@@ -3,11 +3,14 @@
 #include "core/dirty.h"
 #include "output/cursor_plane_pace.h"
 #include "output/frame_schedule.h"
+#include "output/hdr_metadata.h"
+#include "output/hdr_transition.h"
 #include "scene/effect_selection.h"
 #include "scene/presentation_probe.h"
 #include "scene/workspace_source_probe.h"
 #include "scene/workspace_sources.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -18,7 +21,9 @@
 
 struct wlr_gamma_control_v1;
 struct wlr_output;
+struct wlr_output_state;
 struct wlr_output_layout_output;
+struct wlr_scene_rect;
 struct wlr_scene_output;
 struct wlr_scene_optimized_blur;
 struct wlr_scene_tree;
@@ -54,6 +59,9 @@ namespace umbriel {
     [[nodiscard]] wlr_output* wlr() const { return m_output; }
     [[nodiscard]] OutputIdentity identity() const;
     [[nodiscard]] wlr_scene_output* sceneOutput() const { return m_sceneOutput; }
+    // Create an opaque scene mask matching a pending configured state. The
+    // caller owns the returned node and must keep it through the commit.
+    [[nodiscard]] wlr_scene_rect* createConfiguredFrameMask(const wlr_output_state& state) const;
     bool enterWorkspacePresentation(std::string_view preset);
     [[nodiscard]] WorkspacePresentation* workspacePresentation() const { return m_workspacePresentation.get(); }
     bool beginWorkspaceTransition(std::string_view destination, bool interactive = false);
@@ -121,6 +129,8 @@ namespace umbriel {
     // Seconds persistent effects on this output draw at. Advances on effect frames, follows the clock while nothing
     // here needs them, and holds the frozen instant while the clock is frozen.
     [[nodiscard]] float effectSeconds() const { return m_effectSeconds; }
+    [[nodiscard]] const std::array<float, 2>& effectAudio() const { return m_effectAudio; }
+    [[nodiscard]] uint64_t effectAudioRevision() const { return m_effectAudioRevision; }
     // Effect instances on this output that need frames of their own.
     [[nodiscard]] unsigned effectEligible() const;
     void onGammaChanged(wlr_gamma_control_v1* control);
@@ -193,6 +203,7 @@ namespace umbriel {
     static void notifySurfaceScaleIter(wlr_surface* surface, int sx, int sy, void* data);
 
   private:
+    [[nodiscard]] bool audioPending() const;
     // Flushed at the top of handleFrame, in Dirty declaration order: layer arrange defines the usable area, which the
     // layout depends on, which the chrome over it depends on.
     void flushDirty();
@@ -210,14 +221,15 @@ namespace umbriel {
     void handleRequestState(void* data);
     void handlePresent(void* data);
     void handleDestroy();
-    [[nodiscard]] bool applyConfiguredState();
+    // Full configuration stages geometry. Frame-bound HDR transitions reuse
+    // the live geometry and carry a freshly rendered scene buffer.
+    [[nodiscard]] bool applyConfiguredState(bool stageGeometry = true);
     [[nodiscard]] bool autoHdrEligible(const View* view) const;
     [[nodiscard]] View* findAutoHdrCandidate() const;
     [[nodiscard]] bool configuredVrrEnabled() const;
     void setHdrFallbackReason(std::string_view reason);
     void setBitDepthFallbackReason(std::string_view reason);
     void updateSceneSdrWhite();
-    void rejectGammaControl(wlr_gamma_control_v1* control);
     void armFrameRetry();
     void armEffectFrame(uint64_t nowMsec);
     // Render locks other than this output's animation lock.
@@ -234,6 +246,7 @@ namespace umbriel {
     Server* m_server = nullptr;
     wlr_output* m_output = nullptr;
     float m_defaultScale = 1.0F;
+    std::optional<HdrStaticMetadata> m_hdrStaticMetadata;
     wlr_scene_output* m_sceneOutput = nullptr;
 #ifdef UMBRIEL_TEST_IPC
     std::unique_ptr<PresentationProbe> m_presentationProbe;
@@ -256,6 +269,7 @@ namespace umbriel {
     wlr_scene_optimized_blur* m_optimizedBlur = nullptr;
     std::unique_ptr<WorkspaceGroup> m_workspaceGroup;
     wlr_box m_localUsableArea{};
+    wlr_box m_loggedUsableArea{};
     int m_arrangedLayoutX = 0;
     int m_arrangedLayoutY = 0;
 
@@ -271,11 +285,10 @@ namespace umbriel {
 #endif
     bool m_desktopEnabled = true;
     bool m_dpmsOff = false;
-    bool m_hdrGammaWarningLogged = false;
     bool m_modeFallbackWarned = false;
     std::optional<FormatTier> m_vrrDroppedTier;
     bool m_fullscreenHdrRequested = false;
-    bool m_lastHdrRequested = false;
+    HdrTransition m_hdrTransition;
     bool m_lastCommitTearing = false;
     bool m_trackingPresentation = false;
     bool m_appliedConfiguredScale = false;
@@ -285,6 +298,8 @@ namespace umbriel {
     bool m_effectFrameDue = false;
     bool m_effectFrameArmed = false;
     EffectSlot m_screenEffectSlot;
+    std::array<float, 2> m_effectAudio{}; // level and availability latched at the last effect frame
+    uint64_t m_effectAudioRevision = 0;
     uint64_t m_effectFrames = 0;
     float m_effectSeconds = 0.0F;
     bool m_outputEffectsTimed = false; // a visible screen or cursor instance here reads umbriel_time
@@ -297,6 +312,12 @@ namespace umbriel {
     std::optional<bool> m_lastPresentationPresented;
     std::optional<uint32_t> m_lastPresentationFlags;
     uint32_t m_trackedPresentationCommitSeq = 0;
+#ifdef TRACY_ENABLE
+    const char* m_tracyIntervalPlot = nullptr;
+    const char* m_tracyVblankPlot = nullptr;
+    int64_t m_tracyLastPresentNs = 0;
+    unsigned m_tracyLastPresentSeq = 0;
+#endif
     TearingCommitRecovery m_tearingRecovery;
     int m_deferredWidth = 0;
     int m_deferredHeight = 0;

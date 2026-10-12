@@ -571,7 +571,7 @@ namespace umbriel {
       state.progress.retarget(1, config().animation.workspaces.durationMs, config().animation.workspaces.curve);
       state.seed = state.progress.shaderSeed();
       state.progress.tick(state.server.animationClockMsec());
-      state.server.effects().updateSceneAudio(this, &state.output, state.bundle.get(), true);
+      state.server.effects().updateSceneInputs(this, &state.output, state.bundle.get(), true);
     }
     const auto audio = state.server.effects().audioInputRevision(&state.output);
     const auto revision = state.sources->revision();
@@ -691,7 +691,7 @@ namespace umbriel {
     state.active = false;
     state.fallback = reason;
     state.lease.cancel(reason);
-    state.server.effects().clearSceneAudio(this);
+    state.server.effects().clearSceneInputs(this);
     if (state.tree != nullptr) {
       wlr_scene_node_set_enabled(&state.tree->node, false);
       fx_scene_output_replace_range_for_test(state.output.sceneOutput(), nullptr, nullptr);

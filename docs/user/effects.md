@@ -40,17 +40,12 @@ Bundled presets:
 | `reveal` | animation | `[animation.windows_in] effect = "reveal"` (also `windows_out`) |
 | `squash` | animation | `[animation.windows_move] effect = "squash"` |
 | `pulse` | border | `[effects] border = "pulse"` |
-| `spectrum` | border | `[effects] border = "spectrum"`; requires the optional audio helper |
-| `border.music-lines` | border + overlay | Fixed cyan/blue/magenta spectrum bars and mirrored contours whose heights follow the live audio bands; include `border/music-lines/effect.toml` |
+| `audio` | border | `[effects] border = "audio"`; brightness follows the external audio level. |
 | `scanlines` | window | `[effects] window = "scanlines"` |
 | `vignette` | screen | `[effects] screen = "vignette"` |
 | `glow` | cursor | `[effects] cursor = "glow"` |
-| `cursor.music-radiance` | cursor | Expanding rainbow rings driven by playback; include `cursor/music-radiance/effect.toml` |
-| `window.music-smoke` | window | Translucent rising smoke driven by playback; include `window/music-smoke/effect.toml` |
-
-The `spectrum` preset explicitly follows system playback and responds without a
-shader clock. Including its file does not start acquisition; selecting it does.
-See [audio inputs](audio-effects.md) for source selection and helper setup.
+| `trail` | cursor | Noctalia-inspired purple, lavender and moon-yellow motion tail; include `cursor/trail/effect.toml`, then set `[effects] cursor = "trail"`. |
+| `trail-path` | cursor | Two-second curved tail coloured along its length; include `cursor/trail-path/effect.toml`, then set `[effects] cursor = "trail-path"`. |
 
 ## Turn a default off for one window or output
 
@@ -110,7 +105,8 @@ Where each kind draws:
   before the software cursor is drawn and never shades the cursor image, and
   never affects a hardware cursor. It hides when the compositor hides the
   pointer; a client that hides its own cursor image does not by itself turn
-  the effect off.
+  the effect off. Motion-history shaders expand the rectangle to cover the
+  retained path, with `radius` padding.
 
 The session lock detaches screen and cursor effects and never shades the lock
 surface.
@@ -140,7 +136,7 @@ pointing to both declarations.
 | `light.spread` | border | `80` | How far light from the ring spills, 1 to 256 logical pixels. Defining `[effects.preset.<name>.light]` enables light. |
 | `light.intensity` | border | `1.0` | Light gain, 0 to 4. |
 | `light.threshold` | border | `0.5` | Brightness a ring pixel needs before it emits, 0 to 1. |
-| `radius` | cursor | `0` | Half-size of the square around the pointer, 0 to 4096; `0` covers the output. |
+| `radius` | cursor | `0` | Padding around the pointer (or retained motion path), 0 to 4096; `0` covers the output. |
 
 Border light is built from the ring in buffer pixels, so the same preset's
 brightness differs across output scales. The light itself stacks below panels
@@ -268,8 +264,8 @@ inactive pool history does not.
 `umbriel windows --json` and `subscribe windows` include `border_effect` and
 `window_effect` with `name`, `pool`, `source` (`default`, `rule`, or `runtime`),
 and `suppressed`; borders also expose `overlay`. Inspection never picks,
-compiles, or binds. Screen assignments are in `effects`, while `outputs --json`
-keeps its existing output-management contract. See [IPC](ipc.md).
+compiles, or binds. Screen assignments are in `effects`, not `outputs`. See
+[IPC](ipc.md).
 
 ## Write a shader
 
@@ -298,15 +294,59 @@ Every kind sees:
 | `umbriel_time` | Seconds on the animation clock, times the border's `speed`. Held as a single-precision float that is never wrapped, so fine time-based motion loses precision after long uptimes. `sin` and `cos` reduce their argument to one revolution, so they stay correct at large angles. |
 | `umbriel_palette_count` | `4` for palette presets, `0` otherwise. |
 | `umbriel_palette_at(float t)` | The palette color at `t`, blended between neighboring colors from the wrapping sequence `accent_primary`, `accent_secondary`, `warning`, `error`. Transparent black when there is no palette. |
+| `umbriel_audio_level()` | The external audio level from 0 to 1, or 0 without a feed. See [Audio input](#audio-input). |
+| `umbriel_audio_available()` | `1` while measurements are fresh, otherwise `0`. See [Audio input](#audio-input). |
 
 Animations add `umbriel_progress`, `umbriel_clamped_progress`,
 `umbriel_linear_progress`, `umbriel_direction`, and `umbriel_random_seed`
-([Animation](animation.md#custom-effects)). Borders add `umbriel_border_hole`
+([Animation](animation.md#custom-effects)); workspace reveal shaders also read
+the incoming scene with `umbriel_sample_incoming(vec2 uv)`
+([Workspace reveal](animation.md#workspace-reveal)). Borders add `umbriel_border_hole`
 (the client rectangle in `uv`), `umbriel_border_radius` (its corner radii in
 logical pixels), and `umbriel_border_distance(vec2 uv)`, the signed distance
 in logical pixels to the client rectangle, negative inside it; the client hole
 is always cut out of a border's result. Cursor effects add `umbriel_pointer`,
-the pointer position in `uv`.
+the pointer position in `uv`. Motion-aware cursor shaders can read
+`umbriel_pointer_count` (0–8) and `umbriel_pointer_history[8]`, oldest first.
+Each `vec4` contains position in the same `uv` coordinates, age in seconds,
+and a reserved component. Samples expire after 300 ms; older samples are
+spaced approximately 32 ms apart while the newest tracks each motion event.
+The drawn rectangle encloses the samples plus `radius` padding, so use
+`umbriel_size` to calculate distances in logical pixels. History resets on
+hide, output crossing, lock and program changes. Reading motion history
+requests frames only while samples remain; reading `umbriel_time` still
+requests continuous frames. No history buffers are allocated for this input.
+
+For a longer tail, read `umbriel_pointer_path[64]` instead of
+`umbriel_pointer_history`. This opts into a two-second history with up to 64
+samples at the same approximate 32 ms spacing. `umbriel_pointer_count` reports
+the active path length. The fourth component is a stable birth phase in
+seconds (wrapping every 60 seconds), useful for retaining a sample's colour
+and particle seed. Positions and ages have the same units as short history.
+Long paths follow the same expiry, damage, frame gating and reset rules.
+
+The bundled `trail` uses a fixed Noctalia-inspired palette, independent of the
+desktop theme. Its colours can be edited in `cursor/trail/shader.glsl`. Both
+`trail` and `trail-path` draw a Catmull-Rom curve through the samples, so fast
+circles stay round; `trail-path` reads `umbriel_pointer_path` and is the
+starting point for longer tails.
+
+### Audio input
+
+Every effect kind can read `umbriel_audio_level()` and
+`umbriel_audio_available()`. An [external analyser](ipc.md#audio-input) supplies
+one shared level from 0 to 1. Availability is 1 while measurements are fresh;
+both values are zero without a feed. Levels represent visual intensity, not
+calibrated loudness. The analyser chooses the audio source and smoothing.
+
+Audio works without `umbriel_time`; `animated` and `speed` only affect time.
+Changed input redraws visible consumers at `max_fps`. Identical input
+does not request frames. Each output holds its value between eligible frames,
+and all passes of a composition use that value. Closing copies retain their
+copied input. Existing `in_capture` behavior applies.
+
+Include `border/audio/effect.toml` from the installed effect directory and select
+`border = "audio"` for a simple example. It remains dim without a feed.
 
 ### What a window effect sees
 

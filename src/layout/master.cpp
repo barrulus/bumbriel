@@ -192,6 +192,16 @@ namespace umbriel {
     return area.views.size();
   }
 
+  View* MasterStackLayout::areaEntry(const Area& area) const {
+    if (area.views.empty()) {
+      return nullptr;
+    }
+    if (area.tabs.tabbed() && area.tabs.active() < area.views.size()) {
+      return area.views[area.tabs.active()];
+    }
+    return area.views.front();
+  }
+
   std::vector<LayoutTarget> MasterStackLayout::visibleTargets() const {
     std::vector<LayoutTarget> visible;
     visible.reserve(m_targets.size());
@@ -316,6 +326,21 @@ namespace umbriel {
       ++visibleIndex;
     }
     return nullptr;
+  }
+
+  const MasterStackLayout::Area* MasterStackLayout::emptyStackAt(int gap) const {
+    if (m_master.views.empty()) {
+      return nullptr;
+    }
+    // Stacks sit outside the master area, so an empty one is always first or last in visual order.
+    const std::array<const Area*, 3> areas = orderedAreas();
+    const Area* edge = nullptr;
+    if (gap == 0) {
+      edge = areas[0];
+    } else if (gap == static_cast<int>(m_columns.size())) {
+      edge = areas[2] != nullptr ? areas[2] : areas[1];
+    }
+    return edge != nullptr && edge != &m_master && edge->views.empty() ? edge : nullptr;
   }
 
   int MasterStackLayout::rowInArea(const Area& area, const View* view) const {
@@ -480,6 +505,48 @@ namespace umbriel {
     rebuildColumns();
   }
 
+  std::vector<MasterStackLayout::EmptyStack> MasterStackLayout::emptyStacks(const wlr_box& usable) const {
+    std::vector<EmptyStack> stacks;
+    const wlr_box content = contentArea(usable);
+    const int gap = m_config != nullptr ? m_config->totalGap : 0;
+    for (const int index : {0, static_cast<int>(m_columns.size())}) {
+      const Area* stack = emptyStackAt(index);
+      if (stack == nullptr) {
+        continue;
+      }
+      int width = 0;
+      if (masterIsCenter()) {
+        const CenterWidths widths = centerWidths(content.width, gap, masterFrac());
+        width = stack == &m_stack ? widths.side : widths.secondSide;
+      } else {
+        width = columnWidths(content.width, gap, masterFrac()).second;
+      }
+      const int x = index == 0 ? content.x : content.x + content.width - width;
+      stacks.push_back({.gap = index, .box = {.x = x, .y = content.y, .width = width, .height = content.height}});
+    }
+    return stacks;
+  }
+
+  wlr_box MasterStackLayout::emptyMasterBox(const wlr_box& usable) const {
+    const wlr_box content = contentArea(usable);
+    if (!masterIsCenter()) {
+      return content;
+    }
+    const int gap = m_config != nullptr ? m_config->totalGap : 0;
+    const CenterWidths widths = centerWidths(content.width, gap, masterFrac());
+    return {.x = content.x + widths.side + gap, .y = content.y, .width = widths.master, .height = content.height};
+  }
+
+  bool MasterStackLayout::openStack(View* view, int gap) {
+    const Area* stack = emptyStackAt(gap);
+    if (view == nullptr || stack == nullptr || areaOf(view) != nullptr) {
+      return false;
+    }
+    insertRow(const_cast<Area&>(*stack), 0, view, 1.0);
+    rebuildColumns();
+    return true;
+  }
+
   bool MasterStackLayout::consume(View* view, int direction) {
     if (direction != -1 && direction != 1) {
       return false;
@@ -505,6 +572,42 @@ namespace umbriel {
   }
 
   bool MasterStackLayout::expel(View* view, int direction) { return consume(view, direction); }
+
+  bool MasterStackLayout::consumeFrom(View* view, int direction) {
+    if (direction != -1 && direction != 1) {
+      return false;
+    }
+    const std::array<Area*, 3> ordered = orderedAreas();
+    int index = -1;
+    for (int position = 0; position < static_cast<int>(ordered.size()); ++position) {
+      if (ordered[position] != nullptr && rowInArea(*ordered[position], view) >= 0) {
+        index = position;
+        break;
+      }
+    }
+    const int sourceIndex = index + direction;
+    if (index < 0
+        || sourceIndex < 0
+        || sourceIndex >= static_cast<int>(ordered.size())
+        || ordered[sourceIndex] == nullptr) {
+      return false;
+    }
+    Area* source = ordered[sourceIndex];
+    Area* destination = ordered[index];
+    View* pulled = areaEntry(*source);
+    const int sourceRow = pulled != nullptr ? rowInArea(*source, pulled) : -1;
+    if (sourceRow < 0) {
+      return false;
+    }
+    const double weight = eraseRow(*source, static_cast<size_t>(sourceRow));
+    // The pulled window lands beside the focused row: among its area's tabs when the area is tabbed, otherwise
+    // directly below it. Focus stays where it was either way.
+    const size_t landing =
+        destination->tabs.tabbed() ? joinRow(*destination) : static_cast<size_t>(rowInArea(*destination, view) + 1);
+    insertRow(*destination, landing, pulled, weight);
+    rebuildColumns();
+    return true;
+  }
 
   bool MasterStackLayout::moveViewVertical(View* view, int direction) {
     // Tabs share one box, so the neighbour is the adjacent tab rather than whatever lies above or below.
@@ -812,8 +915,13 @@ namespace umbriel {
     if (!widthAdjustable() || visualArea(columnIndex) == nullptr) {
       return false;
     }
-    const double next = nextFractionPreset(m_config->extentPresets, widthFraction(columnIndex), direction);
-    return setWidthFraction(columnIndex, next);
+    return cycleFractionPreset(
+        m_config->extentPresets,
+        widthFraction(columnIndex),
+        direction,
+        [&](double fraction) { return setWidthFraction(columnIndex, fraction); },
+        [&] { return widthFraction(columnIndex); }
+    );
   }
 
   bool MasterStackLayout::toggleFullWidth(int columnIndex) {

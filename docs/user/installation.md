@@ -73,8 +73,15 @@ sudo wget -O /etc/apt/sources.list.d/noctalia-resolute.sources \
 
 ### Install Umbriel
 
+Choose the command matching your distribution:
+
 ```sh
 sudo apt update
+
+# Debian Trixie
+sudo apt install -t trixie-backports umbriel
+
+# Debian Sid and Ubuntu 26.04
 sudo apt install umbriel
 ```
 
@@ -101,6 +108,67 @@ channel to `~/.config/guix/channels.scm`:
 Run `guix pull`, then install `umbriel` and
 `xdg-desktop-portal-umbriel`. Adding them to the system configuration makes the
 Umbriel session available to display managers.
+
+## NixOS
+
+Add Umbriel to your flake inputs:
+
+```nix
+{
+  inputs.umbriel.url = "github:noctalia-dev/umbriel";
+}
+```
+
+Import the NixOS module and enable Umbriel in your system configuration:
+
+```nix
+{ inputs, ... }:
+{
+  imports = [ inputs.umbriel.nixosModules.default ];
+
+  programs.umbriel.enable = true;
+}
+```
+
+The module installs Umbriel, registers its display-manager session, enables
+the required graphics support, and installs and configures
+`xdg-desktop-portal-umbriel` for screen capture and sharing. Set
+`programs.umbriel.portalPackage = null` only when another portal setup should
+provide those services.
+
+Rebuild the system, then select Umbriel in the display manager or start it from
+a TTY with `start-umbriel`.
+
+### Binary cache
+
+Pre-built `x86_64-linux` and `aarch64-linux` packages for Umbriel and its portal
+are available from [Cachix](https://app.cachix.org/cache/umbriel). Add the cache
+to the NixOS configuration to avoid compiling them locally:
+
+```nix
+{
+  nix.settings = {
+    extra-substituters = [ "https://umbriel.cachix.org" ];
+    extra-trusted-public-keys = [
+      "umbriel.cachix.org-1:JfNq/2yg2S6D6z4Z2dVSZrZlDPQTKtexB6GAVLD98nw="
+    ];
+  };
+}
+```
+
+Umbriel must use the locked `nixpkgs` input it was built against for its store
+paths to match the cache. Do not set `inputs.umbriel.inputs.nixpkgs.follows`
+when using the binary cache.
+
+The [`cachix`](https://github.com/noctalia-dev/umbriel/tree/cachix) branch points
+to the latest commit that CI cached successfully. Track it instead of `main` to
+avoid selecting a commit whose binaries are not available yet:
+
+```nix
+{
+  inputs.umbriel.url = "github:noctalia-dev/umbriel/cachix";
+}
+```
 
 ## Manual build
 
@@ -160,6 +228,10 @@ Umbriel writes its main log to `$XDG_CACHE_HOME/umbriel/umbriel.log`. If
 `XDG_CACHE_HOME` is unset, the fallback path is
 `~/.cache/umbriel/umbriel.log`. The previous file is retained as
 `umbriel.log.1` when the current log reaches 1 MiB.
+
+Messages from wlroots appear with the `[wlr]` tag at info level and above. To
+include wlroots debug output when reporting a rendering or display problem,
+start Umbriel with `UMBRIEL_WLR_DEBUG=1` set in its environment.
 
 When standard output or standard error is connected to a TTY, raw writes from
 Umbriel and its child processes are redirected to

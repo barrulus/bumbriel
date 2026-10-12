@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Scrolling the strip can move an unfocused column beneath a stationary pointer. The next motion within that column
-# must refresh hover focus without requiring a border crossing.
+# Scrolling the strip can move an unfocused column beneath a stationary pointer. Small motion within that column must
+# not manufacture a pointer enter and let hover focus fight the user's scroll. A real crossing still follows focus.
 set -euo pipefail
 
 readonly OUTPUT_W=1280
@@ -69,6 +69,12 @@ sleep 0.1
 wait_for_active scene-scroll-b
 
 "$POINTER" "$OUTPUT_W" "$OUTPUT_H" move 601 360
+wait_for_active scene-scroll-b
+
+# Cross from C's current presentation back into B, then enter C for real.
+"$POINTER" "$OUTPUT_W" "$OUTPUT_H" move 400 360
+wait_for_active scene-scroll-b
+"$POINTER" "$OUTPUT_W" "$OUTPUT_H" move 600 360
 wait_for_active scene-scroll-c
 
-echo "motion refreshed hover focus after a command scrolled another column beneath the pointer"
+echo "layout scrolling preserved focus until the pointer crossed into another column"

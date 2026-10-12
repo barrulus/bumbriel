@@ -314,7 +314,6 @@ namespace umbriel {
       m_extForeign = nullptr;
     }
     if (m_captureSource != nullptr) {
-      detachCaptureAudio();
       wl_list_remove(&m_captureSourceDestroy.link);
       m_captureSource = nullptr;
     }
@@ -583,6 +582,8 @@ namespace umbriel {
     if (!m_mapped) {
       return;
     }
+    // The IPC window listing reports visibility.
+    m_server->scheduleIpcWindowsEvent();
     if (active) {
       enterForeignOutput();
     } else {

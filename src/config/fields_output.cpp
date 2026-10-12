@@ -81,6 +81,7 @@ namespace umbriel {
       };
       static const registry::Fields<O> fields{
           boolean("enabled", &O::enabled),
+          boolean("focus_at_startup", &O::focusAtStartup),
           boolean("tearing", &O::allowTearing),
           boolean("direct_scanout", &O::directScanout),
           optionalEffectField("screen_effect", &O::screenEffect),

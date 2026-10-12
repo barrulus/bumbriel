@@ -30,6 +30,8 @@ namespace umbriel {
     // A subscriber that stops reading must not grow the compositor's heap without bound.
     constexpr size_t kMaxOutboundBacklog = 256 * 1024;
     constexpr int kConnectionTimeoutMs = 1000;
+    constexpr size_t kMaxAudioRequestSize = 256;
+    constexpr int kAudioFreshnessMs = 250;
     // Long enough for any configured animation to finish; a compositor that never settles still answers.
     constexpr int kFrameWaitTimeoutMs = 30000;
 
@@ -102,6 +104,14 @@ namespace umbriel {
 
     nlohmann::json submapEvent(Server& server) {
       return nlohmann::json{{"event", "submap"}, {"data", IpcCommands::submap(server, {}).at("ok")}};
+    }
+
+    nlohmann::json layersEvent(Server& server) {
+      return nlohmann::json{{"event", "layers"}, {"data", IpcCommands::layers(server, {}).at("ok")}};
+    }
+
+    nlohmann::json outputsEvent(Server& server) {
+      return nlohmann::json{{"event", "outputs"}, {"data", IpcCommands::outputs(server, {}).at("ok")}};
     }
 
     nlohmann::json screenCastEvent(Server& server) {
@@ -211,6 +221,11 @@ namespace umbriel {
     return 0;
   }
 
+  void Ipc::dropAudioOwner() {
+    m_audio = nullptr;
+    m_server->effects().setAudio({});
+  }
+
   void Ipc::acceptConnections() {
     while (true) {
       const int clientFd = accept4(m_listenFd, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
@@ -293,6 +308,9 @@ namespace umbriel {
       const ssize_t size = recv(connection.fd, chunk, sizeof(chunk), 0);
       if (size > 0) {
         connection.input.append(chunk, static_cast<size_t>(size));
+        if (&connection == m_audio && connection.input.size() > kMaxAudioRequestSize) {
+          return false;
+        }
         if (connection.input.size() > kMaxRequestSize) {
           prepareResponse(connection, R"({"err":"request too long"})");
           return true;
@@ -341,7 +359,7 @@ namespace umbriel {
       }
       return false;
     }
-    if (connection.subscribedEvents != 0) {
+    if (connection.subscribedEvents != 0 || &connection == m_audio) {
       connection.output.clear();
       connection.writeOffset = 0;
       connection.responding = false;
@@ -437,6 +455,9 @@ namespace umbriel {
     if (entry == m_connections.end()) {
       return;
     }
+    if (connection == m_audio) {
+      dropAudioOwner();
+    }
     closeConnection(**entry);
     m_connections.erase(entry);
     refreshScreenCastActive();
@@ -465,6 +486,38 @@ namespace umbriel {
 
   std::optional<std::string> Ipc::handleRequest(Connection& connection, std::string_view line) {
     auto req = nlohmann::json::parse(line, nullptr, false);
+    if (&connection == m_audio || (req.is_object() && req.contains("cmd") && req["cmd"] == "effect-audio")) {
+      const auto level = IpcCommands::parseAudioLevel(req);
+      const char* error = nullptr;
+      if (!level) {
+        error = R"({"err":"malformed audio request"})";
+      } else if (line.size() + 1 > kMaxAudioRequestSize) {
+        error = R"({"err":"audio request too long"})";
+      } else if (!connection.input.empty()) {
+        error = R"({"err":"audio request sent before the previous reply"})";
+      } else if (connection.subscribedEvents != 0 || connection.screenCastActive) {
+        error = R"({"err":"audio not allowed on this connection"})";
+      } else if (m_server->sessionLocked() || !outputFrameAllowed(m_server->stopping(), m_server->session())) {
+        error = R"({"err":"audio unavailable while the session is locked or inactive"})";
+      }
+      if (error != nullptr) {
+        if (&connection == m_audio) {
+          // writeResponse keeps only the owner open, so dropping ownership closes this connection after the reply.
+          dropAudioOwner();
+        }
+        return error;
+      }
+      if (m_audio != nullptr && m_audio != &connection) {
+        return R"({"err":"audio producer already connected"})";
+      }
+      m_audio = &connection;
+      m_server->effects().setAudio({*level, 1.0F});
+      if (wl_event_source_timer_update(connection.deadline, kAudioFreshnessMs) < 0) {
+        dropAudioOwner();
+        return R"({"err":"audio feed could not start"})";
+      }
+      return R"({"ok":true})";
+    }
     if (req.is_discarded() || !req.is_object() || !req.contains("cmd") || !req["cmd"].is_string()) {
       return R"({"err":"malformed request"})";
     }
@@ -482,7 +535,7 @@ namespace umbriel {
       if (!req.contains("events") || !req["events"].is_array() || req["events"].empty()) {
         return R"({"err":"malformed request"})";
       }
-      uint8_t requested = 0;
+      uint16_t requested = 0;
       for (const auto& event : req["events"]) {
         if (!event.is_string()) {
           return R"({"err":"malformed request"})";
@@ -491,7 +544,7 @@ namespace umbriel {
         bool matched = false;
         for (size_t bit = 0; bit < Ipc::kEventCount; ++bit) {
           if (name == Ipc::kEventNames[bit]) {
-            requested |= static_cast<uint8_t>(1U << bit);
+            requested |= static_cast<uint16_t>(1U << bit);
             matched = true;
             break;
           }
@@ -537,6 +590,12 @@ namespace umbriel {
       if ((requested & Ipc::kEventScreenCast) != 0) {
         append(screenCastEvent(*m_server));
       }
+      if ((requested & Ipc::kEventLayers) != 0) {
+        append(layersEvent(*m_server));
+      }
+      if ((requested & Ipc::kEventOutputs) != 0) {
+        append(outputsEvent(*m_server));
+      }
       return response;
     }
 #ifdef UMBRIEL_TEST_IPC
@@ -561,6 +620,18 @@ namespace umbriel {
       beginFrameWait(connection, FrameWait::Drawn, IpcCommands::clockAdvance(*m_server, arg).dump());
       return std::nullopt;
     }
+    if (cmd == "blur-composite-split") {
+      if (!req.contains("arg") || !req["arg"].is_string()) {
+        return R"({"err":"malformed request"})";
+      }
+      nlohmann::json reply = IpcCommands::blurCompositeSplit(*m_server, req["arg"].get_ref<const std::string&>());
+      if (reply.contains("err")) {
+        return reply.dump();
+      }
+      // A frozen animation still holds its frame, so a check can compare both composites at one instant.
+      beginFrameWait(connection, FrameWait::Drawn, reply.dump());
+      return std::nullopt;
+    }
 #endif
     const IpcCommandSpec* spec = findIpcCommand(cmd);
     if (spec == nullptr) {
@@ -576,7 +647,7 @@ namespace umbriel {
     return spec->handle(*m_server, arg).dump();
   }
 
-  void Ipc::broadcastEvent(uint8_t event, const nlohmann::json& payload) {
+  void Ipc::broadcastEvent(uint16_t event, const nlohmann::json& payload) {
     std::string update = payload.dump() + '\n';
     // Coalescing bounds how often a family is rebuilt; this bounds what leaves the compositor. An arrange that ends
     // where it started, or a window field the payload does not carry, produces the same bytes as last time and is
@@ -629,5 +700,9 @@ namespace umbriel {
   void Ipc::notifySubmapChanged() { broadcastEvent(kEventSubmap, submapEvent(*m_server)); }
 
   void Ipc::notifyScreenCastChanged() { broadcastEvent(kEventScreenCast, screenCastEvent(*m_server)); }
+
+  void Ipc::notifyLayersChanged() { broadcastEvent(kEventLayers, layersEvent(*m_server)); }
+
+  void Ipc::notifyOutputsChanged() { broadcastEvent(kEventOutputs, outputsEvent(*m_server)); }
 
 } // namespace umbriel

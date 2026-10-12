@@ -16,6 +16,7 @@ extern "C" {
 #undef static
 }
 
+using umbriel::FormatCommitResult;
 using umbriel::FormatSequenceOps;
 using umbriel::FormatSequenceParams;
 using umbriel::FormatSequenceResult;
@@ -55,6 +56,7 @@ namespace {
     std::vector<Call> calls;
     std::vector<bool> testResults;
     std::vector<bool> commitResults;
+    std::vector<size_t> retryCommitIndices;
     std::vector<uint32_t> nonPrimaryFormats;
     size_t testIndex = 0;
     size_t commitIndex = 0;
@@ -111,7 +113,12 @@ namespace {
           .commit =
               [this] {
                 calls.push_back({Kind::Commit, stagedFormat, stagedVrr});
-                return next(commitResults, commitIndex, true);
+                const size_t index = commitIndex;
+                const bool committed = next(commitResults, commitIndex, true);
+                if (std::ranges::find(retryCommitIndices, index) != retryCommitIndices.end()) {
+                  return FormatCommitResult::Retry;
+                }
+                return committed ? FormatCommitResult::Committed : FormatCommitResult::Rejected;
               },
           .clearImageDescription = [this] { imageDescCleared = true; },
           .stageMode = [this](wlr_output_mode* m) { stagedMode = m; },
@@ -368,6 +375,26 @@ UMBRIEL_TEST(hdrCommitFailureFallsThroughToSdr10) {
   CHECK(m.imageDescCleared);
   CHECK_EQ(m.count(Kind::StageHdr), size_t{1});
   CHECK_EQ(m.count(Kind::Commit), size_t{2});
+}
+
+// A render/build failure is not evidence that HDR or its selected format is
+// unsupported. Stop before capability fallbacks so the frame can retry.
+UMBRIEL_TEST(retryableHdrApplyFailureStopsBeforeSdrFallback) {
+  MockOps m;
+  m.testResults = {true};
+  m.commitResults = {true};
+  m.retryCommitIndices = {0};
+
+  FormatSequenceParams p = sdr8Params();
+  p.hdrRequested = true;
+  p.imageDescAvailable = true;
+
+  const FormatSequenceResult r = runFormatSequence(p, m.ops());
+
+  CHECK(!r.committed);
+  CHECK(r.retry);
+  CHECK(!m.imageDescCleared);
+  CHECK_EQ(m.count(Kind::Commit), size_t{1});
 }
 
 // A failed HDR+VRR commit retries the same format without VRR

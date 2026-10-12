@@ -68,7 +68,6 @@ def pixel():
     return subprocess.check_output([os.environ['UMBRIEL_PIXEL_PROBE'], image, 'pixel', '150', '150'], text=True).strip()
 
 assert frame()['eligible'] == 0
-assert data('effects')['audio_demanded_sources'] == 0
 run('clock-freeze')
 run('msg', 'workspace-presentation-enter')
 run('clock-advance', '1')
@@ -91,7 +90,6 @@ elapsed = time.monotonic() - start
 for key in ('effect_frames', 'buffer_commits'):
     delta = after[key] - before[key]
     assert 2 <= delta <= math.ceil(elapsed * 8) + 2, ('source time cadence', key, delta, elapsed)
-assert data('effects')['audio_demanded_sources'] == 0
 run('clock-freeze')
 run('settle')
 wait(frame, lambda f: f['eligible'] == 0, 'frozen source remains eligible')

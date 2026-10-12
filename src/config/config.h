@@ -6,6 +6,7 @@
 #include "core/animation.h"
 #include "layout/layout.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -272,6 +273,7 @@ namespace umbriel {
     std::optional<double> scale;
     std::optional<int> transform;
     VrrMode vrr = VrrMode::Disabled;
+    bool focusAtStartup = false;
     // Global safety gate. Even a client async hint or a window-rule override
     // cannot request tearing unless the owning output enables it.
     bool allowTearing = false;
@@ -355,23 +357,42 @@ namespace umbriel {
     bool pinned = false;
     bool scratchpad = false;
     bool alone = false;
+    // Stricter than alone: floating windows are included.
+    bool onlyWindow = false;
 
     [[nodiscard]] bool operator==(const WindowRuleState& other) const = default;
   };
 
+  // The alternatives of one selector, written as a single string or as an array of them; a value matches when any one
+  // of them matches it. The regexes are derived, so equality is decided by the patterns alone.
+  struct RegexPatterns {
+    std::vector<std::string> patterns;
+    std::vector<std::regex> regexes;
+
+    // Throws `std::regex_error` on a pattern that does not compile, for the caller to report.
+    RegexPatterns& add(std::string pattern) {
+      regexes.emplace_back(pattern);
+      patterns.push_back(std::move(pattern));
+      return *this;
+    }
+    // A list with no pattern, or only an empty one, places no constraint.
+    [[nodiscard]] bool constrains() const {
+      return std::ranges::any_of(patterns, [](const std::string& pattern) { return !pattern.empty(); });
+    }
+    [[nodiscard]] bool operator==(const RegexPatterns& other) const { return patterns == other.patterns; }
+  };
+
   struct WindowRule {
-    std::string appIdPattern;
-    std::string titlePattern;
-    std::string xdgTagPattern;
-    std::regex appIdRegex;
-    std::regex titleRegex;
-    std::regex xdgTagRegex;
+    RegexPatterns appIdPatterns;
+    RegexPatterns titlePatterns;
+    RegexPatterns xdgTagPatterns;
     std::optional<ContentType> matchContentType;
     std::optional<bool> matchFocused;
     std::optional<bool> matchFloating;
     std::optional<bool> matchPinned;
     std::optional<bool> matchScratchpad;
     std::optional<bool> matchAlone;
+    std::optional<bool> matchOnlyWindow;
     std::optional<bool> matchAtStartup;
     std::optional<std::string> defaultOutput;
     std::optional<bool> defaultFloating;
@@ -393,6 +414,7 @@ namespace umbriel {
     std::optional<bool> defaultFocused;
     std::optional<bool> defaultPinned;
     std::optional<bool> focusOnActivate;
+    std::optional<bool> confinePointer;
     std::optional<VrrMode> vrr;
     // Overrides the client's tearing-control hint. Omitted follows the hint,
     // true forces async preference, and false vetoes it.
@@ -417,18 +439,18 @@ namespace umbriel {
     std::optional<std::string> borderEffect;
     std::optional<std::string> windowEffect;
 
-    // The compiled regexes are derived from the app ID, title, and XDG tag patterns and
-    // are not comparable, so equality is decided by the patterns themselves.
+    // See RegexPatterns: the regexes are derived from the patterns, so equality compares the patterns alone.
     [[nodiscard]] bool operator==(const WindowRule& other) const {
-      return appIdPattern == other.appIdPattern
-          && titlePattern == other.titlePattern
-          && xdgTagPattern == other.xdgTagPattern
+      return appIdPatterns == other.appIdPatterns
+          && titlePatterns == other.titlePatterns
+          && xdgTagPatterns == other.xdgTagPatterns
           && matchContentType == other.matchContentType
           && matchFocused == other.matchFocused
           && matchFloating == other.matchFloating
           && matchPinned == other.matchPinned
           && matchScratchpad == other.matchScratchpad
           && matchAlone == other.matchAlone
+          && matchOnlyWindow == other.matchOnlyWindow
           && matchAtStartup == other.matchAtStartup
           && defaultOutput == other.defaultOutput
           && defaultFloating == other.defaultFloating
@@ -450,6 +472,7 @@ namespace umbriel {
           && defaultFocused == other.defaultFocused
           && defaultPinned == other.defaultPinned
           && focusOnActivate == other.focusOnActivate
+          && confinePointer == other.confinePointer
           && vrr == other.vrr
           && allowTearing == other.allowTearing
           && hdr == other.hdr
@@ -492,6 +515,7 @@ namespace umbriel {
     std::optional<bool> defaultFocused;
     std::optional<bool> defaultPinned;
     std::optional<bool> focusOnActivate;
+    std::optional<bool> confinePointer;
     std::optional<VrrMode> vrr;
     std::optional<bool> allowTearing;
     std::optional<HdrMode> hdr;
@@ -512,17 +536,28 @@ namespace umbriel {
     bool operator==(const ResolvedWindowRule&) const = default;
   };
 
+  // The layer-shell layers a `[[layer_rule]]` can select with `match.layer`.
+  enum class LayerShellLayer {
+    Background,
+    Bottom,
+    Top,
+    Overlay,
+  };
+
   struct LayerRule {
-    std::string namespacePattern;
-    std::regex namespaceRegex;
+    RegexPatterns namespacePatterns;
+    std::optional<LayerShellLayer> matchLayer;
+    std::optional<bool> matchAtStartup;
     std::optional<bool> blur;
     std::optional<bool> blurPopups;
     std::optional<double> ignoreAlpha;
     std::optional<bool> optimized;
 
-    // See WindowRule: the regex is derived from the pattern.
+    // See WindowRule: the regexes are derived from the patterns.
     [[nodiscard]] bool operator==(const LayerRule& other) const {
-      return namespacePattern == other.namespacePattern
+      return namespacePatterns == other.namespacePatterns
+          && matchLayer == other.matchLayer
+          && matchAtStartup == other.matchAtStartup
           && blur == other.blur
           && blurPopups == other.blurPopups
           && ignoreAlpha == other.ignoreAlpha
@@ -541,16 +576,14 @@ namespace umbriel {
   // Grants extra globals to security-context clients whose metadata matches.
   // Additive only: the base allowed set cannot be narrowed from configuration.
   struct SecurityContextRule {
-    std::string sandboxEnginePattern;
-    std::string appIdPattern;
-    std::regex sandboxEngineRegex;
-    std::regex appIdRegex;
+    RegexPatterns sandboxEnginePatterns;
+    RegexPatterns appIdPatterns;
     std::vector<std::string> allowGlobals;
 
     // See WindowRule: the regexes are derived from the patterns.
     [[nodiscard]] bool operator==(const SecurityContextRule& other) const {
-      return sandboxEnginePattern == other.sandboxEnginePattern
-          && appIdPattern == other.appIdPattern
+      return sandboxEnginePatterns == other.sandboxEnginePatterns
+          && appIdPatterns == other.appIdPatterns
           && allowGlobals == other.allowGlobals;
     }
   };
@@ -707,6 +740,7 @@ namespace umbriel {
       } windowsMove;
 
       struct Workspaces {
+        std::string style = "slide";
         std::string effect;
         bool enabled = true;
         int durationMs = 250;
@@ -964,6 +998,7 @@ namespace umbriel {
         std::string layout;
         std::string variant;
         std::string options;
+        std::string model;
         int repeatRate = 25;
         int repeatDelay = 600;
         bool numlockToggle = false;
@@ -1022,6 +1057,15 @@ namespace umbriel {
         bool operator==(const Cursor&) const = default;
       } cursor;
 
+      // Auto-scroll a scrolling layout while a data drag sits near one of its ends.
+      struct DragEdgeScroll {
+        bool enabled = true;
+        int triggerZone = 30;
+        int delayMs = 100;
+        double maxSpeed = 1500.0;
+        bool operator==(const DragEdgeScroll&) const = default;
+      } dragEdgeScroll;
+
       struct Focus {
         bool followsMouse = false;
         std::optional<double> followsMouseMaxScroll;
@@ -1052,6 +1096,7 @@ namespace umbriel {
         std::optional<std::string> layout;
         std::optional<std::string> variant;
         std::optional<std::string> options;
+        std::optional<std::string> model;
         std::optional<int> repeatRate;
         std::optional<int> repeatDelay;
         std::optional<bool> tap;
@@ -1109,6 +1154,7 @@ namespace umbriel {
 
   [[nodiscard]] const Config& config();
   [[nodiscard]] bool loadConfig(const char* explicitPath);
+  [[nodiscard]] ConfigReloadResult replaceConfig(const std::filesystem::path& explicitPath, std::string& errors);
   [[nodiscard]] ConfigReloadResult reloadConfig();
   [[nodiscard]] const std::vector<std::filesystem::path>& configWatchPaths();
   [[nodiscard]] const std::vector<ConfigDiagnostic>& configDiagnostics();

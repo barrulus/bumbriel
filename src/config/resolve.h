@@ -18,14 +18,15 @@ namespace umbriel {
     return value != nullptr ? std::optional<std::string_view>(value) : std::nullopt;
   }
 
-  inline constexpr uint64_t kStartupWindowRuleDurationMs = 60'000;
+  inline constexpr uint64_t kStartupRuleDurationMs = 60'000;
 
   [[nodiscard]] ResolvedWindowRule resolveWindowRules(
       const Config& config, std::optional<std::string_view> appId, std::optional<std::string_view> title,
       std::optional<std::string_view> xdgTag, ContentType contentType, const WindowRuleState& state, uint64_t uptimeMs
   );
-  [[nodiscard]] ResolvedLayerRule
-  resolveLayerRules(const Config& config, std::optional<std::string_view> layerNamespace);
+  [[nodiscard]] ResolvedLayerRule resolveLayerRules(
+      const Config& config, std::optional<std::string_view> layerNamespace, LayerShellLayer layer, uint64_t uptimeMs
+  );
   // The globals every [[security_context_rule]] matching the client's metadata
   // grants on top of the base allowed set.
   [[nodiscard]] std::vector<std::string>

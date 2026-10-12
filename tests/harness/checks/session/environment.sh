@@ -120,7 +120,7 @@ case "$action" in
     printf '%s\n' systemd-configured >> "$TRACE_DIR/order"
     ;;
   import-environment)
-    [ "$*" = "WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE UMBRIEL_SOCKET" ] ||
+    [ "$*" = "WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XCURSOR_THEME XCURSOR_SIZE UMBRIEL_SOCKET" ] ||
       fail
     printf '%s\n' systemd-graphical >> "$TRACE_DIR/order"
     printf '%s' "${DISPLAY-}" > "$MANAGER_DIR/display"
@@ -164,7 +164,7 @@ else
   [ "${DISPLAY+x}" != x ] || exit 1
 fi
 [ "$UMBRIEL_SOCKET" = "$FIXTURE_ROOT/umbriel-$WAYLAND_DISPLAY.sock" ] || exit 1
-[ "$*" = "WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE UMBRIEL_SOCKET" ] ||
+[ "$*" = "WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XCURSOR_THEME XCURSOR_SIZE UMBRIEL_SOCKET" ] ||
   exit 1
 
 printf '%s\n' dbus-graphical >> "$TRACE_DIR/order"

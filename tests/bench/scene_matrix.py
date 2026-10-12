@@ -153,10 +153,10 @@ def config(output_names, phase, candidate, workload, runtime, args):
         if workload == "video-light":
             shader = 'vec4 border(vec2 uv) { return vec4(0.2 + 0.1*sin(umbriel_time), 0.65, 0.9, 1.0); }\n'
         if candidate:
-            shader = shader.replace('0.65', '0.65 + 0.1*umbriel_audio_rms()')
+            shader = shader.replace('0.65', '0.65 + 0.1*umbriel_audio_level()')
         (runtime / "border.glsl").write_text(shader)
         (runtime / "window.glsl").write_text('vec4 window(vec2 uv) { vec4 c = umbriel_sample(uv); return vec4(c.rgb * 0.98, c.a); }\n')
-        lines += ['[effects.preset.cost-border]\nkind = "border"\nshader = "border.glsl"\nanimated = ' + ('true' if workload == "video-light" else 'false') + ('\nspeed = 0' if args.time_mode == 'frozen' else '') + ('\naudio = "cost-silence"' if candidate else ''),
+        lines += ['[effects.preset.cost-border]\nkind = "border"\nshader = "border.glsl"\nanimated = ' + ('true' if workload == "video-light" else 'false') + ('\nspeed = 0' if args.time_mode == 'frozen' else ''),
                   '[effects.preset.cost-window]\nkind = "window"\nshader = "window.glsl"']
         if workload == "small-updates":
             border_index = next(i for i, line in enumerate(lines) if line.startswith('[effects.preset.cost-border]'))
@@ -164,8 +164,6 @@ def config(output_names, phase, candidate, workload, runtime, args):
             lines += ['[effects.preset.cost-overlay]\nkind = "window"\nshader = "window.glsl"']
         if workload in ("video-light", "scene-single-output", "scene-two-output"):
             lines += ['[effects.preset.cost-border.light]\nspread = 32\nintensity = 1.2\nthreshold = 0.2']
-        if candidate:
-            lines += ['[effects.audio.sources.cost-silence]\nprovider = "external"\nmode = "playback"\ntarget = "synthetic-cost-silence"\nexecutable = ' + json.dumps(str(args.helper)) + '\nargs = ["--external-test", "--silence"]']
     if active and candidate and workload.startswith("scene-"):
         lines += ['[workspace_presentation]\neffect = "carousel"', '[animation.workspaces]\neffect = "melt"',
                   '[animation.windows_in]\neffect = "water"', '[animation.windows_out]\neffect = "portal"']
@@ -428,8 +426,8 @@ def trace_cell(session, phase):
         process_cost=process_summary(samples, session.server.pid),
         process_sampling_scope="Tracy capture process lifetime (includes connection handshake); raw monotonic samples retained",
         elapsed_sample_seconds=(samples[-1]["monotonic_ns"]-samples[0]["monotonic_ns"])/1e9,
-        helper_source="synthetic unchanged silence, no device acquisition" if session.candidate else "not supported by baseline",
-        effect_comparison="candidate scene-v1 versus native workspace/window operations" if session.workload.startswith("scene-") else "same native workload and visually equivalent border; candidate also binds silent audio",
+        audio_input="upstream feed disconnected; zero level and availability",
+        effect_comparison="candidate scene-v1 versus native workspace/window operations" if session.workload.startswith("scene-") else "same native workload and visually equivalent border; candidate reads the disconnected upstream audio feed",
         format="default encoded SDR; verify actual output metadata in before/after.json", roles="display")
     client_activity = {}
     for path in session.directory.glob("cost-*.jsonl"):
@@ -454,7 +452,7 @@ def trace_cell(session, phase):
                                            "states": states} for kind, states in kinds.items()}
         report["scene_coverage"] = scene_coverage(actions, session.names[0])
         report["scene_cost_validated"] = report["scene_cycle_complete"] and report["scene_coverage"]["validated"]
-    report["baseline_schema"] = "candidate scene/audio declarations" if session.candidate else "legacy declarations only; scene/audio schema unavailable"
+    report["baseline_schema"] = "candidate scene declarations" if session.candidate else "legacy declarations only; scene schema unavailable"
     write_json(cell / "summary.json", report)
     print(f"{cell}: {report['cpu_render']['count']} render zones, {report['gpu']['query_zones']} GPU zones", flush=True)
 
@@ -474,7 +472,6 @@ def main():
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--exporter", type=Path)
-    parser.add_argument("--helper", type=Path, help="explicit release-built synthetic helper; no physical audio acquisition")
     parser.add_argument("--client", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--backend", choices=("headless", "drm"), default="headless")
@@ -493,7 +490,7 @@ def main():
     if args.build_client:
         print(build_client(args.build_client.resolve()))
         return
-    for name in (("candidate", "helper", "output") if args.validate_configs_only else ("candidate", "capture", "exporter", "client", "helper", "output")):
+    for name in (("candidate", "output") if args.validate_configs_only else ("candidate", "capture", "exporter", "client", "output")):
         if getattr(args, name) is None:
             parser.error(f"--{name} required")
     if args.duration <= 0 or args.runs <= 0 or not math.isfinite(args.scale) or args.scale <= 0 or not math.isfinite(args.warmup) or args.warmup < 0:
@@ -510,7 +507,7 @@ def main():
         parser.error("--time-mode frozen is the video-light variant; select --workloads video-light")
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
-    for name in ("candidate", "baseline", "capture", "exporter", "client", "helper"):
+    for name in ("candidate", "baseline", "capture", "exporter", "client"):
         path = getattr(args, name)
         if path is not None:
             setattr(args, name, path.resolve(strict=True))
@@ -520,8 +517,8 @@ def main():
         "No requested presentation deadlines: missed-deadline count remains unmeasured",
         "Headless results do not prove physical direct scanout, HDR, or two-display isolation",
         "Runner covers display-only encoded SDR; unmanaged10-bit/managedHDR and unfiltered capture need separately instrumented sessions",
-        "Synthetic audio measures transport/helper cost, not PipeWire analysis or acoustic latency"],
-        artifact_sha256={label: hashlib.sha256(path.read_bytes()).hexdigest() for label, path in (("baseline", args.baseline), ("candidate", args.candidate), ("synthetic_helper", args.helper), ("workload_client", args.client), ("capture", args.capture), ("exporter", args.exporter)) if path is not None})
+        "Audio feed is disconnected; external producer cost and acoustic latency are not measured"],
+        artifact_sha256={label: hashlib.sha256(path.read_bytes()).hexdigest() for label, path in (("baseline", args.baseline), ("candidate", args.candidate), ("workload_client", args.client), ("capture", args.capture), ("exporter", args.exporter)) if path is not None})
     write_json(args.output / "metadata.json", metadata)
     validate_configs(args)
     if args.validate_configs_only:

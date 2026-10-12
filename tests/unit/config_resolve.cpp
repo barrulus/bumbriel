@@ -547,8 +547,7 @@ UMBRIEL_TEST(windowRulesMergeMatchingFieldsInOrder) {
   Config config;
 
   WindowRule app;
-  app.appIdPattern = "^foot$";
-  app.appIdRegex = std::regex(app.appIdPattern);
+  app.appIdPatterns.add("^foot$");
   app.opacity = 0.5;
   app.blur = true;
   app.defaultFocused = false;
@@ -567,8 +566,7 @@ UMBRIEL_TEST(windowRulesMergeMatchingFieldsInOrder) {
   config.windowRules.push_back(std::move(app));
 
   WindowRule title;
-  title.titlePattern = "shell";
-  title.titleRegex = std::regex(title.titlePattern);
+  title.titlePatterns.add("shell");
   title.opacity = 0.8;
   title.focusOnActivate = true;
   title.vrr = VrrMode::Always;
@@ -626,16 +624,14 @@ UMBRIEL_TEST(windowRuleDecorationOverridesMergePerField) {
   Config config;
 
   WindowRule app;
-  app.appIdPattern = "^foot$";
-  app.appIdRegex = std::regex(app.appIdPattern);
+  app.appIdPatterns.add("^foot$");
   app.borderWidth = 0;
   app.shadow = false;
   app.outerBorderWidth = 3;
   config.windowRules.push_back(std::move(app));
 
   WindowRule title;
-  title.titlePattern = "editor";
-  title.titleRegex = std::regex(title.titlePattern);
+  title.titlePatterns.add("editor");
   title.cornerRadius = 0;
   title.shadow = true;
   config.windowRules.push_back(std::move(title));
@@ -655,8 +651,7 @@ UMBRIEL_TEST(windowRuleDecorationOverridesMergePerField) {
 UMBRIEL_TEST(windowRuleEffectOverridesUseLastWriterWins) {
   umbriel::Config config;
   umbriel::WindowRule first;
-  first.appIdPattern = "foot";
-  first.appIdRegex = std::regex("foot");
+  first.appIdPatterns.add("foot");
   first.borderEffect = "pulse";
   first.windowEffect = "lines";
   umbriel::WindowRule second = first;
@@ -673,14 +668,12 @@ UMBRIEL_TEST(windowRulesMergeWorkspaceTargetsAcrossSelectorKinds) {
   Config config;
 
   WindowRule app;
-  app.appIdPattern = "^foot$";
-  app.appIdRegex = std::regex(app.appIdPattern);
+  app.appIdPatterns.add("^foot$");
   app.defaultWorkspace = umbriel::WorkspaceReference{umbriel::WorkspaceIndex{2}};
   config.windowRules.push_back(std::move(app));
 
   WindowRule title;
-  title.titlePattern = "chat";
-  title.titleRegex = std::regex(title.titlePattern);
+  title.titlePatterns.add("chat");
   title.defaultWorkspace = umbriel::WorkspaceReference{umbriel::WorkspaceName{"2"}};
   config.windowRules.push_back(std::move(title));
 
@@ -701,14 +694,12 @@ UMBRIEL_TEST(windowRulesMergeDefaultScratchpadLastWriterWins) {
   Config config;
 
   WindowRule app;
-  app.appIdPattern = "^foot$";
-  app.appIdRegex = std::regex(app.appIdPattern);
+  app.appIdPatterns.add("^foot$");
   app.defaultScratchpad = "terminal";
   config.windowRules.push_back(std::move(app));
 
   WindowRule title;
-  title.titlePattern = "music";
-  title.titleRegex = std::regex(title.titlePattern);
+  title.titlePatterns.add("music");
   title.defaultScratchpad = "media";
   config.windowRules.push_back(std::move(title));
 
@@ -723,8 +714,7 @@ UMBRIEL_TEST(windowRulesMergeSizingFieldsLastWriterWins) {
   Config config;
 
   WindowRule first;
-  first.appIdPattern = "^utility$";
-  first.appIdRegex = std::regex(first.appIdPattern);
+  first.appIdPatterns.add("^utility$");
   first.defaultFloating = true;
   first.defaultFloatingWidthPx = 800;
   first.defaultFloatingWidth = 0.5;
@@ -741,8 +731,7 @@ UMBRIEL_TEST(windowRulesMergeSizingFieldsLastWriterWins) {
   CHECK(sameRule.defaultScrollingExtent && *sameRule.defaultScrollingExtent == 0.5);
 
   WindowRule second;
-  second.appIdPattern = "^utility$";
-  second.appIdRegex = std::regex(second.appIdPattern);
+  second.appIdPatterns.add("^utility$");
   second.defaultScrollingExtent = 0.75;
   second.defaultFloatingWidth = 0.6;
   second.defaultFloatingHeight = 0.75;
@@ -763,14 +752,12 @@ UMBRIEL_TEST(windowRulesMergeBorderColorsLastWriterWins) {
   Config config;
 
   WindowRule app;
-  app.appIdPattern = "^foot$";
-  app.appIdRegex = std::regex(app.appIdPattern);
+  app.appIdPatterns.add("^foot$");
   app.borderColorFocused = std::array<float, 4>{1.0F, 0.0F, 0.0F, 1.0F};
   config.windowRules.push_back(std::move(app));
 
   WindowRule title;
-  title.titlePattern = "shell";
-  title.titleRegex = std::regex(title.titlePattern);
+  title.titlePatterns.add("shell");
   title.borderColorFocused = std::array<float, 4>{0.0F, 1.0F, 0.0F, 1.0F};
   title.borderColorOuter = std::array<float, 4>{0.1F, 0.2F, 0.3F, 1.0F};
   config.windowRules.push_back(std::move(title));
@@ -797,10 +784,8 @@ UMBRIEL_TEST(windowRulesMatchContentTypesAndComposeSelectors) {
   config.windowRules.push_back(std::move(photo));
 
   WindowRule game;
-  game.appIdPattern = "^runner$";
-  game.appIdRegex = std::regex(game.appIdPattern);
-  game.titlePattern = "playing";
-  game.titleRegex = std::regex(game.titlePattern);
+  game.appIdPatterns.add("^runner$");
+  game.titlePatterns.add("playing");
   game.matchContentType = ContentType::Game;
   game.matchFocused = false;
   game.matchAtStartup = true;
@@ -834,7 +819,7 @@ UMBRIEL_TEST(windowRulesMatchContentTypesAndComposeSelectors) {
   );
   CHECK(!wrongFocus.opacity);
   const auto afterStartupRule = umbriel::resolveWindowRules(
-      config, "runner", "now playing", std::nullopt, ContentType::Game, {}, umbriel::kStartupWindowRuleDurationMs
+      config, "runner", "now playing", std::nullopt, ContentType::Game, {}, umbriel::kStartupRuleDurationMs
   );
   CHECK(!afterStartupRule.opacity);
   CHECK(afterStartupRule.defaultFloating && *afterStartupRule.defaultFloating);
@@ -898,25 +883,20 @@ UMBRIEL_TEST(windowRulesMatchXdgTagsAndComposeSelectors) {
   Config config;
 
   WindowRule anyGameTag;
-  anyGameTag.xdgTagPattern = "^game-";
-  anyGameTag.xdgTagRegex = std::regex(anyGameTag.xdgTagPattern);
+  anyGameTag.xdgTagPatterns.add("^game-");
   anyGameTag.opacity = 0.25;
   config.windowRules.push_back(std::move(anyGameTag));
 
   WindowRule launcher;
-  launcher.xdgTagPattern = "^game-launcher$";
-  launcher.xdgTagRegex = std::regex(launcher.xdgTagPattern);
+  launcher.xdgTagPatterns.add("^game-launcher$");
   launcher.opacity = 0.9;
   launcher.defaultFloating = true;
   config.windowRules.push_back(std::move(launcher));
 
   WindowRule running;
-  running.appIdPattern = "^runner$";
-  running.appIdRegex = std::regex(running.appIdPattern);
-  running.titlePattern = "playing";
-  running.titleRegex = std::regex(running.titlePattern);
-  running.xdgTagPattern = "^game-(running|settings)$";
-  running.xdgTagRegex = std::regex(running.xdgTagPattern);
+  running.appIdPatterns.add("^runner$");
+  running.titlePatterns.add("playing");
+  running.xdgTagPatterns.add("^game-(running|settings)$");
   running.matchContentType = ContentType::Game;
   running.matchFocused = false;
   running.opacity = 0.5;
@@ -959,24 +939,72 @@ UMBRIEL_TEST(windowRulesMatchXdgTagsAndComposeSelectors) {
   CHECK(!unknownTag.defaultFloating);
 }
 
+UMBRIEL_TEST(windowRulesAcceptSeveralPatternsPerSelector) {
+  Config config;
+
+  // One rule per selector, so a case supplies a matching value only for the selector it exercises.
+  WindowRule byAppId;
+  byAppId.appIdPatterns.add("^mpv$");
+  byAppId.appIdPatterns.add("^celluloid$");
+  byAppId.opacity = 0.5;
+  config.windowRules.push_back(std::move(byAppId));
+
+  WindowRule byTitle;
+  byTitle.titlePatterns.add("^Big [Pp]icture$");
+  byTitle.titlePatterns.add("^Small [Pp]icture$");
+  byTitle.defaultFloating = true;
+  config.windowRules.push_back(std::move(byTitle));
+
+  WindowRule byTag;
+  byTag.xdgTagPatterns.add("^media-");
+  byTag.xdgTagPatterns.add("^picture$");
+  byTag.defaultMaximize = true;
+  config.windowRules.push_back(std::move(byTag));
+
+  const auto firstApp =
+      umbriel::resolveWindowRules(config, "mpv", std::nullopt, std::nullopt, ContentType::None, {}, 0);
+  CHECK(firstApp.opacity && *firstApp.opacity == 0.5);
+  const auto secondApp =
+      umbriel::resolveWindowRules(config, "celluloid", std::nullopt, std::nullopt, ContentType::None, {}, 0);
+  CHECK(secondApp.opacity && *secondApp.opacity == 0.5);
+  const auto neitherApp =
+      umbriel::resolveWindowRules(config, "foot", std::nullopt, std::nullopt, ContentType::None, {}, 0);
+  CHECK(!neitherApp.opacity);
+
+  const auto firstTitle =
+      umbriel::resolveWindowRules(config, "foot", "Big Picture", std::nullopt, ContentType::None, {}, 0);
+  CHECK(firstTitle.defaultFloating && *firstTitle.defaultFloating);
+  const auto secondTitle =
+      umbriel::resolveWindowRules(config, "foot", "Small Picture", std::nullopt, ContentType::None, {}, 0);
+  CHECK(secondTitle.defaultFloating && *secondTitle.defaultFloating);
+  const auto otherTitle =
+      umbriel::resolveWindowRules(config, "foot", "Huge Picture", std::nullopt, ContentType::None, {}, 0);
+  CHECK(!otherTitle.defaultFloating);
+
+  const auto firstTag =
+      umbriel::resolveWindowRules(config, "foot", std::nullopt, "media-player", ContentType::None, {}, 0);
+  CHECK(firstTag.defaultMaximize && *firstTag.defaultMaximize);
+  const auto secondTag = umbriel::resolveWindowRules(config, "foot", std::nullopt, "picture", ContentType::None, {}, 0);
+  CHECK(secondTag.defaultMaximize && *secondTag.defaultMaximize);
+  const auto otherTag = umbriel::resolveWindowRules(config, "foot", std::nullopt, "media", ContentType::None, {}, 0);
+  CHECK(!otherTag.defaultMaximize);
+}
+
 UMBRIEL_TEST(windowRulesMatchEmptyIdentityOnlyWhenTheClientSetIt) {
   Config config;
 
   WindowRule blankTitle;
-  blankTitle.titlePattern = "^$";
-  blankTitle.titleRegex = std::regex(blankTitle.titlePattern);
+  blankTitle.titlePatterns.add("^$");
   blankTitle.defaultFloating = true;
   config.windowRules.push_back(std::move(blankTitle));
 
   WindowRule blankAppId;
-  blankAppId.appIdPattern = "^$";
-  blankAppId.appIdRegex = std::regex(blankAppId.appIdPattern);
+  blankAppId.appIdPatterns.add("^$");
   blankAppId.opacity = 0.5;
   config.windowRules.push_back(std::move(blankAppId));
 
   WindowRule blankTag;
-  blankTag.xdgTagPattern = "^$";
-  blankTag.xdgTagRegex = std::regex(blankTag.xdgTagPattern);
+  blankTag.xdgTagPatterns.add("^$");
   blankTag.defaultMaximize = true;
   config.windowRules.push_back(std::move(blankTag));
 
@@ -1005,15 +1033,13 @@ UMBRIEL_TEST(windowRulesMatchIsAlone) {
   Config config;
 
   WindowRule aloneOnly;
-  aloneOnly.appIdPattern = "^player$";
-  aloneOnly.appIdRegex = std::regex(aloneOnly.appIdPattern);
+  aloneOnly.appIdPatterns.add("^player$");
   aloneOnly.matchAlone = true;
   aloneOnly.defaultMaximize = true;
   config.windowRules.push_back(std::move(aloneOnly));
 
   WindowRule notAloneOnly;
-  notAloneOnly.appIdPattern = "^player$";
-  notAloneOnly.appIdRegex = std::regex(notAloneOnly.appIdPattern);
+  notAloneOnly.appIdPatterns.add("^player$");
   notAloneOnly.matchAlone = false;
   notAloneOnly.defaultFloating = true;
   config.windowRules.push_back(std::move(notAloneOnly));
@@ -1032,8 +1058,7 @@ UMBRIEL_TEST(windowRulesMatchIsAlone) {
 
   // A rule without the selector matches regardless of being alone.
   WindowRule anyState;
-  anyState.appIdPattern = "^worker$";
-  anyState.appIdRegex = std::regex(anyState.appIdPattern);
+  anyState.appIdPatterns.add("^worker$");
   anyState.defaultPinned = true;
   config.windowRules.push_back(std::move(anyState));
 
@@ -1043,6 +1068,46 @@ UMBRIEL_TEST(windowRulesMatchIsAlone) {
   const auto anyStateNotAlone =
       umbriel::resolveWindowRules(config, "worker", std::nullopt, std::nullopt, ContentType::None, {}, 0);
   CHECK(anyStateNotAlone.defaultPinned && *anyStateNotAlone.defaultPinned);
+}
+
+UMBRIEL_TEST(windowRulesMatchIsOnlyWindow) {
+  Config config;
+
+  WindowRule onlyRule;
+  onlyRule.appIdPatterns.add("^player$");
+  onlyRule.matchOnlyWindow = true;
+  onlyRule.borderWidth = 0;
+  config.windowRules.push_back(std::move(onlyRule));
+
+  WindowRule sharedRule;
+  sharedRule.appIdPatterns.add("^player$");
+  sharedRule.matchOnlyWindow = false;
+  sharedRule.borderWidth = 4;
+  config.windowRules.push_back(std::move(sharedRule));
+
+  // Nothing else on the workspace: the is_only_window=true rule applies.
+  const auto solo = umbriel::resolveWindowRules(
+      config, "player", std::nullopt, std::nullopt, ContentType::None, {.alone = true, .onlyWindow = true}, 0
+  );
+  CHECK(solo.borderWidth && *solo.borderWidth == 0);
+
+  // A float beside a tile: still alone in the layout, so is_alone keeps holding, but no longer the only window.
+  const auto tiledBesideFloat = umbriel::resolveWindowRules(
+      config, "player", std::nullopt, std::nullopt, ContentType::None, {.alone = true, .onlyWindow = false}, 0
+  );
+  CHECK(tiledBesideFloat.borderWidth && *tiledBesideFloat.borderWidth == 4);
+
+  // The selector is independent: a rule carrying only is_alone matches in both states.
+  WindowRule aloneRule;
+  aloneRule.appIdPatterns.add("^player$");
+  aloneRule.matchAlone = true;
+  aloneRule.defaultMaximize = true;
+  config.windowRules.push_back(std::move(aloneRule));
+
+  const auto aloneBesideFloat = umbriel::resolveWindowRules(
+      config, "player", std::nullopt, std::nullopt, ContentType::None, {.alone = true, .onlyWindow = false}, 0
+  );
+  CHECK(aloneBesideFloat.defaultMaximize && *aloneBesideFloat.defaultMaximize);
 }
 
 UMBRIEL_TEST(windowVrrRuleOverridesTheOutputPolicy) {
@@ -1066,49 +1131,130 @@ UMBRIEL_TEST(layerRulesMergeMatchingFieldsInOrder) {
   Config config;
 
   LayerRule first;
-  first.namespacePattern = "^panel$";
-  first.namespaceRegex = std::regex(first.namespacePattern);
+  first.namespacePatterns.add("^panel$");
   first.blur = true;
   first.ignoreAlpha = 0.2;
   config.layerRules.push_back(std::move(first));
 
   LayerRule second;
-  second.namespacePattern = "^panel$";
-  second.namespaceRegex = std::regex(second.namespacePattern);
+  second.namespacePatterns.add("^panel$");
   second.ignoreAlpha = 0.75;
   second.optimized = true;
   config.layerRules.push_back(std::move(second));
 
-  const auto resolved = umbriel::resolveLayerRules(config, "panel");
+  const auto resolved = umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Top, 0);
   CHECK(resolved.blur && *resolved.blur);
   CHECK(resolved.ignoreAlpha && *resolved.ignoreAlpha == 0.75);
   CHECK(resolved.optimized && *resolved.optimized);
 
-  const auto unmatched = umbriel::resolveLayerRules(config, "wallpaper");
+  const auto unmatched = umbriel::resolveLayerRules(config, "wallpaper", umbriel::LayerShellLayer::Top, 0);
   CHECK(!unmatched.blur);
   CHECK(!unmatched.ignoreAlpha);
   CHECK(!unmatched.optimized);
 
   LayerRule blank;
-  blank.namespacePattern = "^$";
-  blank.namespaceRegex = std::regex(blank.namespacePattern);
+  blank.namespacePatterns.add("^$");
   blank.blur = true;
   config.layerRules.push_back(std::move(blank));
 
   // Layer surfaces name themselves at creation, so an empty namespace is a value a rule can match.
-  const auto blankNamespace = umbriel::resolveLayerRules(config, "");
+  const auto blankNamespace = umbriel::resolveLayerRules(config, "", umbriel::LayerShellLayer::Top, 0);
   CHECK(blankNamespace.blur && *blankNamespace.blur);
-  CHECK(!umbriel::resolveLayerRules(config, std::nullopt).blur);
+  CHECK(!umbriel::resolveLayerRules(config, std::nullopt, umbriel::LayerShellLayer::Top, 0).blur);
+}
+
+UMBRIEL_TEST(layerRulesAcceptSeveralNamespacePatterns) {
+  Config config;
+
+  LayerRule panels;
+  panels.namespacePatterns.add("^panel$");
+  panels.namespacePatterns.add("^bar$");
+  panels.blur = true;
+  config.layerRules.push_back(std::move(panels));
+
+  CHECK(umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Top, 0).blur.has_value());
+  CHECK(umbriel::resolveLayerRules(config, "bar", umbriel::LayerShellLayer::Top, 0).blur.has_value());
+  CHECK(!umbriel::resolveLayerRules(config, "dock", umbriel::LayerShellLayer::Top, 0).blur.has_value());
+}
+
+UMBRIEL_TEST(layerRulesMatchLayerAndStartupSelectors) {
+  Config config;
+
+  LayerRule topPanel;
+  topPanel.namespacePatterns.add("^panel$");
+  topPanel.matchLayer = umbriel::LayerShellLayer::Top;
+  topPanel.blur = true;
+  config.layerRules.push_back(std::move(topPanel));
+
+  LayerRule duringStartup;
+  duringStartup.matchAtStartup = true;
+  duringStartup.optimized = true;
+  config.layerRules.push_back(std::move(duringStartup));
+
+  const auto topAtStartup = umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Top, 0);
+  CHECK(topAtStartup.blur && *topAtStartup.blur);
+  CHECK(topAtStartup.optimized && *topAtStartup.optimized);
+
+  CHECK(!umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Overlay, 0).blur);
+
+  const auto afterStartup =
+      umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Top, umbriel::kStartupRuleDurationMs);
+  CHECK(afterStartup.blur && *afterStartup.blur);
+  CHECK(!afterStartup.optimized);
+}
+
+UMBRIEL_TEST(layerRuleStartupBoundaryFlipsForExistingSurface) {
+  Config config;
+
+  LayerRule duringStartup;
+  duringStartup.matchAtStartup = true;
+  duringStartup.optimized = true;
+  config.layerRules.push_back(std::move(duringStartup));
+
+  LayerRule afterStartup;
+  afterStartup.matchAtStartup = false;
+  afterStartup.blur = true;
+  config.layerRules.push_back(std::move(afterStartup));
+
+  // The startup timer re-resolves surfaces that are still alive, so the same panel crossing the boundary must drop the
+  // startup-only rule and pick the opposite one without a layer change or client restart.
+  const auto during =
+      umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Top, umbriel::kStartupRuleDurationMs - 1);
+  CHECK(during.optimized && *during.optimized);
+  CHECK(!during.blur);
+
+  const auto past =
+      umbriel::resolveLayerRules(config, "panel", umbriel::LayerShellLayer::Top, umbriel::kStartupRuleDurationMs);
+  CHECK(!past.optimized);
+  CHECK(past.blur && *past.blur);
+}
+
+UMBRIEL_TEST(securityContextRulesAcceptSeveralPatternsPerSelector) {
+  Config config;
+
+  SecurityContextRule grants;
+  grants.sandboxEnginePatterns.add("^org\\.flatpak$");
+  grants.sandboxEnginePatterns.add("^org\\.snap$");
+  grants.appIdPatterns.add("^org\\.example\\.Bar$");
+  grants.appIdPatterns.add("^org\\.example\\.Baz$");
+  grants.allowGlobals = {"zwlr_layer_shell_v1"};
+  config.securityContextRules.push_back(std::move(grants));
+
+  const auto grantsFor = [&](const char* engine, const char* appId) {
+    return umbriel::securityContextRuleGlobals(config, engine, appId);
+  };
+
+  CHECK(grantsFor("org.snap", "org.example.Baz") == std::vector<std::string>{"zwlr_layer_shell_v1"});
+  CHECK(grantsFor("org.snap", "org.example.Other").empty());
+  CHECK(grantsFor("org.other", "org.example.Baz").empty());
 }
 
 UMBRIEL_TEST(securityContextRulesGrantGlobalsByMetadata) {
   Config config;
 
   SecurityContextRule scoped;
-  scoped.sandboxEnginePattern = "^org\\.flatpak$";
-  scoped.sandboxEngineRegex = std::regex(scoped.sandboxEnginePattern);
-  scoped.appIdPattern = "^org\\.example\\.Bar$";
-  scoped.appIdRegex = std::regex(scoped.appIdPattern);
+  scoped.sandboxEnginePatterns.add("^org\\.flatpak$");
+  scoped.appIdPatterns.add("^org\\.example\\.Bar$");
   scoped.allowGlobals = {"zwlr_layer_shell_v1"};
   config.securityContextRules.push_back(std::move(scoped));
 
@@ -1117,8 +1263,7 @@ UMBRIEL_TEST(securityContextRulesGrantGlobalsByMetadata) {
   config.securityContextRules.push_back(std::move(wildcard));
 
   SecurityContextRule partial;
-  partial.appIdPattern = "example";
-  partial.appIdRegex = std::regex(partial.appIdPattern);
+  partial.appIdPatterns.add("example");
   partial.allowGlobals = {"zwlr_screencopy_manager_v1"};
   config.securityContextRules.push_back(std::move(partial));
 
@@ -1141,6 +1286,30 @@ UMBRIEL_TEST(securityContextRulesGrantGlobalsByMetadata) {
   CHECK(grants(nullptr, "example", "zwlr_screencopy_manager_v1"));
   // Matching rules pool their globals.
   CHECK_EQ(umbriel::securityContextRuleGlobals(config, "org.flatpak", "org.example.Bar").size(), size_t{2});
+}
+
+UMBRIEL_TEST(pointerConfinementLastMatchingRuleWins) {
+  Config config;
+  const auto resolve = [&](bool focused) {
+    return umbriel::resolveWindowRules(
+        config, "game", "menu", std::nullopt, ContentType::None, {.focused = focused}, 0
+    );
+  };
+  CHECK(!resolve(true).confinePointer.has_value());
+  WindowRule enabled;
+  enabled.confinePointer = true;
+  config.windowRules.push_back(enabled);
+  CHECK(resolve(true).confinePointer.value_or(false));
+  WindowRule disabled;
+  disabled.matchFocused = true;
+  disabled.confinePointer = false;
+  config.windowRules.push_back(disabled);
+  CHECK(resolve(true).confinePointer.has_value());
+  CHECK(!*resolve(true).confinePointer);
+  CHECK(resolve(false).confinePointer.value_or(false));
+  config.windowRules.emplace_back();
+  CHECK(!resolve(true).confinePointer.value_or(true));
+  CHECK(resolve(false).confinePointer.value_or(false));
 }
 
 int main() { return RUN_TESTS(); }

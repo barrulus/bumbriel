@@ -28,9 +28,9 @@ namespace umbriel {
   [[nodiscard]] std::optional<DropColumnWidth> captureDropColumnWidth(const Workspace& source, const View* view);
 
   // Where a dragged tile would land, plus the world-space hint rectangle. Scrolling: row >= 0 inserts into column
-  // `column` at that row; row < 0 opens a new column at gap index `column`. Dwindle: `view`/`edge` name a directional
-  // split; when there is no splittable leaf they are null/0 and `column` falls back to the append index. A zero-sized
-  // hintBox means "draw nothing".
+  // `column` at that row; row < 0 opens a new column at gap index `column`. Master: as scrolling, except row < 0 starts
+  // the empty stack at gap index `column`. Dwindle: `view`/`edge` name a directional split; when there is no splittable
+  // leaf they are null/0 and `column` falls back to the append index. A zero-sized hintBox means "draw nothing".
   struct DropTarget {
     Workspace* workspace = nullptr;
     int column = -1;

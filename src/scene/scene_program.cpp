@@ -1,7 +1,5 @@
 #include "scene/scene_program.h"
 
-#include "audio/state.h"
-
 #include <algorithm>
 
 extern "C" {
@@ -51,9 +49,8 @@ namespace umbriel::scene_experiment {
     }
   } // namespace
 
-  void setFrameAudio(fx_scene_frame& frame, const audio::Input& input) {
-    std::ranges::copy(input.levels(), frame.audio_levels);
-    std::ranges::copy(input.features.bands, frame.audio_bands);
+  void setFrameAudio(fx_scene_frame& frame, const std::array<float, 2>& input) {
+    std::ranges::copy(input, frame.audio);
   }
 
   void ScenePrograms::clear() {

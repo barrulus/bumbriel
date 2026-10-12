@@ -233,6 +233,8 @@ namespace umbriel {
       m_acceptClientMaximizeRequests = true;
     }
     m_server->scheduleIpcWindowsEvent();
+    // The workspace listing counts mapped windows.
+    m_server->scheduleIpcWorkspacesEvent();
     m_tiled = looksTiled();
     const wlr_box& mapGeo = geometryBox();
     m_presentation.setSize(mapGeo.width, mapGeo.height);
@@ -304,7 +306,7 @@ namespace umbriel {
             }
         );
         if (assignedScratchpad && rule.defaultFocused.value_or(false)) {
-          scratchpad->summon(*rule.defaultScratchpad, restoreOutput);
+          scratchpad->summon(*rule.defaultScratchpad, restoreOutput, this);
         }
       }
     }
@@ -540,6 +542,7 @@ namespace umbriel {
     m_maximizedToEdges = false;
     m_hasFullscreenRestoreBox = false;
     m_restorePinnedAfterFullscreen = false;
+    m_xCompositorFullscreen = false;
     if (m_pinned) {
       m_pinned = false;
       m_restoreTiledAfterUnpin = false;
@@ -629,6 +632,7 @@ namespace umbriel {
       output->updateHdr();
     }
     m_server->scheduleIpcWindowsEvent();
+    m_server->scheduleIpcWorkspacesEvent();
     m_positioned = false;
     m_presentedTiledBox = {};
     if (m_workspace != nullptr) {
@@ -852,7 +856,10 @@ namespace umbriel {
         targetOutput = scratchpadManager->presentationOutput(*rule.defaultScratchpad, targetOutput);
       }
 
-      setTiledState(wantTiled ? WLR_EDGE_TOP | WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT : 0);
+      // With prefer_no_csd, floating windows are told they are tiled too, so client decorations drop the rounded
+      // corners and shadows the border cannot follow.
+      const bool tiledEdges = wantTiled || config().appearance.preferNoCsd;
+      setTiledState(tiledEdges ? WLR_EDGE_TOP | WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT : 0);
 
       if (wantFullscreen) {
         // An X11 client can request fullscreen before its first buffer. The request event is too early to configure,
@@ -1047,7 +1054,6 @@ namespace umbriel {
       m_extForeign = nullptr;
     }
     if (m_captureSource != nullptr) {
-      detachCaptureAudio();
       wl_list_remove(&m_captureSourceDestroy.link);
       m_captureSourceDestroy.link.next = nullptr;
       m_captureSource = nullptr;

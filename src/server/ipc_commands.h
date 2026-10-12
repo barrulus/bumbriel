@@ -13,16 +13,19 @@ namespace umbriel {
 
   struct IpcCommands {
     static nlohmann::json keyboardLayouts(Server& server, std::string_view arg);
+    [[nodiscard]] static std::optional<float> parseAudioLevel(const nlohmann::json& request);
     static nlohmann::json effects(Server& server, std::string_view arg);
     static nlohmann::json windows(Server& server, std::string_view arg);
     static nlohmann::json workspaces(Server& server, std::string_view arg);
     static nlohmann::json submap(Server& server, std::string_view arg);
     static nlohmann::json layers(Server& server, std::string_view arg);
+    static nlohmann::json outputs(Server& server, std::string_view arg);
     static nlohmann::json color(Server& server, std::string_view arg);
     static nlohmann::json tearing(Server& server, std::string_view arg);
     static nlohmann::json msg(Server& server, std::string_view arg);
     static nlohmann::json outputCreate(Server& server, std::string_view arg);
     static nlohmann::json outputDestroy(Server& server, std::string_view arg);
+    static nlohmann::json configReplace(Server& server, std::string_view arg);
     // The reply to a settle request. The IPC server holds the request until the compositor is settled.
     static nlohmann::json settle(Server& server, std::string_view arg);
     static nlohmann::json clockFreeze(Server& server, std::string_view arg);
@@ -31,9 +34,12 @@ namespace umbriel {
     static nlohmann::json clockResume(Server& server, std::string_view arg);
 #ifdef UMBRIEL_TEST_IPC
     static nlohmann::json rendererRecover(Server& server, std::string_view arg);
-    static nlohmann::json audioInject(Server& server, std::string_view arg);
+    static nlohmann::json swipeForTest(Server& server, std::string_view arg);
+    static nlohmann::json animationCaptureFail(Server& server, std::string_view arg);
+    static nlohmann::json blurCompositeSplit(Server& server, std::string_view arg);
     static nlohmann::json planeCursor(Server& server, std::string_view arg);
     static nlohmann::json effectFrames(Server& server, std::string_view arg);
+    static nlohmann::json cursorState(Server& server, std::string_view arg);
     static nlohmann::json outputCommitHold(Server& server, std::string_view arg);
     static nlohmann::json presentationInputProbe(Server& server, std::string_view arg);
     static nlohmann::json swipeInject(Server& server, std::string_view arg);

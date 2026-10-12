@@ -185,7 +185,7 @@ namespace umbriel {
     bool inputOwned = false;
     PresentationFallback fallback = PresentationFallback::None;
 
-    void registerAudio() {
+    void registerSources() {
       std::vector<View*> contributing;
       for (View* view : owners) {
         if (view->pinned()
@@ -543,7 +543,7 @@ namespace umbriel {
               return false;
           }
         }
-        server.effects().bindSourceAudio(this);
+        server.effects().bindSourceEffects(this);
         for (size_t i = 0; i < descriptors.size(); ++i) {
           if (i == 0 && frozen) {
             continue;
@@ -766,7 +766,7 @@ namespace umbriel {
       }
     }
     state.watchSurfaces();
-    state.registerAudio();
+    state.registerSources();
     wlr_output_lock_attach_render(state.output.wlr(), true);
     state.renderLocked = true;
     wlr_output_schedule_frame(state.output.wlr());
@@ -785,7 +785,7 @@ namespace umbriel {
     state.captureIdentities = {std::string(from), std::string(to)};
     state.pairOnly = true;
     state.visible = state.captureIdentities;
-    state.registerAudio();
+    state.registerSources();
     return true;
   }
   bool WorkspaceSources::commitSelection(std::string_view identity) {
@@ -826,7 +826,7 @@ namespace umbriel {
       return false;
     }
     frozen->pairs.resize(1);
-    state.server.effects().bindSourceAudio(&state);
+    state.server.effects().bindSourceEffects(&state);
     const bool captured = replayHistory
         ? fx_scene_source_pair_capture_for_test(
               state.output.sceneOutput(), descriptor.view.first, descriptor.view.last, captureBytes,
@@ -889,7 +889,7 @@ namespace umbriel {
       state.visible = std::move(next);
       state.selected = state.visible.front();
       ++state.revision;
-      state.registerAudio();
+      state.registerSources();
       wlr_output_schedule_frame(state.output.wlr());
     }
     return true;
@@ -1038,7 +1038,7 @@ namespace umbriel {
     state.owners.push_back(&view);
     view.addPresentationSourceOccurrence();
     state.watchSurfaces();
-    state.registerAudio();
+    state.registerSources();
     contentChanged();
   }
   void WorkspaceSources::viewWillUnmap(View& view) {
@@ -1051,7 +1051,7 @@ namespace umbriel {
     // Drop every listener before the native unmap can destroy a surface; the
     // retained paired images own their buffers independently of this View.
     state.watchSurfaces();
-    state.registerAudio();
+    state.registerSources();
     contentChanged();
   }
   void WorkspaceSources::contentChanged() {
@@ -1165,7 +1165,7 @@ namespace umbriel {
       state.queuedVisible.clear();
       state.selected = state.visible.front();
       ++state.revision;
-      state.registerAudio();
+      state.registerSources();
       wlr_output_schedule_frame(state.output.wlr());
     }
   }

@@ -15,7 +15,7 @@ of the same workload and label the active feature as candidate-only.
 
 | Workload | Fixed stimulus and additional evidence |
 | --- | --- |
-| `idle` | Stationary desktop, then unchanged silent audio. Record native/effect commit counters before/after and process tree; unused definitions must add no helper. |
+| `idle` | Stationary desktop with the upstream audio feed disconnected. Record native/effect commit counters before/after; scene declarations must add no helper. |
 | `small-updates` | Fixed-size terminal-like surface updates (one cursor rectangle at 2 Hz), overlapping window/overlay effect boxes. Capture damage/copy counts alongside CPU/GPU. |
 | `video-light` | Repeated deterministic full surface updates at display cadence under border light; repeat with effect time frozen. Helper CPU is a separate PID, and unchanged shader time must not suppress required emission updates. |
 | `scene-two-output` | Repeat melt, carousel enter/navigation/accept and water open/close with two moving neighbours; second output has the same small-update workload in both revisions. Record peak scene reservation and restoration to zero after each transition. |
@@ -57,7 +57,7 @@ Headless regression timing cannot certify any of those properties.
 session alive through disabled → declared-unused → active → returned-off. It
 uses a private runtime directory, disables autostart and Xwayland, removes the
 D-Bus session address, and never acquires a physical audio device. The candidate
-uses an external synthetic silent source; the baseline has no audio/scene
+uses upstream's disconnected audio feed (zero level and availability); the baseline has no scene
 schema and is explicitly labelled as the ordinary native equivalent. The
 baseline declares only its supported legacy presets in the unused phase.
 
@@ -118,7 +118,6 @@ python3 tests/bench/scene_matrix.py \
   --baseline /path/to/baseline/umbriel --candidate /path/to/candidate/umbriel \
   --capture /path/to/tracy-capture --exporter /path/to/tracy-csvexport \
   --client /tmp/umbriel-cost-client/scene-workload \
-  --helper /path/to/audio-synthetic \
   --backend headless --resolution 1280x720 --duration 10 --runs 1 \
   --output /tmp/umbriel-cost-smoke
 ```
@@ -131,7 +130,6 @@ python3 tests/bench/scene_matrix.py \
   --baseline /path/to/baseline/umbriel --candidate /path/to/candidate/umbriel \
   --capture /path/to/tracy-capture --exporter /path/to/tracy-csvexport \
   --client /tmp/umbriel-cost-client/scene-workload \
-  --helper /path/to/audio-synthetic \
   --backend drm --allow-native-session --outputs eDP-1 \
   --resolution 1920x1080 --scale 1 \
   --output /tmp/umbriel-cost-native

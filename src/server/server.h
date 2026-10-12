@@ -1,4 +1,5 @@
 #pragma once
+#include "config/change.h"
 #include "config/value_parse.h"
 #include "core/animation.h"
 #include "core/application_scope.h"
@@ -61,7 +62,6 @@ struct wlr_scene_buffer;
 struct wlr_scene_output_layout;
 struct wlr_scene_rect;
 struct wlr_scene_tree;
-struct wlr_ext_image_capture_source_v1;
 struct wlr_security_context_manager_v1;
 struct wlr_security_context_v1_state;
 struct wlr_session;
@@ -132,6 +132,7 @@ namespace umbriel {
   class InputMethodRelay;
   class Gestures;
   class WineColorManager;
+  class SyncobjUnmapRelease;
   class HintRect;
   class Keyboard;
   class LayerSurface;
@@ -259,9 +260,9 @@ namespace umbriel {
     void resumeAnimationClock();
     [[nodiscard]] bool animationClockFrozen() const { return m_frozenAnimationClockMsec.has_value(); }
     void emitRendererLostForTest();
+    [[nodiscard]] bool injectPlaneCursor(std::string_view spec, std::string* error);
     void cancelPresentationProbes(PresentationFallback reason);
     bool presentationTouchProbe(std::string_view argument);
-    [[nodiscard]] bool injectPlaneCursor(std::string_view spec, std::string* error);
 #endif
     [[nodiscard]] Ipc* ipc() const { return m_ipc.get(); }
     [[nodiscard]] const ScreenCastCommand& screenCastCommand() const { return m_screenCastCommand; }
@@ -333,7 +334,7 @@ namespace umbriel {
     void relayoutCheatsheet();
     void relayoutQuitConfirm();
     void spawn(const char* command, const char* description = nullptr, bool withActivationToken = false);
-    void handleConfigReload();
+    void handleConfigReload(const ConfigReloadResult& result);
     // Re-evaluate application idle inhibitors after a surface's presentation
     // visibility changes.
     void updateIdleInhibit();
@@ -346,8 +347,10 @@ namespace umbriel {
 
     // The one way keyboard focus reaches a surface. Toplevels, layer-shell
     // surfaces and the lock screen all route through here so that
-    // input.keyboard.track_layout sees every focus change.
-    void notifyKeyboardEnter(wlr_surface* surface);
+    // input.keyboard.track_layout sees every focus change. Bypass delivers the
+    // enter through an active keyboard grab instead of letting the grab swallow it.
+    enum class KeyboardGrab : uint8_t { Respect, Bypass };
+    void notifyKeyboardEnter(wlr_surface* surface, KeyboardGrab grab = KeyboardGrab::Respect);
     void notifyKeyboardClearFocus();
     // Drop every keyboard's consumed-press bookkeeping, for transitions that
     // eat the matching releases.
@@ -369,6 +372,10 @@ namespace umbriel {
     // Same coalescing for the workspace list: layout mode, activation, names and membership all land in one payload,
     // so a switch that renames, reindexes and reactivates emits once.
     void scheduleIpcWorkspacesEvent();
+    // Same coalescing for the layer-shell surface list.
+    void scheduleIpcLayersEvent();
+    // Same coalescing for the output list.
+    void scheduleIpcOutputsEvent();
 
     // Focus lives in FocusManager; these forward so call sites that already
     // hold a Server do not need a second reference.
@@ -527,6 +534,9 @@ namespace umbriel {
     static int onTerminateSignal(int signal, void* data);
     static void onIpcWindowsIdle(void* data);
     static void onIpcWorkspacesIdle(void* data);
+    static void onIpcLayersIdle(void* data);
+    static void onIpcOutputsIdle(void* data);
+    static void onLayerKeyboardFocusChange(wl_listener* listener, void* data);
     static void onDisplacedRestoreIdle(void* data);
 
     void spawnCommand(const char* command, const char* description, bool withActivationToken, SpawnClass spawnClass);
@@ -614,8 +624,6 @@ namespace umbriel {
     };
     struct ImageCopySessionWatch {
       Server* server = nullptr;
-      wlr_ext_image_capture_source_v1* source = nullptr;
-      bool isolated = false;
       // Owned by wlroots; freed at the end of session_destroy, after the destroy
       // signal has been emitted. This listener runs during that emission and erases
       // the watch, so the pointer stays valid for every use below.
@@ -645,6 +653,7 @@ namespace umbriel {
       std::chrono::steady_clock::time_point createdAt;
       bool compositorIssued = false;
       bool inputBacked = false;
+      bool pointerBacked = false;
       bool launchClaimed = false;
       std::shared_ptr<WorkspaceLaunchAnchor> launchWorkspace;
       std::string tokenName;
@@ -667,6 +676,7 @@ namespace umbriel {
     wlr_content_type_manager_v1* m_contentTypeManager = nullptr;
     wlr_security_context_manager_v1* m_securityContextManager = nullptr;
     std::unique_ptr<WineColorManager> m_wineColorManager;
+    std::unique_ptr<SyncobjUnmapRelease> m_syncobjUnmapRelease;
     EffectRegistry m_effects;
     EffectSelection m_effectSelection;
     EffectSlot m_cursorEffectSlot;
@@ -693,6 +703,7 @@ namespace umbriel {
     wlr_idle_inhibit_manager_v1* m_idleInhibitManager = nullptr;
     wlr_keyboard_shortcuts_inhibit_manager_v1* m_shortcutsInhibitManager = nullptr;
     wlr_idle_notifier_v1* m_idleNotifier = nullptr;
+    bool m_idleInhibited = false;
     wlr_xdg_activation_v1* m_xdgActivation = nullptr;
     wlr_gamma_control_manager_v1* m_gammaManager = nullptr;
     wlr_output_manager_v1* m_outputManager = nullptr;
@@ -775,6 +786,8 @@ namespace umbriel {
       int m_canvasX = 0;
       int m_canvasY = 0;
       bool m_visible = true;
+      // A snapshot under the output's background layer is part of the shared blur input until its final frame.
+      bool m_blurBackground = false;
       // popin/zoom end scale; 1.0 = no shrink.
       double m_shrinkTo = 1.0;
       // Each copied buffer with its captured opacity, position and size relative to the content tree.
@@ -847,6 +860,8 @@ namespace umbriel {
     // removes itself when it runs, so a non-null pointer means "already queued".
     wl_event_source* m_ipcWindowsIdle = nullptr;
     wl_event_source* m_ipcWorkspacesIdle = nullptr;
+    wl_event_source* m_ipcLayersIdle = nullptr;
+    wl_event_source* m_ipcOutputsIdle = nullptr;
     wl_event_source* m_lidStateReconcileIdle = nullptr;
     wl_event_source* m_displacedRestoreIdle = nullptr;
     // Coalesces renderer-loss notifications until their signal dispatch and
@@ -895,6 +910,8 @@ namespace umbriel {
     wl_listener m_toplevelCaptureRequest{};
     wl_listener m_rendererLost{};
     wl_listener m_padKeyboardFocusChange{};
+    // The IPC layer listing reports which layer surface holds the keyboard.
+    wl_listener m_layerKeyboardFocusChange{};
 
     std::vector<std::unique_ptr<Output>> m_outputs;
     std::vector<std::unique_ptr<Keyboard>> m_keyboards;

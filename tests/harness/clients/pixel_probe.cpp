@@ -6,6 +6,7 @@
 //   pixel-probe <png> mean [region]                "r g b" region mean
 //   pixel-probe <png> max [region]                 "r g b" per-channel maximum
 //   pixel-probe <png> pixel <x> <y>                "r g b"
+//   pixel-probe <png> diff <other-png> [region]    "d n": largest channel difference, pixels that differ at all
 //   pixel-probe <png> size                         "WxH"
 //
 // A predicate compares r, g, b and numbers with < <= > >= == !=, combined with && || ! and parentheses, for example
@@ -17,6 +18,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <print>
@@ -297,6 +299,7 @@ namespace {
     std::println(stderr, "       pixel-probe <png> bbox <predicate> [WxH+X+Y]");
     std::println(stderr, "       pixel-probe <png> mean|max [WxH+X+Y]");
     std::println(stderr, "       pixel-probe <png> pixel <x> <y>");
+    std::println(stderr, "       pixel-probe <png> diff <other-png> [WxH+X+Y]");
     std::println(stderr, "       pixel-probe <png> size");
     return 2;
   }
@@ -367,6 +370,39 @@ int main(int argc, char** argv) {
       blue /= count;
     }
     std::println("{} {} {}", channel255(red), channel255(green), channel255(blue));
+    return 0;
+  }
+  if (op == "diff" && !args.empty() && args.size() <= 2) {
+    const std::string other(args[0]);
+    const std::optional<Image> otherImage = load(other.c_str());
+    if (!otherImage) {
+      std::println(stderr, "pixel-probe: cannot read PNG '{}'", other);
+      return 1;
+    }
+    if (otherImage->width != image->width || otherImage->height != image->height) {
+      std::println(stderr, "pixel-probe: images differ in size");
+      return 1;
+    }
+    const std::optional<Region> region = regionArg(1);
+    if (!region) {
+      std::println(stderr, "pixel-probe: malformed region");
+      return 1;
+    }
+    int largest = 0;
+    long differing = 0;
+    for (int y = region->y; y < region->y + region->height; ++y) {
+      for (int x = region->x; x < region->x + region->width; ++x) {
+        const Rgb& a = image->at(x, y);
+        const Rgb& b = otherImage->at(x, y);
+        const int difference = std::max(
+            {std::abs(channel255(a.r) - channel255(b.r)), std::abs(channel255(a.g) - channel255(b.g)),
+             std::abs(channel255(a.b) - channel255(b.b))}
+        );
+        largest = std::max(largest, difference);
+        differing += difference > 0 ? 1 : 0;
+      }
+    }
+    std::println("{} {}", largest, differing);
     return 0;
   }
   if (op == "count" || op == "bbox") {

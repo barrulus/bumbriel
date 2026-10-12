@@ -224,6 +224,52 @@ namespace umbriel {
     return true;
   }
 
+  ConfigReloadResult ConfigStore::replace(const std::filesystem::path& explicitPath, std::string& errors) {
+    // save variables modified by parseInto to be restored on error
+    const bool missingIncludes = m_missingIncludes;
+    auto diagnostics = m_diagnostics;
+    auto watchPaths = m_watchPaths;
+
+    ConfigSelection selection;
+
+    selection.root = explicitPath;
+    selection.watchPaths.push_back(selection.root);
+
+    Config loaded;
+    loaded.keybinds = defaultKeybinds();
+    const ConfigParseOutcome outcome = parseInto(loaded, selection.root, selection.watchPaths);
+
+    const bool missing = outcome == ConfigParseOutcome::Missing;
+
+    if (missing) {
+      emitDiag(
+          ConfigDiagnostic::Severity::Error, nullptr, std::format("config file not found: {}", selection.root.string())
+      );
+    }
+    sortDiagnostics();
+    if (outcome != ConfigParseOutcome::Loaded) {
+      const auto& diags = configDiagnostics();
+
+      for (const auto& d : diags) {
+        if (d.severity == umbriel::ConfigDiagnostic::Severity::Error) {
+          const std::string loc = d.location();
+          errors += loc.empty() ? d.message : loc + ": " + d.message + "\n";
+        }
+      }
+
+      m_diagnostics = std::move(diagnostics);
+      m_missingIncludes = missingIncludes;
+      m_watchPaths = watchPaths;
+
+      return {};
+    }
+
+    m_implicitCandidates.clear();
+    setRootPath(selection.root, true);
+
+    return commit(std::move(loaded), selection.root, missing);
+  }
+
   ConfigReloadResult ConfigStore::reload() {
     ConfigSelection selection;
     if (m_explicitPath) {
@@ -256,6 +302,9 @@ namespace umbriel {
 
   bool loadConfig(const char* explicitPath) { return configStore().load(explicitPath); }
 
+  ConfigReloadResult replaceConfig(const std::filesystem::path& explicitPath, std::string& errors) {
+    return configStore().replace(explicitPath, errors);
+  }
   ConfigReloadResult reloadConfig() { return configStore().reload(); }
 
   const std::vector<std::filesystem::path>& configWatchPaths() { return configStore().watchPaths(); }

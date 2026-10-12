@@ -141,6 +141,12 @@ client. The background layer stays enabled: it is the blur source and what shows
 around the filmstrip. An output where no client maps either layer shows the flat
 fill.
 
+Each copy carries its surface's opaque region scaled to the preview and rounded
+inward, because a scene buffer's region is in destination coordinates. Behind
+an opaque wallpaper copy the scene then skips the background layer, the tint,
+and the wallpaper blur, which during the zoom would otherwise be drawn under
+every row.
+
 A dedicated scene root between the layer-shell background and bottom layers
 carries each output's wallpaper blur node. This placement blurs the background
 layer while bottom-layer surfaces render afterward and remain sharp. The node's

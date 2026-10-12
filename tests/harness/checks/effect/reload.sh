@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# harness: wlr-debug=true
 # Reload behaviour of effects: a missing shader renders plainly and recovers once the file appears; a [colors] change
 # reaches a palette shader without a recompile; the light layer goes away with the last lit preset and comes back with
 # a new one; a [colors] change reaches a screen palette shader that does not read umbriel_time.

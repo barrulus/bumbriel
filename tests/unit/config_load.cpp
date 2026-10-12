@@ -9,6 +9,7 @@
 #include <fstream>
 #include <linux/input-event-codes.h>
 #include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -1172,6 +1173,39 @@ UMBRIEL_TEST(durationBesideASpringCurveIsReportedAsInert) {
   CHECK_EQ(store.config().animation.workspaces.durationMs, 200);
 }
 
+UMBRIEL_TEST(workspaceRevealRequiresAnAnimationShader) {
+  const TempConfigTree tree;
+  tree.write("wipe.glsl", "vec4 animation(vec2 uv) { return umbriel_sample(uv); }");
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(tree.path("config.toml"), true);
+  const std::string preset = "[effects.preset.wipe]\nkind = \"animation\"\nshader = \"wipe.glsl\"\n";
+  tree.write("config.toml", preset + "[animation.workspaces]\nstyle = \"reveal\"\neffect = \"wipe\"\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().animation.workspaces.style, "reveal");
+  CHECK(!containsDiagnostic(store, "animation.workspaces"));
+
+  for (const std::string& config : std::array<std::string, 4>{
+           std::string("[animation.workspaces]\nstyle = \"reveal\"\n"),
+           "[animation.workspaces]\nstyle = \"reveal\"\neffect = \"missing\"\n",
+           "[effects.preset.wipe]\nkind = \"border\"\nshader = \"wipe.glsl\"\n"
+           "[animation.workspaces]\nstyle = \"reveal\"\neffect = \"wipe\"\n",
+           "[effects.preset.wipe]\nkind = \"animation\"\n"
+           "[animation.workspaces]\nstyle = \"reveal\"\neffect = \"wipe\"\n",
+       }) {
+    tree.write("config.toml", config);
+    static_cast<void>(store.reload());
+    CHECK(containsDiagnostic(store, "reveal requires an animation preset with a shader"));
+    CHECK_EQ(store.config().animation.workspaces.style, "slide");
+  }
+  tree.write("config.toml", "[animation.workspaces]\nstyle = \"invalid\"\n");
+  static_cast<void>(store.reload());
+  CHECK(containsDiagnostic(store, "animation.workspaces.style"));
+  CHECK(!containsDiagnostic(store, "unknown key"));
+  tree.write("config.toml", "[animation.workspaces]\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().animation.workspaces.style, "slide");
+}
+
 UMBRIEL_TEST(overviewWorkspaceWallpaperLoads) {
   const TempConfig file;
   ConfigStore& store = umbriel::configStore();
@@ -1681,8 +1715,13 @@ UMBRIEL_TEST(securityContextRulesLoadAndKeepTheManagerBlocked) {
   );
   CHECK(store.reload().success);
   CHECK_EQ(store.config().securityContextRules.size(), size_t{1});
-  CHECK(store.config().securityContextRules[0].sandboxEnginePattern == "^org\\.flatpak$");
-  CHECK(store.config().securityContextRules[0].appIdPattern == "^org\\.example\\.Bar$");
+  CHECK(
+      store.config().securityContextRules[0].sandboxEnginePatterns.patterns
+      == std::vector<std::string>{"^org\\.flatpak$"}
+  );
+  CHECK(
+      store.config().securityContextRules[0].appIdPatterns.patterns == std::vector<std::string>{"^org\\.example\\.Bar$"}
+  );
   CHECK_EQ(store.config().securityContextRules[0].allowGlobals.size(), size_t{1});
 
   file.write("[[security_context_rule]]\nmatch.app_id = '['\nallow_globals = [\"zwlr_layer_shell_v1\"]\n");
@@ -1791,6 +1830,25 @@ UMBRIEL_TEST(windowStartupMatcherLoadsBoolean) {
   CHECK(!containsDiagnostic(store, "unknown key window_rule.opacity"));
 }
 
+UMBRIEL_TEST(layerMatchersLoadLayerAndStartup) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+
+  file.write("[[layer_rule]]\nmatch.layer = \"top\"\nmatch.at_startup = true\nblur = true\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().layerRules.size(), size_t{1});
+  CHECK(store.config().layerRules[0].matchLayer == umbriel::LayerShellLayer::Top);
+  CHECK(store.config().layerRules[0].matchAtStartup == true);
+  CHECK(!containsDiagnostic(store, "unknown key layer_rule.match.layer"));
+  CHECK(!containsDiagnostic(store, "unknown key layer_rule.match.at_startup"));
+
+  // A layer selector that names no layer rejects the rule, as a wrong value would blur every layer instead.
+  file.write("[[layer_rule]]\nmatch.layer = \"sideways\"\nblur = true\n");
+  CHECK(store.reload().success);
+  CHECK(store.config().layerRules.empty());
+}
+
 UMBRIEL_TEST(windowStateMatchersLoadBooleans) {
   const TempConfig file;
   ConfigStore& store = umbriel::configStore();
@@ -1822,16 +1880,33 @@ UMBRIEL_TEST(windowXdgTagMatcherLoadsRegexAndRejectsInvalidValues) {
   file.write("[[window_rule]]\nmatch.xdg_tag = \"^(game-launcher|game-running)$\"\nopacity = 0.9\n");
   CHECK(store.reload().success);
   CHECK_EQ(store.config().windowRules.size(), size_t{1});
-  CHECK_EQ(store.config().windowRules[0].xdgTagPattern, std::string("^(game-launcher|game-running)$"));
-  CHECK(std::regex_search("game-launcher", store.config().windowRules[0].xdgTagRegex));
-  CHECK(std::regex_search("game-running", store.config().windowRules[0].xdgTagRegex));
-  CHECK(!std::regex_search("game-settings", store.config().windowRules[0].xdgTagRegex));
+  const umbriel::RegexPatterns& tag = store.config().windowRules[0].xdgTagPatterns;
+  CHECK(tag.patterns == std::vector<std::string>{"^(game-launcher|game-running)$"});
+  CHECK(std::regex_search("game-launcher", tag.regexes[0]));
+  CHECK(std::regex_search("game-running", tag.regexes[0]));
+  CHECK(!std::regex_search("game-settings", tag.regexes[0]));
   CHECK(!containsDiagnostic(store, "unknown key window_rule.match.xdg_tag"));
+
+  // An array of patterns is the same selector: any one of them matching is enough.
+  file.write("[[window_rule]]\nmatch.xdg_tag = [\"^game-launcher$\", \"^game-running$\"]\nopacity = 0.9\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().windowRules.size(), size_t{1});
+  CHECK_EQ(
+      store.config().windowRules[0].xdgTagPatterns.patterns,
+      (std::vector<std::string>{"^game-launcher$", "^game-running$"})
+  );
+  CHECK(std::regex_search("game-running", store.config().windowRules[0].xdgTagPatterns.regexes[1]));
+
+  // An empty array places no constraint, like leaving the key out.
+  file.write("[[window_rule]]\nmatch.app_id = []\nopacity = 0.9\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().windowRules.size(), size_t{1});
+  CHECK(store.config().windowRules[0].appIdPatterns.patterns.empty());
 
   file.write("[[window_rule]]\nopacity = 0.9\n");
   CHECK(store.reload().success);
   CHECK_EQ(store.config().windowRules.size(), size_t{1});
-  CHECK(store.config().windowRules[0].xdgTagPattern.empty());
+  CHECK(store.config().windowRules[0].xdgTagPatterns.patterns.empty());
 
   file.write("[[window_rule]]\nmatch.xdg_tag = 42\nmatch.is_focused = true\nopacity = 0.5\n");
   CHECK(store.reload().success);
@@ -1843,6 +1918,18 @@ UMBRIEL_TEST(windowXdgTagMatcherLoadsRegexAndRejectsInvalidValues) {
   CHECK(store.reload().success);
   CHECK(store.config().windowRules.empty());
   CHECK(!containsDiagnostic(store, "unknown key window_rule.opacity"));
+
+  // One pattern that does not compile drops the whole rule rather than the rest of the array.
+  file.write("[[window_rule]]\nmatch.app_id = [\"^foot$\", \"[\"]\nopacity = 0.5\n");
+  CHECK(store.reload().success);
+  CHECK(store.config().windowRules.empty());
+  CHECK(!containsDiagnostic(store, "unknown key window_rule.opacity"));
+
+  // An element that is not a string rejects the rule just as a bad regex does.
+  file.write("[[window_rule]]\nmatch.app_id = [\"^foot$\", 42]\nopacity = 0.5\n");
+  CHECK(store.reload().success);
+  CHECK(store.config().windowRules.empty());
+  CHECK(containsDiagnostic(store, "ignoring window_rule[0].match.app_id (expected array of strings)"));
 }
 
 UMBRIEL_TEST(windowTearingOverrideLoadsAsAnOptionalBoolean) {
@@ -2016,6 +2103,30 @@ UMBRIEL_TEST(outputCyclicWorkspacesLoadsAndDefaultsOff) {
   CHECK(store.reload().success);
   CHECK(!store.config().outputs[0].cyclicWorkspaces);
   CHECK(containsDiagnostic(store, "ignoring output.DP-1.cyclic_workspaces (expected boolean)"));
+}
+
+UMBRIEL_TEST(outputFocusAtStartupLoadsAndDefaultsOff) {
+  const TempConfig file;
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+
+  file.write("[output.DP-1]\nfocus_at_startup = true\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().outputs.size(), size_t{1});
+  CHECK(store.config().outputs[0].focusAtStartup);
+
+  file.write("[output.DP-1]\nfocus_at_startup = false\n");
+  CHECK(store.reload().success);
+  CHECK(!store.config().outputs[0].focusAtStartup);
+
+  file.write("[output.DP-1]\n");
+  CHECK(store.reload().success);
+  CHECK(!store.config().outputs[0].focusAtStartup);
+
+  file.write("[output.DP-1]\nfocus_at_startup = \"yes\"\n");
+  CHECK(store.reload().success);
+  CHECK(!store.config().outputs[0].focusAtStartup);
+  CHECK(containsDiagnostic(store, "ignoring output.DP-1.focus_at_startup (expected boolean)"));
 }
 
 UMBRIEL_TEST(dynamicNamedWorkspaceDeclarationsReserveEmptySentinelCapacity) {
@@ -2243,11 +2354,15 @@ UMBRIEL_TEST(ruleCollectionsAccumulateAcrossIncludesWhilePlainArraysReplace) {
 
   std::vector<std::string> patterns;
   for (const umbriel::WindowRule& rule : store.config().windowRules) {
-    patterns.push_back(rule.appIdPattern);
+    for (const std::string& pattern : rule.appIdPatterns.patterns) {
+      patterns.push_back(pattern);
+    }
   }
   std::vector<std::string> namespaces;
   for (const umbriel::LayerRule& rule : store.config().layerRules) {
-    namespaces.push_back(rule.namespacePattern);
+    for (const std::string& pattern : rule.namespacePatterns.patterns) {
+      namespaces.push_back(pattern);
+    }
   }
   const std::vector<std::string> expectedPatterns{"^from-include$", "^from-root$"};
   const std::vector<std::string> expectedNamespaces{"^bar$"};
@@ -2617,6 +2732,39 @@ hide_timeout_ms = 1500
   CHECK(store.reload().success);
   CHECK_EQ(store.config().input.cursor.hideTimeoutMs, 0);
   CHECK(containsDiagnostic(store, "unknown key input.cursor.hide_timeout"));
+}
+
+UMBRIEL_TEST(dragEdgeScrollLoads) {
+  const umbriel::Config defaults;
+  CHECK(defaults.input.dragEdgeScroll.enabled);
+  CHECK_EQ(defaults.input.dragEdgeScroll.triggerZone, 30);
+  CHECK_EQ(defaults.input.dragEdgeScroll.delayMs, 100);
+  CHECK_EQ(defaults.input.dragEdgeScroll.maxSpeed, 1500.0);
+
+  const TempConfig file;
+  file.write(R"(
+[input.drag_edge_scroll]
+enabled = false
+trigger_zone = 48
+delay_ms = 250
+max_speed = 900.0
+)");
+
+  ConfigStore& store = umbriel::configStore();
+  store.setRootPath(file.path(), true);
+  const umbriel::ConfigReloadResult result = store.reload();
+
+  CHECK(result.success);
+  CHECK(!store.config().input.dragEdgeScroll.enabled);
+  CHECK_EQ(store.config().input.dragEdgeScroll.triggerZone, 48);
+  CHECK_EQ(store.config().input.dragEdgeScroll.delayMs, 250);
+  CHECK_EQ(store.config().input.dragEdgeScroll.maxSpeed, 900.0);
+  CHECK(!containsDiagnostic(store, "unknown key input.drag_edge_scroll.trigger_zone"));
+
+  file.write("[input.drag_edge_scroll]\ntrigger = 48\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.config().input.dragEdgeScroll.triggerZone, 30);
+  CHECK(containsDiagnostic(store, "unknown key input.drag_edge_scroll.trigger"));
 }
 
 UMBRIEL_TEST(invalidCustomAccelerationCurveIsRejected) {
@@ -3906,8 +4054,7 @@ UMBRIEL_TEST(bundledEffectPresetsDefineWithoutSelecting) {
   const TempConfigTree tree;
   std::string includes = "[include]\nfiles = [\n";
   for (const char* effect :
-       {"animation/reveal", "animation/squash", "border/pulse", "border/spectrum", "window/scanlines",
-        "screen/vignette", "cursor/glow"}) {
+       {"animation/reveal", "animation/squash", "border/pulse", "window/scanlines", "screen/vignette", "cursor/glow"}) {
     includes += std::format("  \"{}/examples/effects/{}/effect.toml\",\n", UMBRIEL_SOURCE_ROOT, effect);
   }
   includes += "]\n";
@@ -3918,22 +4065,10 @@ UMBRIEL_TEST(bundledEffectPresetsDefineWithoutSelecting) {
   CHECK(!containsDiagnostic(store, "unknown key"));
   CHECK(!containsDiagnostic(store, "cannot read shader"));
   const auto& effects = store.config().effects;
-  CHECK_EQ(effects.presets.size(), size_t{7});
+  CHECK_EQ(effects.presets.size(), size_t{6});
   CHECK(effects.border.empty() && effects.window.empty() && effects.screen.empty() && effects.cursor.empty());
   const umbriel::EffectPreset* pulse = umbriel::findEffectPreset(effects, "pulse");
   CHECK(pulse != nullptr && pulse->kind == umbriel::EffectKind::Border && pulse->light.has_value());
-  const umbriel::EffectPreset* spectrum = umbriel::findEffectPreset(effects, "spectrum");
-  CHECK(
-      spectrum != nullptr
-      && spectrum->kind == umbriel::EffectKind::Border
-      && spectrum->audio == "spectrum_playback"
-      && !spectrum->animated
-  );
-  CHECK_EQ(effects.audioSources.size(), size_t{1});
-  if (!effects.audioSources.empty()) {
-    CHECK(effects.audioSources[0].mode == umbriel::AudioMode::Playback);
-    CHECK(effects.audioSources[0].followDefault);
-  }
   const umbriel::EffectPreset* glow = umbriel::findEffectPreset(effects, "glow");
   CHECK(glow != nullptr && glow->kind == umbriel::EffectKind::Cursor && glow->radius > 0);
 }
@@ -4236,164 +4371,210 @@ action = 'effect-window-set:window'
   CHECK(umbriel::effectActionReference(*store.config().hotCorners.corners[0].action)->name == "window");
 }
 
-UMBRIEL_TEST(audioSourcesRequireExplicitModeAndExclusiveTargetSelection) {
-  const TempConfig file;
-  file.write(R"(
-[effects.audio.sources.desktop]
-provider = 'pipewire'
-mode = 'playback'
-follow_default = true
-[effects.audio.sources.voice]
-provider = 'pipewire'
-mode = 'microphone'
-target = 'exact microphone node'
-follow_default = false
-)");
-  auto& store = umbriel::configStore();
-  store.setRootPath(file.path(), true);
+UMBRIEL_TEST(replaceAdoptsTheNewFileAndPinsLaterReloadsToIt) {
+  const TempConfigTree tree;
+  tree.write("old.toml", "[layout]\ngap = 17\n");
+  tree.write("new.toml", "[layout]\ngap = 23\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("old.toml").c_str()));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(tree.path("new.toml"), errors);
+
+  CHECK(result.success);
+  CHECK(errors.empty());
+  CHECK_EQ(store.rootPath(), tree.path("new.toml"));
+  CHECK_EQ(store.config().layout.gap, 23);
+  CHECK_EQ(store.generation(), generation + 1);
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("new.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old.toml")) == store.watchPaths().end());
+
+  tree.write("new.toml", "[layout]\ngap = 31\n");
+  tree.write("old.toml", "[layout]\ngap = 99\n");
   CHECK(store.reload().success);
-  const auto& sources = store.config().effects.audioSources;
-  CHECK_EQ(sources.size(), size_t{2});
-  if (sources.size() != 2) {
-    return;
-  }
-  CHECK(sources[0].provider == umbriel::AudioProvider::Pipewire);
-  CHECK(sources[0].mode == umbriel::AudioMode::Playback);
-  CHECK(sources[0].target.empty());
-  CHECK(sources[0].followDefault);
-  CHECK(sources[1].mode == umbriel::AudioMode::Microphone);
-  CHECK_EQ(sources[1].target, std::string("exact microphone node"));
-  CHECK(!sources[1].followDefault);
-  CHECK(store.config().effects.presets.empty());
-  CHECK(store.diagnostics().empty());
+  CHECK_EQ(store.rootPath(), tree.path("new.toml"));
+  CHECK_EQ(store.config().layout.gap, 31);
 }
 
-UMBRIEL_TEST(audioExternalExecutableResolvesBesideItsDeclaringIncludeAndPreservesArgv) {
+UMBRIEL_TEST(replaceMovesTheWatchSetToTheNewFileAndItsIncludes) {
   const TempConfigTree tree;
-  tree.write("config.toml", "[include]\nfiles = ['theme/audio.toml']\n");
-  tree.write("theme/audio.toml", R"(
-[effects.audio.sources.external]
-provider = 'external'
-mode = 'playback'
-target = 'literal target'
-executable = '../helpers/audio helper'
-args = ['', 'a b', '$(touch should-not-exist)', '; echo text', '$HOME', '*.wav']
-)");
-  auto& store = umbriel::configStore();
-  store.setRootPath(tree.path("config.toml"), true);
+  tree.write("old_inc.toml", "[layout]\ngap = 5\n");
+  tree.write("old_config.toml", "[include]\nfiles = [\"old_inc.toml\"]\n");
+  tree.write("new_inc.toml", "[layout]\ngap = 6\n");
+  tree.write("new_config.toml", "[include]\nfiles = [\"new_inc.toml\"]\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("old_config.toml").c_str()));
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_config.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_inc.toml")) != store.watchPaths().end());
+
+  std::string errors;
+  CHECK(store.replace(tree.path("new_config.toml"), errors).success);
+
+  CHECK_EQ(store.config().layout.gap, 6);
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("new_config.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("new_inc.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_config.toml")) == store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("old_inc.toml")) == store.watchPaths().end());
+}
+
+UMBRIEL_TEST(replaceAcceptsAFileThatOnlyProducesWarnings) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "[layout]\ngap = 17\n");
+  tree.write("warn.toml", "invalid_key = true\n[layout]\ngap = 23\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(tree.path("warn.toml"), errors);
+
+  CHECK(result.success);
+  CHECK(errors.empty());
+  CHECK_EQ(store.rootPath(), tree.path("warn.toml"));
+  CHECK_EQ(store.config().layout.gap, 23);
+  CHECK(containsDiagnostic(store, "unknown key invalid_key"));
+}
+
+UMBRIEL_TEST(replaceRejectsAMissingFileAndLeavesTheLiveStateUntouched) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "[layout]\ngap = 17\n");
+  const std::filesystem::path missing = tree.path("missing.toml");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(missing, errors);
+
+  CHECK(!result.success);
+  CHECK(errors.contains("config file not found: " + missing.string()));
+  CHECK_EQ(store.config().layout.gap, 17);
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("live.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), missing) == store.watchPaths().end());
+
+  // The original file still drives reloads.
+  tree.write("live.toml", "[layout]\ngap = 19\n");
   CHECK(store.reload().success);
-  const auto& sources = store.config().effects.audioSources;
-  CHECK_EQ(sources.size(), size_t{1});
-  if (sources.size() != 1) {
-    return;
-  }
-  const auto& source = sources[0];
-  CHECK(source.provider == umbriel::AudioProvider::External);
-  CHECK_EQ(source.executable, tree.path("helpers/audio helper").string());
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK_EQ(store.config().layout.gap, 19);
+}
+
+UMBRIEL_TEST(replaceRejectsABrokenFileAndLeavesTheLiveStateUntouched) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "[layout]\ngap = 17\n");
+  tree.write("broken.toml", "[layout\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult malformed = store.replace(tree.path("broken.toml"), errors);
+
+  CHECK(!malformed.success);
+  CHECK(!errors.empty());
+  CHECK_EQ(store.config().layout.gap, 17);
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.missingIncludes(), false);
+  CHECK_EQ(store.fileMissing(), false);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("live.toml")) != store.watchPaths().end());
+  CHECK(std::ranges::find(store.watchPaths(), tree.path("broken.toml")) == store.watchPaths().end());
+}
+
+UMBRIEL_TEST(replaceRejectsSemanticErrorsAndPreservesTheLiveState) {
+  const TempConfigTree tree;
+  tree.write("live.toml", "unknown_key = true\n[include]\nfiles = [\"pending.toml\"]\n[layout]\ngap = 17\n");
+  tree.write("rejected_inc.toml", "[layout]\ngap = 80\n");
+  tree.write("invalid.toml", "[include]\nfiles = [\"rejected_inc.toml\"]\n[[workspace]]\nname = \"chat\"\nindex = 3\n");
+
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(tree.path("live.toml").c_str()));
+  CHECK(store.missingIncludes());
+  const auto previousConfig = store.config();
+  const auto previousDiagnostics = store.diagnostics();
+  const auto previousWatchPaths = store.watchPaths();
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  const umbriel::ConfigReloadResult result = store.replace(tree.path("invalid.toml"), errors);
+
+  CHECK(!result.success);
+  CHECK(errors.contains(tree.path("invalid.toml").string()));
+  CHECK(store.config() == previousConfig);
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK(store.missingIncludes());
+  CHECK(!store.fileMissing());
+  CHECK(store.watchPaths() == previousWatchPaths);
   CHECK(
-      source.args == std::vector<std::string>({"", "a b", "$(touch should-not-exist)", "; echo text", "$HOME", "*.wav"})
+      std::ranges::equal(
+          store.diagnostics(), previousDiagnostics,
+          [](const ConfigDiagnostic& current, const ConfigDiagnostic& previous) {
+            return current.severity == previous.severity
+                && current.message == previous.message
+                && current.file == previous.file
+                && current.line == previous.line
+                && current.column == previous.column;
+          }
+      )
   );
-  CHECK(store.diagnostics().empty());
-  // Loading metadata does not require opening or executing the helper.
-  CHECK(!std::filesystem::exists(source.executable));
+
+  tree.write("live.toml", "[layout]\ngap = 19\n");
+  CHECK(store.reload().success);
+  CHECK_EQ(store.rootPath(), tree.path("live.toml"));
+  CHECK_EQ(store.config().layout.gap, 19);
 }
 
-UMBRIEL_TEST(audioInvalidSourceDeclarationsNeverFallBackToAnImplicitDevice) {
+UMBRIEL_TEST(replaceRejectionRestoresPendingMissingIncludes) {
   const TempConfig file;
-  auto& store = umbriel::configStore();
+  file.write("[include]\nfiles = [\"" + file.includeName() + "\"]\n");
+
+  ConfigStore& store = umbriel::configStore();
   store.setRootPath(file.path(), true);
-  const std::array<std::string_view, 22> invalid = {
-      "mode = 'playback'\nfollow_default = true\n",
-      "provider = 'pipewire'\nfollow_default = true\n",
-      "provider = 'shell'\nmode = 'playback'\nfollow_default = true\n",
-      "provider = 'pipewire'\nmode = 'capture'\nfollow_default = true\n",
-      "provider = 'pipewire'\nmode = 'playback'\n",
-      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = false\n",
-      "provider = 'pipewire'\nmode = 'playback'\ntarget = ''\n",
-      "provider = 'pipewire'\nmode = 'playback'\ntarget = ''\nfollow_default = true\n",
-      "provider = 'pipewire'\nmode = 'playback'\ntarget = 'fixed'\nfollow_default = true\n",
-      "provider = 'pipewire'\nmode = 'playback'\ntarget = 1\n",
-      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = 'true'\n",
-      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = true\ntypo = 1\n",
-      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = true\nexecutable = '/bin/false'\n",
-      "provider = 'pipewire'\nmode = 'playback'\nfollow_default = true\nargs = []\n",
-      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\n",
-      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = ''\n",
-      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = 1\n",
-      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = 'helper'\nargs = 'shell command'\n",
-      "provider = 'external'\nmode = 'microphone'\ntarget = 'fixed'\nexecutable = 'helper'\nargs = [1]\n",
-      "provider = 1\nmode = 'playback'\nfollow_default = true\n",
-      "provider = 'pipewire'\nmode = true\nfollow_default = true\n",
-      "provider = 'external'\nmode = 'playback'\nfollow_default = true\nexecutable = 'helper'\nshell = true\n",
-  };
-  for (const auto declaration : invalid) {
-    file.write("[effects.audio.sources.invalid]\n" + std::string(declaration));
-    CHECK(store.reload().success);
-    CHECK(store.config().effects.audioSources.empty());
-    CHECK(containsDiagnostic(store, "ignoring effects.audio.sources.invalid"));
-  }
+  CHECK(store.load(file.path().c_str()));
+  const uint64_t generation = store.generation();
+  CHECK(store.missingIncludes());
+
+  std::string errors;
+  CHECK(!store.replace(file.path().parent_path() / "no-such-config.toml", errors).success);
+
+  CHECK(store.missingIncludes());
+  CHECK(!errors.empty());
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.fileMissing(), false);
 }
 
-UMBRIEL_TEST(audioReferencesResolveAcrossForwardIncludesForEveryExistingPresetKind) {
+UMBRIEL_TEST(replaceRejectionDoesNotDisturbAnImplicitStore) {
   const TempConfigTree tree;
-  tree.write("sources.toml", R"(
-[effects.audio.sources.desktop]
-provider = 'pipewire'
-mode = 'playback'
-follow_default = true
-)");
-  std::string document = "[include]\nfiles = ['sources.toml']\n";
-  for (const auto kind : {"animation", "border", "window", "screen", "cursor"}) {
-    document += "[effects.preset." + std::string(kind) + "]\nkind = '" + kind + "'\naudio = 'desktop'\n";
-  }
-  document += "[effects.preset.unbound]\nkind = 'window'\n";
-  document += "[effects.preset.unknown]\nkind = 'window'\naudio = 'missing'\n";
-  document += "[effects.preset.wrong_type]\nkind = 'window'\naudio = true\n";
-  tree.write("config.toml", document);
-  auto& store = umbriel::configStore();
-  store.setRootPath(tree.path("config.toml"), true);
-  CHECK(store.reload().success);
-  for (const auto kind : {"animation", "border", "window", "screen", "cursor"}) {
-    const auto* preset = umbriel::findEffectPreset(store.config().effects, kind);
-    CHECK(preset != nullptr && preset->audio == "desktop");
-  }
-  for (const auto name : {"unbound", "unknown", "wrong_type"}) {
-    const auto* preset = umbriel::findEffectPreset(store.config().effects, name);
-    CHECK(preset != nullptr && preset->audio.empty());
-  }
-  CHECK(containsDiagnostic(store, "ignoring effects.preset.unknown.audio (unknown audio source 'missing')"));
-  CHECK(containsDiagnostic(store, "effects.preset.wrong_type.audio (expected string)"));
-  CHECK(!containsDiagnostic(store, "unknown key"));
-  CHECK(std::ranges::any_of(store.diagnostics(), [&](const auto& diagnostic) {
-    return diagnostic.file == tree.path("config.toml").string()
-        && diagnostic.message.contains("unknown audio source 'missing'");
-  }));
-  // Definitions and bindings leave global consumers disabled; runtime demand is tested separately.
-  CHECK(store.config().effects.border.empty());
-  CHECK(store.config().effects.window.empty());
-  CHECK(store.config().effects.screen.empty());
-  CHECK(store.config().effects.cursor.empty());
-}
+  const std::filesystem::path userHome = tree.path("user");
+  const std::filesystem::path systemDir = tree.path("system");
+  tree.write("system/umbriel/config.toml", "[layout]\ngap = 17\n");
+  const ScopedEnvironment configHome("XDG_CONFIG_HOME", userHome.string());
+  const ScopedEnvironment configDirs("XDG_CONFIG_DIRS", systemDir.string());
 
-UMBRIEL_TEST(audioDefinitionAndBindingChangesInvalidateEffectsAndResetOnReload) {
-  const TempConfig file;
-  const std::string source = "[effects.audio.sources.desktop]\nprovider = 'pipewire'\nmode = 'playback'\n";
-  file.write(source + "target = 'first'\n[effects.preset.a]\nkind = 'window'\naudio = 'desktop'\n");
-  auto& store = umbriel::configStore();
-  store.setRootPath(file.path(), true);
+  ConfigStore& store = umbriel::configStore();
+  CHECK(store.load(nullptr));
+  const uint64_t generation = store.generation();
+
+  std::string errors;
+  CHECK(!store.replace(tree.path("missing.toml"), errors).success);
+  CHECK(!errors.empty());
+  CHECK_EQ(store.generation(), generation);
+  CHECK_EQ(store.missingIncludes(), false);
+  CHECK_EQ(store.fileMissing(), false);
+  CHECK_EQ(store.rootPath(), tree.path("system/umbriel/config.toml"));
+
+  tree.write("user/umbriel/config.toml", "[layout]\ngap = 19\n");
   CHECK(store.reload().success);
-  CHECK(!store.reload().effects.any());
-  file.write(source + "target = 'second'\n[effects.preset.a]\nkind = 'window'\naudio = 'desktop'\n");
-  const auto changed = store.reload();
-  CHECK(changed.success);
-  CHECK(changed.effects.effects);
-  file.write(source + "target = 'second'\n[effects.preset.a]\nkind = 'window'\n");
-  const auto unbound = store.reload();
-  CHECK(unbound.success);
-  CHECK(unbound.effects.effects);
-  file.write("");
-  CHECK(store.reload().success);
-  CHECK(store.config().effects.audioSources.empty());
+  CHECK_EQ(store.rootPath(), userHome / "umbriel/config.toml");
+  CHECK_EQ(store.config().layout.gap, 19);
 }
 
 int main() { return RUN_TESTS(); }

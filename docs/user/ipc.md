@@ -24,20 +24,56 @@ Replies use `{"ok": ...}` or `{"err": "..."}`.
 | `{"cmd":"workspaces"}` | `umbriel workspaces --json` |
 | `{"cmd":"submap"}` | `umbriel submap --json` |
 | `{"cmd":"layers"}` | `umbriel layers --json` |
+| `{"cmd":"outputs"}` | `umbriel outputs --json` |
 | `{"cmd":"msg","arg":"<action>"}` | `umbriel msg <action>` |
 
 Window entries include IDs, application identity, process ID, geometry,
-workspace, and scratchpad membership. X11 windows report the process ID they
-publish as `_NET_WM_PID`, or `-1` when they publish none. A member of a
+output, workspace, and scratchpad membership. X11 windows report the process ID
+they publish as `_NET_WM_PID`, or `-1` when they publish none. A member of a
 [tab group](layout.md#tab-groups) reports `tabbed`, its place among the group's
 tabs as `tab_index` (from 0, `-1` outside a group), and `tab_hidden` while its
 group shows another tab; the plain listing marks it `tab` instead of
 `tile`.
 
+Window state follows what Umbriel has decided, ahead of the client's redraw, the
+same way geometry reports layout targets:
+
+| Field | Meaning |
+| --- | --- |
+| `floating` | Outside the tiled layout |
+| `fullscreen` | Fullscreen |
+| `maximized` | Maximized by `window-toggle-maximize` (a full-width column for a tiled window) or by maximize-to-edges |
+| `maximized_to_edges` | Maximized without gaps, struts, or borders |
+| `pinned` | Pinned above other windows on every workspace of its output |
+| `visible` | On its output's active workspace (or pinned), not a hidden tab, and not in a hidden scratchpad; it may still be scrolled out of view |
+| `parent` | ID of the window the client named as its parent, or `""` |
+| `column`, `row` | Place in a scrolling strip, from 0; `-1` for floating windows and other layouts |
+
 Workspace entries include a stable ID, display name, index, output, layout,
 occupancy, and active and focused states. Use the `named` boolean instead of
 guessing from the display name; an explicitly named workspace may still be
-called `"2"`.
+called `"2"`. `window_count` counts its mapped windows, `focused_window` is the
+ID of the window it last focused (`""` when none), `urgent` is set while any of
+its windows is urgent, and `layout_override` is set while a runtime
+`workspace-set-layout` replaces the configured layout.
+
+Layer entries describe layer-shell surfaces such as panels, launchers, and
+wallpapers: `layer`, `namespace`, `output`, `mapped`, `pid`,
+`keyboard_interactivity` (`none`, `exclusive`, or `on_demand`), `focused` while
+the surface holds the keyboard, `exclusive_zone`, `anchor` (the anchored edges),
+`margin`, and the arranged geometry `x`, `y`, `w`, and `h` in layout
+coordinates.
+
+Output entries list every connected output, including disabled ones: `name`,
+`description`, `make`, `model`, `serial`, `config_name` (the
+[monitor identity](outputs.md), or `null` when the display reports none),
+`physical_size`, `enabled` (part of the desktop), `powered` (enabled and not
+switched off by DPMS), `focused`, `active_workspace` (its ID), `position`,
+`logical_size`, `usable_area` (the part layer-shell exclusive zones leave, in
+layout coordinates), `transform`, `scale`, `adaptive_sync` (`null` when the
+output cannot use variable refresh), `hdr_active`, and `modes`, each with
+`width`, `height`, `refresh_mhz`, `preferred`, and `current`. A disabled output
+reports a zero `logical_size` and `usable_area`.
 
 ## Effect inspection
 
@@ -63,8 +99,8 @@ empty selected name. Suppressed and failed selections retain their names.
 `windows --json` and `subscribe windows` expose these same slot shapes as
 `border_effect` and `window_effect`; the window text table is unchanged.
 
-Inspection never picks, compiles, or binds an effect. `outputs --json` remains
-the Wayland output-management query; use `effects` for screen selections.
+Inspection never picks, compiles, or binds an effect. Use `effects`, not
+`outputs`, for screen selections.
 See [Effects](effects.md) and [Actions](actions.md) for configuration and runtime
 changes.
 
@@ -88,10 +124,12 @@ snapshot whenever that family changes:
 | `theme` | Colors and corner radius |
 | `overview` | Overview opened, or started closing |
 | `keyboard_layout` | Active keyboard layout |
-| `windows` | Window identity, geometry, focus, state, workspace, scratchpad, or effect selection |
-| `workspaces` | Inventory, layout, activity, occupancy, output, or focus |
+| `windows` | Window identity, geometry, focus, state, visibility, parent, workspace, scratchpad, or effect selection |
+| `workspaces` | Inventory, layout, activity, occupancy, window count, focused window, urgency, output, or focus |
 | `submap` | Active keybind submap |
 | `screencast` | Manual target and focus-following screencast commands |
+| `layers` | Layer-shell surfaces appearing, mapping, closing, moving, resizing, or taking and losing the keyboard |
+| `outputs` | Outputs appearing or leaving, enablement, power, mode, position, scale, transform, variable refresh, HDR, usable area, focus, or active workspace |
 
 Payloads are full snapshots rather than deltas. Replace local state with the
 newest event instead of trying to merge increments. Identical consecutive
@@ -166,12 +204,48 @@ umbriel subscribe workspaces |
   jq -r '.data[] | select(.focused) | "\(.output) \(.name) \(.layout)"'
 ```
 
+## Audio input
+
+An external analyser can supply one shared level to [effect shaders](effects.md#audio-input).
+Keep a dedicated connection open and send complete measurements:
+
+```json
+{"cmd":"effect-audio","version":1,"level":0.65}
+```
+
+`version` must be integer `1`; `level` must be a finite number from 0 to 1.
+No other fields are accepted. Each request, including its newline, is limited
+to 256 bytes. The first accepted measurement claims the feed; another producer
+receives an error while that connection owns it. Audio connections accept only
+`effect-audio` requests.
+
+Wait for `{"ok":true}` before sending another measurement. Send at most 60 per
+second and replace unsent measurements with the latest value. An acknowledgment
+means accepted, not displayed. Keep sending fresh measurements during silence;
+zero means silent and available. Gain, smoothing, and source selection belong
+to the analyser. Umbriel does not start it or capture audio.
+
+Disconnect, malformed or oversized input, or 250 ms without a measurement closes
+the feed and clears the shader input. Lock and inactive sessions also disconnect
+the producer and reject audio until active and unlocked. Reconnect with a fresh
+measurement to resume. Use a dedicated socket client; `umbriel msg` does not
+provide this streaming interface.
+
 ## Inspection commands
 
 `umbriel outputs`, `umbriel color`, `umbriel tearing`, `umbriel layers`, and
 `umbriel keyboard-layouts` print human-readable state. Each accepts `--json`.
+
+## Config commands
+
 `umbriel config validate` checks a configuration and `umbriel config schema`
 lists the keys it accepts, both without a running compositor.
+
+`umbriel config-replace <path>` loads and watches a different configuration file
+in the running compositor. The path must be absolute. On success, the new file
+and its includes replace the previous watch set, and later reloads use the new
+file. A missing, unreadable, or invalid file returns an error and leaves the
+active configuration and watch set unchanged. Warnings do not reject a replacement.
 
 ## Virtual outputs
 

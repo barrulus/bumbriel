@@ -46,6 +46,9 @@ namespace umbriel {
     [[nodiscard]] const XwaylandOutputs& outputs() const { return *m_outputs; }
     // X pixels per layout unit in `surface`: the scale its X11 window is drawn at. 1 for every other surface.
     [[nodiscard]] double surfaceScale(wlr_surface* surface) const;
+    // Cursor surfaces have no wlr_xwayland_surface role. Identify them by the
+    // Wayland client owned by this Xwayland server instead.
+    [[nodiscard]] bool ownsSurface(const wlr_surface* surface) const;
     // Whether an xdg-output manager global may be advertised to `client`.
     [[nodiscard]] bool advertiseOutputManager(const wl_client* client, const wl_global* global) const;
     // Republishes the X screen and moves every X11 window to match it.
@@ -58,9 +61,12 @@ namespace umbriel {
     static void onServerStart(wl_listener* listener, void* data);
     static void onReady(wl_listener* listener, void* data);
     static void onNewSurface(wl_listener* listener, void* data);
+    static void onKeyboardFocusChange(wl_listener* listener, void* data);
+    static int onSelectionRefreshTimer(void* data);
     static int onFocusClearTimer(void* data);
     void handleReady();
     void handleNewSurface(wlr_xwayland_surface* xsurface);
+    void handleKeyboardFocusChange(void* data);
     void clearFocus();
 
     Server& m_server;
@@ -70,9 +76,11 @@ namespace umbriel {
     std::vector<std::unique_ptr<XwaylandWindow>> m_windows;
     uint32_t m_netActiveWindow = 0;
     wl_event_source* m_focusClearTimer = nullptr;
+    wl_event_source* m_selectionRefreshTimer = nullptr;
     wl_listener m_serverStart{};
     wl_listener m_ready{};
     wl_listener m_newSurface{};
+    wl_listener m_keyboardFocusChange{};
   };
 
 } // namespace umbriel

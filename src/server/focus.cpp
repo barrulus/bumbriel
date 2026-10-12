@@ -82,6 +82,9 @@ namespace umbriel {
       m_server.scratchpadManager()->noteFocus(view);
     }
 
+    View* previous = View::fromSurface(m_server.seat()->wlr()->keyboard_state.focused_surface);
+    // Read the rule before changing activation: a match.is_focused rule stops matching as soon as focus moves.
+    const bool leavingConfinement = previous != nullptr && previous != view && previous->confinePointer();
     m_server.registry().promote(view);
     view->setUrgent(false);
 
@@ -107,13 +110,19 @@ namespace umbriel {
     if (overviewActive) {
       m_server.overview()->onFocusChanged();
     }
-    // Pointer presses and compositor grabs already align focus with their target. Keyboard and activation-driven focus
-    // can instead replace the scene beneath a stationary pointer, so let the next eligible hover refresh it once.
+    // Pointer presses, compositor grabs, and completed gestures already align focus with their target. Keyboard and
+    // activation-driven focus can instead replace the scene beneath a stationary pointer, so let the next eligible
+    // hover refresh it once.
     if (reason != FocusReason::PointerHover
         && reason != FocusReason::PointerPress
         && reason != FocusReason::Grab
-        && reason != FocusReason::DragDrop) {
-      m_server.cursor()->invalidateHoverFocus();
+        && reason != FocusReason::DragDrop
+        && reason != FocusReason::Gesture) {
+      if (leavingConfinement) {
+        m_server.cursor()->releaseRuleConfinement(*previous);
+      } else {
+        m_server.cursor()->invalidateHoverFocus();
+      }
     }
 
     // Derive reveal policy from the focus reason.

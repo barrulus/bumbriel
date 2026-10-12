@@ -2,6 +2,7 @@
 
 #include "config/scene_effects.h"
 
+#include <array>
 #include <map>
 #include <memory>
 
@@ -9,14 +10,10 @@ struct fx_scene_program;
 struct fx_scene_frame;
 struct wlr_renderer;
 
-namespace umbriel::audio {
-  struct Input;
-}
-
 namespace umbriel::scene_experiment {
 
   // Copies an already latched input; never acquires demand or changes clocks.
-  void setFrameAudio(fx_scene_frame& frame, const audio::Input& input);
+  void setFrameAudio(fx_scene_frame& frame, const std::array<float, 2>& input);
 
   // Internal until the composition gates establish the public scene interface.
   // Source text, parameter layout/values and consumer metadata are one version.
@@ -24,7 +21,6 @@ namespace umbriel::scene_experiment {
     std::string name;
     Sources sources;
     std::vector<Parameter> parameters;
-    std::string audio;
     bool palette = false;
     bool operator==(const ProgramDefinition&) const = default;
   };

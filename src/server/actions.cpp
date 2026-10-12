@@ -22,6 +22,7 @@
 #include <array>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -527,7 +528,8 @@ namespace umbriel {
     }
 
     bool actionConfigReload(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
-      server.handleConfigReload();
+      const ConfigReloadResult result = reloadConfig();
+      server.handleConfigReload(result);
       return true;
     }
 
@@ -771,7 +773,6 @@ namespace umbriel {
       }
       scrolling->setScroll(newScroll);
       workspace->markArrange();
-      invalidateHoverFocusAfterSceneChange(server, true);
     }
 
     bool actionLayoutScrollDrag(Server& /*server*/, const Keybind& bind, std::string* error) {
@@ -1052,6 +1053,14 @@ namespace umbriel {
       return true;
     }
 
+    // The mirror of actionConsume: pulls the neighboring column's window in, leaving focus where it was.
+    template <int Direction> bool actionConsumeFrom(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
+      if (Workspace* workspace = windowActionWorkspace(server)) {
+        workspace->consumeFromFocused(Direction);
+      }
+      return true;
+    }
+
     template <int Direction> bool actionCycleWidth(Server& server, const Keybind& /*bind*/, std::string* /*error*/) {
       if (View* view = focusedScratchpadWindow(server)) {
         cycleScratchpadSize<Direction>(*view, true);
@@ -1315,7 +1324,7 @@ namespace umbriel {
         // exact requested entry below without briefly focusing its remembered
         // window first.
         if (Output* output = server.outputFromWlr(server.preferredOutput()); output != nullptr) {
-          scratchpad->summon(scratchpad->nameFor(view), output);
+          scratchpad->summon(scratchpad->nameFor(view), output, view);
         }
       }
       server.focusView(view, FocusReason::ForeignActivation);
@@ -1484,18 +1493,14 @@ namespace umbriel {
       if (arg == nullptr) {
         return true;
       }
-      const auto nextMode = [](LayoutMode mode) {
-        switch (mode) {
-        case LayoutMode::Scrolling:
-          return LayoutMode::Dwindle;
-        case LayoutMode::Dwindle:
-          return LayoutMode::Master;
-        case LayoutMode::Master:
-          return LayoutMode::Scrolling;
-        }
-        return LayoutMode::Scrolling;
-      };
-      const LayoutMode desired = arg->mode.value_or(nextMode(workspace->layoutMode()));
+      static constexpr std::array kFullCycle{LayoutMode::Scrolling, LayoutMode::Dwindle, LayoutMode::Master};
+      const std::span<const LayoutMode> cycle = arg->toggleSequence.empty()
+          ? std::span<const LayoutMode>(kFullCycle)
+          : std::span<const LayoutMode>(arg->toggleSequence);
+      // A mode outside the cycle, or its last mode, toggles to the first.
+      const auto current = std::ranges::find(cycle, workspace->layoutMode());
+      const bool wrap = current == cycle.end() || std::next(current) == cycle.end();
+      const LayoutMode desired = arg->mode.value_or(wrap ? cycle.front() : *std::next(current));
       if (desired == workspace->layoutMode()) {
         return true;
       }
@@ -1891,6 +1896,17 @@ namespace umbriel {
       return scratchpad != nullptr && scratchpad->toggle(*name, output);
     }
 
+    template <int Direction>
+    bool actionScratchpadWindowShowStep(Server& server, const Keybind& bind, std::string* error) {
+      const auto name = scratchpadName(server, bind, error);
+      Output* output = server.outputFromWlr(server.preferredOutput());
+      if (!name || output == nullptr) {
+        return false;
+      }
+      ScratchpadManager* scratchpad = server.scratchpadManager();
+      return scratchpad != nullptr && scratchpad->showStep(*name, Direction, output);
+    }
+
     bool actionRestoreFromScratchpad(Server& server, const Keybind& bind, std::string* error) {
       const auto name = scratchpadName(server, bind, error);
       if (!name) {
@@ -2084,6 +2100,8 @@ namespace umbriel {
         &actionConsumeOrExpel<-1>,
         &actionConsume<1>,
         &actionConsumeOrExpel<1>,
+        &actionConsumeFrom<-1>,
+        &actionConsumeFrom<1>,
         &actionCycleWidth<1>,
         &actionCycleWidth<-1>,
         &actionSetWidth,
@@ -2206,12 +2224,6 @@ namespace umbriel {
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Cycle>,
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Toggle>,
         &actionEffect<EffectKind::Cursor, EffectSlotAction::Reset>,
-        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationEnter>,
-        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationNext>,
-        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationPrevious>,
-        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationSelect>,
-        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationAccept>,
-        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationCancel>,
         &actionColumnToggleTabbed,
         &actionColumnSetDisplay,
         &actionColumnFocusTabStep<1>,
@@ -2222,6 +2234,14 @@ namespace umbriel {
         &actionColumnTabBar<-1>,
         &actionColumnTabBar<1>,
         &actionColumnTabBar<0>,
+        &actionScratchpadWindowShowStep<1>,
+        &actionScratchpadWindowShowStep<-1>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationEnter>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationNext>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationPrevious>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationSelect>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationAccept>,
+        &actionWorkspacePresentation<KeybindAction::WorkspacePresentationCancel>,
     };
 
     consteval bool everyActionHasHandler() {

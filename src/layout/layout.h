@@ -183,7 +183,8 @@ namespace umbriel {
   // The next preset from `current` in `direction` (negative shrinks), wrapping
   // at the ends. Every layout's width and height cycle shares this rule, and so
   // does the floating cycle. `current` must be an exact fraction: a basis
-  // recovered from pixels goes through `presetSnappedFraction` first.
+  // recovered from pixels goes through `presetSnappedFraction` first. `presets`
+  // must be ascending, as config parsing leaves them.
   [[nodiscard]] inline double nextFractionPreset(const std::vector<double>& presets, double current, int direction) {
     if (presets.empty()) {
       return current;
@@ -202,6 +203,27 @@ namespace umbriel {
       }
     }
     return presets.front();
+  }
+
+  // Steps a layout extent to the next preset. `apply` sets a fraction, clamped to what the layout can realize, and
+  // returns false when the extent is not adjustable; `realized` reads the fraction back. A preset past that range
+  // leaves the extent where it was and would be picked again on every step, so a step that does not move the extent
+  // wraps instead.
+  template <typename Apply, typename Realized>
+  bool cycleFractionPreset(
+      const std::vector<double>& presets, double current, int direction, Apply&& apply, Realized&& realized
+  ) {
+    const double next = nextFractionPreset(presets, current, direction);
+    if (!apply(next)) {
+      return false;
+    }
+    const bool stepped = direction < 0 ? next < current : next > current;
+    const double now = realized();
+    const bool stalled = direction < 0 ? now >= current - kFractionEpsilon : now <= current + kFractionEpsilon;
+    if (stepped && stalled) {
+      apply(direction < 0 ? presets.back() : presets.front());
+    }
+    return true;
   }
 
   // Layout-owned interactive resize session. Cursor feeds a pointer delta; the session mutates only its layout's
@@ -242,6 +264,10 @@ namespace umbriel {
     virtual void insertViewIntoColumn(View* view, int columnIndex, int rowIndex) = 0;
     virtual bool consume(View* view, int direction) = 0;
     virtual bool expel(View* view, int direction) = 0;
+    // The mirror of consume: pull the window the container `direction` away shows into the one holding `view`, without
+    // moving focus. The pulled window lands directly below `view`, or in its tab group when `view` is a tab. False when
+    // there is no container on that side, or the layout has no container to pull from.
+    virtual bool consumeFrom(View* view, int direction) = 0;
     virtual bool moveViewVertical(View* view, int direction) = 0;
     virtual bool swapViews(View* a, View* b) = 0;
     virtual void removeView(View* view) = 0;
@@ -318,6 +344,10 @@ namespace umbriel {
     // Null for a layout whose columns cannot be tabbed.
     [[nodiscard]] virtual TabbedContainers* tabbedContainers() { return nullptr; }
 
+    // The usable area minus edge padding on both axes: the box the layout has
+    // to fill.
+    [[nodiscard]] wlr_box contentArea(const wlr_box& usable) const;
+
     // Anything only one layout can answer lives on that layout. Reach it through the single downcast seam,
     // Workspace::scrollingLayout(), rather than by asking every layout a question most of them have no answer to.
 
@@ -332,9 +362,6 @@ namespace umbriel {
     // The display an area created now starts with.
     [[nodiscard]] TabState initialTabState() const;
 
-    // The usable area minus edge padding on both axes: the box the layout has
-    // to fill.
-    [[nodiscard]] wlr_box contentArea(const wlr_box& usable) const;
     // Gap-aware width of a column occupying `fraction` of the viewport. Solving sum(w) + (N-1)g = V with w = p*(V+g) -
     // g makes N columns whose fractions sum to 1 tile the viewport exactly.
     [[nodiscard]] int fractionalWidth(int viewportPrimary, double fraction) const;

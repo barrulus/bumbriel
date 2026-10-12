@@ -22,10 +22,21 @@ default_workspace = 2
 | `match.is_pinned` | Match current pinned state. |
 | `match.is_scratchpad` | Match current scratchpad state. |
 | `match.is_alone` | Match whether this is the only tiled window. |
+| `match.is_only_window` | Match whether this is the only window on its workspace, floating ones included. |
 | `match.at_startup` | Match during or after the first 60 seconds. |
 
 Selectors are optional. A rule with none matches every window. Regular
 expressions match any part of a value, so use `^` and `$` for an exact match.
+
+The `app_id`, `title`, and `xdg_tag` selectors take either one pattern or an
+array of them. Any one of them matching is enough, and an empty array places no
+constraint:
+
+```toml
+[[window_rule]]
+match.app_id = ["^mpv$", "^celluloid$"]
+window_effect = "scanlines"
+```
 
 Run `umbriel windows` to inspect current application IDs, titles, tags, and
 content types. Prefer `app_id` for placement because titles often change.
@@ -159,6 +170,7 @@ the windows stacked beside it in the column it joins or creates.
 | `blur_popups` | Apply blur to descendant XDG popups. |
 | `blur_ignore_alpha` | Skip blur below an alpha threshold. |
 | `blur_optimized` | Override the global optimized-blur choice. |
+| `confine_pointer` | Keep the pointer inside this window while it has keyboard focus (default `false`). |
 | `focus_on_activate` | Override activation focus for this window. |
 | `vrr` | Override the focused output's VRR policy. |
 | `tearing` | Request or veto asynchronous presentation. |
@@ -221,7 +233,7 @@ window_effect = "scanlines"
 Names refer to `[effects.preset.<name>]` or `[effects.pool.<name>]` tables of the matching kind. See
 [Effects](effects.md#turn-a-default-off-for-one-window-or-output).
 
-## The only window in the workspace
+## The only tiled window
 
 `match.is_alone` reacts when a window becomes the only tiled window on its
 workspace:
@@ -246,6 +258,27 @@ match.is_alone = true
 match.app_id = "^firefox$"
 default_scrolling_extent = 0.8
 ```
+
+## The only window on the workspace
+
+`match.is_alone` counts tiled windows only, which is what fullscreen, maximize,
+and scrolling extents want: a float beside a window does not shrink it.
+`match.is_only_window` is the stricter question, and the one the
+[settings updated while a window is open](#settings-updated-while-a-window-is-open)
+ask. Nothing else may occupy the workspace, a float as much as a tile, so a tiled
+window and a float next to it both stop matching it:
+
+```toml
+[[window_rule]]
+match.is_only_window = true
+border_width = 0
+outer_border_width = 0
+```
+
+A pinned window floats above the workspace rather than on it, and a scratchpad
+window has left it, so neither one takes the match away. The rule follows the
+window as company comes and goes. It does not drive the fullscreen, maximize,
+and extent effects above; those keep following `match.is_alone`.
 
 ## Examples
 
@@ -285,3 +318,25 @@ Effect pool choices stay with the mapped window across focus/title rule changes.
 Returning to a previously used pool restores its valid remembered member.
 Runtime effect overrides take precedence over rules; suppression preserves the
 underlying selection. See [Effects](effects.md#pools).
+
+### Pointer confinement
+
+Use `confine_pointer` for games that release their pointer lock in menus:
+
+```toml
+[[window_rule]]
+match.app_id = "^steam_app_.*$"
+confine_pointer = true
+```
+
+The rule applies to floating, tiled and fullscreen windows. It takes effect when
+that window has keyboard focus and the pointer is inside its visible content.
+Client-requested pointer locks still work; confinement resumes when the client
+releases its lock. Reloading the configuration updates existing windows, and a
+later matching rule can disable confinement with `confine_pointer = false`.
+
+Use a focus or workspace keybind to escape. With focus-follows-mouse enabled,
+small movements over the window you just left do not refocus it; leaving and
+re-entering it, clicking it, or explicitly focusing it allows confinement again.
+Compositor cursor warps remain available. Confinement is suspended during
+session lock, overview, compositor move/resize and client drag operations.

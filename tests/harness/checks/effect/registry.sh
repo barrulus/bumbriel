@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# harness: wlr-debug=true
 # The effect registry compiles exactly the presets something enabled references,
 # keeps a compiled or failed program across reloads that leave its source alone,
 # and reports a referenced preset that fails to compile. The bundled presets

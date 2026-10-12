@@ -83,6 +83,10 @@ wlr_has_drm_backend = cpp.get_define(
   prefix: '#include <wlr/config.h>',
   dependencies: wlroots_dep,
 ) == '1'
+add_project_arguments(
+  '-DUMBRIEL_HAS_DRM_BACKEND=' + wlr_has_drm_backend.to_int().to_string(),
+  language: 'cpp',
+)
 if cpp.get_define('WLR_HAS_LIBINPUT_BACKEND', prefix: '#include <wlr/config.h>', dependencies: wlroots_dep) != '1'
   error('Umbriel requires wlroots built with the libinput backend')
 endif
@@ -117,6 +121,7 @@ nlohmann_json_dep = dependency('nlohmann_json')
 cairo_dep = dependency('cairo')
 pangocairo_dep = dependency('pangocairo')
 libdrm_dep = dependency('libdrm', version: '>=2.4.129')
+libdisplay_info_dep = dependency('libdisplay-info', version: '>=0.3.0')
 libudev_dep = dependency('libudev', required: false)
 xcb_dep = dependency('xcb')
 xcb_icccm_dep = dependency('xcb-icccm')
@@ -398,6 +403,32 @@ fractional_scale_client_c = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+linux_dmabuf_client_h = custom_target(
+  'linux-dmabuf-v1-client-protocol.h',
+  input: wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+  output: 'linux-dmabuf-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+linux_dmabuf_client_c = custom_target(
+  'linux-dmabuf-v1-protocol.c',
+  input: wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+  output: 'linux-dmabuf-v1-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+linux_drm_syncobj_client_h = custom_target(
+  'linux-drm-syncobj-v1-client-protocol.h',
+  input: wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml',
+  output: 'linux-drm-syncobj-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+linux_drm_syncobj_client_c = custom_target(
+  'linux-drm-syncobj-v1-protocol.c',
+  input: wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml',
+  output: 'linux-drm-syncobj-v1-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 ext_image_capture_source_client_h = custom_target(
   'ext-image-capture-source-v1-client-protocol.h',
   input: wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'staging/ext-image-capture-source/ext-image-capture-source-v1.xml',
@@ -445,6 +476,23 @@ idle_inhibit_client_c = custom_target(
   output: 'idle-inhibit-unstable-v1-protocol.c',
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
+constraint_client_protocols = []
+foreach protocol : ['pointer-constraints', 'relative-pointer']
+  protocol_xml = wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'unstable' / protocol / (protocol + '-unstable-v1.xml')
+  constraint_client_protocols += custom_target(
+    protocol + '-unstable-v1-client-protocol.h',
+    input: protocol_xml,
+    output: protocol + '-unstable-v1-client-protocol.h',
+    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+  )
+  constraint_client_protocols += custom_target(
+    protocol + '-unstable-v1-protocol.c',
+    input: protocol_xml,
+    output: protocol + '-unstable-v1-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  )
+endforeach
+
 keyboard_shortcuts_inhibit_client_h = custom_target(
   'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h',
   input: wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
@@ -561,55 +609,10 @@ ext_workspace_client_c = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
-# Persistent isolated-toplevel capture fixture protocols.
-capture_client_protocols = [
-  ext_image_capture_source_client_h,
-  ext_image_capture_source_client_c,
-  ext_image_copy_capture_client_h,
-  ext_image_copy_capture_client_c,
-]
-foreach protocol : ['ext-foreign-toplevel-list']
-  protocol_xml = wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir') / 'staging' / protocol / (protocol + '-v1.xml')
-  capture_client_protocols += custom_target(
-    protocol + '-v1-client-protocol.h',
-    input: protocol_xml,
-    output: protocol + '-v1-client-protocol.h',
-    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
-  )
-  capture_client_protocols += custom_target(
-    protocol + '-v1-client-protocol.c',
-    input: protocol_xml,
-    output: protocol + '-v1-client-protocol.c',
-    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
-  )
-endforeach
-
-# Audio transport/profile code is shared with standalone helpers without linking
-# Wayland, the compositor or graphics libraries into those processes.
-audio_core = static_library(
-  'umbriel-audio-core',
-  files('src/audio/protocol.cpp', 'src/audio/profile.cpp', 'src/audio/transport.cpp'),
-  include_directories: include_directories('src'),
-)
-audio_core_dep = declare_dependency(
-  link_with: audio_core,
-  include_directories: include_directories('src'),
-)
-
-pipewire_dep = dependency('libpipewire-0.3', version: '>=1.0.5', required: get_option('audio_helper'))
-if pipewire_dep.found()
-  audio_pipewire = executable(
-    'umbriel-audio', 'src/audio/pipewire.cpp',
-    dependencies: [audio_core_dep, pipewire_dep, nlohmann_json_dep],
-    install: true,
-  )
-endif
-
 # Logic with no dependency on the compositor: string parsing and layout geometry. Built once and linked by both the
 # compositor and the tests, so a test never recompiles a translation unit. Keep this list free of anything needing
 # umbrielfx, pango, or a running server.
 pure_sources = files(
-  'src/audio/state.cpp',
   'src/config/change.cpp',
   'src/config/resolve.cpp',
   'src/config/keybind_parse.cpp',
@@ -623,6 +626,7 @@ pure_sources = files(
   'src/input/keyboard_layout.cpp',
   'src/input/surface_layouts.cpp',
   'src/input/shortcut_keysym.cpp',
+  'src/input/xcursor_matcher.cpp',
   'src/layout/layout.cpp',
   'src/layout/layout_motion.cpp',
   'src/layout/scrolling.cpp',
@@ -632,8 +636,10 @@ pure_sources = files(
   'src/output/identity.cpp',
   'src/output/enable_overrides.cpp',
   'src/output/format_sequence.cpp',
+  'src/output/gamma_transition.cpp',
   'src/output/mode_selection.cpp',
   'src/output/cursor_plane_pace.cpp',
+  'src/server/allocator_policy.cpp',
   'src/server/drm_policy.cpp',
   'src/scene/cheatsheet_rows.cpp',
   'src/scene/effect_selection.cpp',
@@ -646,7 +652,6 @@ pure_sources = files(
 )
 
 umbriel_pure_deps = [
-  audio_core_dep,
   wlroots_dep,
   xkbcommon_dep,
   umbrielfx_dep,
@@ -672,9 +677,6 @@ umbriel_pure_dep = declare_dependency(
 # The compositor itself. main.cpp is deliberately not here: everything lives in a library so a test can link any of it without re-listing or recompiling sources,
 # and the executable is just an entry point.
 core_sources = files(
-  'src/audio/supervisor.cpp',
-  'src/audio/service.cpp',
-  'src/audio/bindings.cpp',
   'src/core/animation.cpp',
   'src/core/application_scope.cpp',
   'src/scene/effect_registry.cpp',
@@ -707,13 +709,16 @@ core_sources = files(
   'src/layout/drop_target.cpp',
   'src/server/wine_color_manager.cpp',
   'src/server/backend_manager.cpp',
+  'src/server/allocator.cpp',
   'src/server/server.cpp',
   'src/server/server_events.cpp',
   'src/server/server_keybinds.cpp',
   'src/server/server_outputs.cpp',
+  'src/server/syncobj_unmap_release.cpp',
   'src/server/actions.cpp',
   'src/server/effects.cpp',
   'src/output/output.cpp',
+  'src/output/hdr_metadata.cpp',
   'src/input/seat.cpp',
   'src/input/keyboard.cpp',
   'src/input/text_input.cpp',
@@ -759,7 +764,6 @@ core_sources = files(
   'src/workspace/workspace.cpp',
   'src/workspace/tab_presenter.cpp',
   'src/workspace/scratchpad.cpp',
-  'src/cli/outputs.cpp',
   'src/cli/ipc_client.cpp',
   'src/server/ipc.cpp',
   'src/server/ipc_commands.cpp',
@@ -778,6 +782,7 @@ umbriel_core_deps = [
   cairo_dep,
   pangocairo_dep,
   libdrm_dep,
+  libdisplay_info_dep,
   native_drm_policy_deps,
   nlohmann_json_dep,
   layer_shell_protocol_dep,
@@ -789,8 +794,6 @@ umbriel_core_deps = [
 umbriel_core = static_library(
   'umbriel-core',
   core_sources + [
-    output_mgmt_client_h,
-    output_mgmt_client_c,
     color_management_server_h,
     color_management_server_c,
     xdg_output_server_h,
@@ -823,6 +826,7 @@ umbriel = executable(
 
 # Unit tests and the harness clients check.sh drives.
 if build_tests
+  xcb_render_dep = dependency('xcb-render')
   subdir('tests')
   alias_target('unit-tests', unit_test_targets)
   alias_target('harness-clients', harness_client_targets)
@@ -880,19 +884,13 @@ install_data(
 # Bundled effect presets: each directory holds the preset's shader and an
 # effect.toml that defines it without selecting it. Users include the TOML and
 # select the name.
-foreach effect : ['animation/reveal', 'animation/squash', 'border/pulse', 'border/spectrum', 'border/music-lines', 'window/scanlines', 'window/music-smoke', 'screen/vignette', 'cursor/glow', 'cursor/music-radiance']
+foreach effect : ['animation/reveal', 'animation/squash', 'animation/workspace_wipe', 'border/pulse', 'border/audio', 'window/scanlines', 'screen/vignette', 'cursor/glow', 'cursor/trail', 'cursor/trail-path']
   install_data(
     'examples/effects' / effect / 'shader.glsl',
     'examples/effects' / effect / 'effect.toml',
     install_dir: get_option('datadir') / 'umbriel' / 'effects' / effect,
   )
 endforeach
-
-install_data(
-  'examples/effects/border/music-lines/overlay.glsl',
-  install_dir: get_option('datadir') / 'umbriel' / 'effects' / 'border/music-lines',
-)
-
 # Scene presets keep their editable stage bundle together. Defining a preset
 # never selects it or acquires a source.
 foreach effect : ['wipe', 'melt', 'iris']

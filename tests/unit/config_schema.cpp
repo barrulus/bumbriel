@@ -7,7 +7,6 @@
 #include "config/schema.h"
 #include "core/log.h"
 
-#include <algorithm>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -206,19 +205,22 @@ UMBRIEL_TEST(jsonIsSortedAndTyped) {
 
 // Every value a key lists is one its reader accepts without complaint.
 UMBRIEL_TEST(listedValuesAreAccepted) {
+  const auto shaderPath = configPath().string() + ".glsl";
+  {
+    std::ofstream shader(shaderPath);
+    shader << "vec4 animation(vec2 uv) { return umbriel_sample(uv); }";
+  }
   int tried = 0;
   for (const KeyDescription& key : umbriel::registry::describeConfig(umbriel::Config{})) {
     for (const std::string_view value : key.values) {
       std::string concrete;
       toml::table document = documentSetting(key.path, nlohmann::ordered_json(value), concrete);
-      if (key.path.starts_with("effects.audio.sources.<name>.")) {
-        auto* source = document["effects"]["audio"]["sources"]["sample"].as_table();
-        source->insert("provider", "pipewire");
-        source->insert("mode", "playback");
-        source->insert("follow_default", true);
-        if (source->get("provider")->value<std::string>() == "external") {
-          source->insert("executable", "/nonexistent/audio-helper");
-        }
+      if (key.path == "animation.workspaces.style" && value == "reveal") {
+        document.at_path("animation.workspaces").as_table()->insert("effect", "wipe");
+        document.insert(
+            "effects",
+            toml::table{{"preset", toml::table{{"wipe", toml::table{{"kind", "animation"}, {"shader", shaderPath}}}}}}
+        );
       }
       const Loaded loaded = load(document);
       ++tried;
@@ -231,6 +233,7 @@ UMBRIEL_TEST(listedValuesAreAccepted) {
       }
     }
   }
+  std::filesystem::remove(shaderPath);
   CHECK(tried > 50);
 }
 
@@ -257,40 +260,23 @@ UMBRIEL_TEST(effectPoolSchemaReportsMembersPoliciesAndRequiredKind) {
   CHECK(kind && choose && selection);
 }
 
-UMBRIEL_TEST(audioSchemaExposesExplicitSourceSelectionAndOptionalPresetBinding) {
-  const auto descriptions = umbriel::registry::describeConfig(umbriel::Config{});
-  const std::vector<std::pair<std::string_view, std::string_view>> expected = {
-      {"effects.audio", "table"},
-      {"effects.audio.sources", "map"},
-      {"effects.audio.sources.<name>", "table"},
-      {"effects.audio.sources.<name>.provider", "enum"},
-      {"effects.audio.sources.<name>.mode", "enum"},
-      {"effects.audio.sources.<name>.target", "string"},
-      {"effects.audio.sources.<name>.follow_default", "bool"},
-      {"effects.audio.sources.<name>.executable", "string"},
-      {"effects.audio.sources.<name>.args", "string_array"},
-      {"effects.preset.<name>.audio", "string"},
-  };
-  for (const auto& [path, type] : expected) {
-    const auto found = std::ranges::find(descriptions, path, &KeyDescription::path);
-    CHECK(found != descriptions.end());
-    if (found == descriptions.end()) {
-      continue;
-    }
-    CHECK_EQ(found->type, type);
-    CHECK(found->defaultValue.is_null());
-    if (path.ends_with(".provider")) {
-      CHECK(found->values == std::vector<std::string_view>({"pipewire", "external"}));
-    } else if (path.ends_with(".mode")) {
-      CHECK(found->values == std::vector<std::string_view>({"playback", "microphone"}));
-    }
-  }
-}
-
 int main() {
   // The documents are partial configs; their unrelated complaints are filtered, not worth printing.
   setConsoleLogging(false);
   return RUN_TESTS();
+}
+
+UMBRIEL_TEST(pointerConfinementBooleanParsesAndReloads) {
+  const auto enabled = load(toml::parse("[[window_rule]]\nconfine_pointer = true\n"));
+  CHECK(enabled.messages.empty());
+  CHECK(enabled.config.windowRules.at(0).confinePointer.value_or(false));
+  const auto disabled = load(toml::parse("[[window_rule]]\nconfine_pointer = false\n"));
+  CHECK(disabled.messages.empty());
+  CHECK(disabled.config.windowRules != enabled.config.windowRules);
+  CHECK(disabled.config.windowRules.at(0).confinePointer.has_value());
+  CHECK(!*disabled.config.windowRules.at(0).confinePointer);
+  const auto invalid = load(toml::parse("[[window_rule]]\nconfine_pointer = \"yes\"\n"));
+  CHECK(std::ranges::any_of(invalid.messages, [](const auto& message) { return message.contains("confine_pointer"); }));
 }
 
 UMBRIEL_TEST(sceneSchemaReportsExplicitInterfaceScopesStagesAndPresentationDefaults) {

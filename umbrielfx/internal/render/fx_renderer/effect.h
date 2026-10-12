@@ -4,6 +4,7 @@
 #include <GLES2/gl2.h>
 #include <pixman.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <umbrielfx/render/effect.h>
 #include <wayland-server-core.h>
@@ -36,6 +37,7 @@ struct fx_effect_shader {
   GLuint program;
   GLint proj, tex_proj, position, tex, sample_matrix;
   GLint previous_tex, previous_sample_matrix;
+  GLint incoming_tex;
   GLint progress, linear_progress, direction, random_seed;
   GLint size, scale, expand;
   bool shape_preserving;
@@ -53,6 +55,12 @@ const struct fx_effect_uniform* fx_effect_shader_uniform(const struct fx_effect_
 // program's active array size binds the active elements. Each case is logged
 // once per program and name.
 void fx_effect_shader_bind_uniform(struct fx_effect_shader* shader, const struct fx_uniform* uniform);
+// Same validation, cached lookup and active-array clamping for dedicated draw
+// inputs larger than fx_uniform's inline storage. data_bytes bounds the input.
+void fx_effect_shader_bind_uniform_data(
+    struct fx_effect_shader* shader, const char* name, enum fx_uniform_type type, unsigned element_count,
+    const void* data, size_t data_bytes
+);
 void fx_effect_shader_bind_parameters(
     struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
 );
@@ -107,22 +115,28 @@ void fx_effect_light_cache_await_commit(struct fx_effect_light_cache* cache, str
 // Padding is already in the source; add_effect_light uses the same full box.
 // Prepared storage is chargeable but is not a completed/freezeable emission.
 bool fx_effect_prepare_light(struct fx_renderer* renderer);
-bool fx_effect_light_cache_prepare_scene(struct fx_effect_light_cache* cache,
-    int width, int height, float spread_px);
+bool fx_effect_light_cache_prepare_scene(struct fx_effect_light_cache* cache, int width, int height, float spread_px);
 uint64_t fx_effect_light_cache_storage_bytes(const struct fx_effect_light_cache* cache);
 // Copy completed raw emission exactly, with no authored evaluation/history step.
 // Target dimensions must match; FP16 emission requires FP16 destination storage.
 bool fx_effect_light_cache_copy_emission(struct fx_effect_light_cache* cache, struct wlr_buffer* target);
 // No allocation, compilation, authored shader evaluation, or history promotion.
 // Source must be a same-renderer renderable GL2D canvas in the pass working space.
-bool fx_render_pass_emit_scene_light(struct fx_gles_render_pass* pass,
-    struct fx_effect_light_cache* cache, struct wlr_texture* source,
-    const struct fx_effect_light* light, float logical_scale);
+bool fx_render_pass_emit_scene_light(
+    struct fx_gles_render_pass* pass, struct fx_effect_light_cache* cache, struct wlr_texture* source,
+    const struct fx_effect_light* light, float logical_scale
+);
 // Screen-blends the blurred emission over `box` (the proxy's buffer box), clipped.
 void fx_render_pass_add_effect_light(
     struct fx_gles_render_pass* pass, struct fx_effect_light_cache* cache, const struct fx_effect_light* light,
     const struct wlr_box* box, const pixman_region32_t* clip
 );
+
+// Long cursor paths are dedicated draw inputs, not generic per-node uniforms.
+struct fx_cursor_path {
+  unsigned count;
+  float points[64][4]; // uv, age seconds, stable birth phase
+};
 
 struct fx_effect_composite {
   struct fx_effect_shader* shader;
@@ -137,18 +151,22 @@ struct fx_effect_composite {
   struct wlr_output* output;
   struct wlr_buffer* presentation_buffer; // final native buffer shared by both roles; NULL for source-only draws
   bool update_history;
-  bool replay_history; // frozen source uses the already-rendered stage result
+  bool replay_history;                       // frozen source uses the already-rendered stage result
   const struct fx_effect_geometry* geometry; // NULL unless a border slot composites a border node
   struct fx_effect_light_cache* light;       // NULL unless this composite emits light
   bool replace;                              // write without blending; set by the in-place path
   unsigned role;                             // selects the history: 0 display, 1 unfiltered capture
   const float* corner_radius;                // tl, tr, br, bl logical px for umbriel_corner_radius; may be NULL
   const float* pointer;                      // umbriel_pointer, uv in the drawn box; NULL unless a cursor kind
+  const struct fx_cursor_path* pointer_path;
+  const float* audio; // umbriel_audio level and availability; NULL supplies zero
 };
 
 // Pops the capture begun by fx_render_pass_begin_animation and draws it
 // through the composite's program.
 void fx_render_pass_end_effect(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
+// Pop two full-output captures and replace the parent with their transition.
+void fx_render_pass_end_workspace(struct fx_gles_render_pass* pass, const struct fx_effect_composite* composite);
 // Renders `composite->shader` over the current target's pixels under `box`,
 // writing back with blending off through the rounded mask. The subtree must
 // already be drawn. Reads and promotes history like a capture composite.

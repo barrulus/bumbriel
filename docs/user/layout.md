@@ -32,7 +32,7 @@ new_exits_fullscreen = []  # "tiled", "floating", "pinned", "all", or an array s
 | Key | Default | Description |
 | --- | --- | --- |
 | `gap` | `8` | Gap between windows in logical pixels. |
-| `extent_presets` | `[0.333, 0.5, 0.667]` | Fractions used by primary and secondary extent cycle actions. |
+| `extent_presets` | `[0.333, 0.5, 0.667]` | Fractions used by primary and secondary extent cycle actions, in any order; cycling steps by size. |
 | `new_exits_fullscreen` | `[]` | Kinds of arriving window that make a fullscreen window on the workspace leave fullscreen. See [Leaving fullscreen](#leaving-fullscreen). |
 
 ### Leaving fullscreen
@@ -135,6 +135,11 @@ strip moves faster as the pointer approaches the edge, and stops when the
 pointer moves away or the drag ends. A window revealed beneath a stationary
 pointer becomes the active drop target, so the file or other payload can be
 dropped without extra pointer motion.
+
+Rearranging a tiled window by dragging it (Mod+left-click or its tab) pans the
+strip the same way, reaching columns beyond the current scroll extent. The
+trigger zone, delay, and speed are set in
+[Drag edge scroll](input.md#drag-edge-scroll).
 
 With `center_focused = "on_overflow"`, a column is centered when it and the
 neighbor focus came from cannot share the viewport, and a width change that
@@ -264,7 +269,7 @@ becomes the active tab.
 | To | Do |
 | --- | --- |
 | Switch tabs | Click a slot, scroll over the bar, use `column-focus-tab-next` and `column-focus-tab-previous`, or jump with `column-focus-tab:<index>` |
-| Add a tab | Move a window into the group with `window-move-up` or `window-move-down`, consume it into a column whose last row is a group, or drop it on the group's bar or middle |
+| Add a tab | Move a window into the group with `window-move-up` or `window-move-down`, consume it into a column whose last row is a group, pull the neighboring column's window in with `window-consume-from-left` or `window-consume-from-right` while a tab is focused, or drop it on the group's bar or middle |
 | Put a window above or below a group | Move a tab out with `window-move-up` or `window-move-down`, or drop a window near the group's top or bottom edge |
 | Remove a tab | Move it out, drag its slot out of the bar, expel it, float it, or move it away |
 | Reorder tabs | Use `column-move-tab-next` and `column-move-tab-previous`, or drop a window between two slots |
@@ -311,7 +316,7 @@ middle_click_closes = false
 | Key | Default | Description |
 | --- | --- | --- |
 | `default_display` | `"normal"` | How new columns and master areas show their windows: `"normal"`, or `"tabbed"` to start each as a tab group. |
-| `new_tab_position` | `"end"` | Where a consumed or dropped window joins a tab group: `"end"`, or `"after_active"` beside the active tab. |
+| `new_tab_position` | `"end"` | Where a consumed, pulled, or dropped window joins a tab group: `"end"`, or `"after_active"` beside the active tab. |
 | `wrap_focus` | `true` | Wrap `column-focus-tab-next` and `column-focus-tab-previous` at the ends. |
 | `scroll_switches_tabs` | `true` | Step through tabs with the wheel over the bar. |
 | `middle_click_closes` | `false` | Close a tab with a middle click on its slot. |
@@ -361,7 +366,8 @@ applications. Move windows to another workspace or use a
 exclusive zones.
 
 `window-toggle-maximize` fills the layout area. Tiled columns keep struts and
-gaps; floating windows fill the output's usable area.
+gaps; floating windows fill the output's usable area inside the same margin, and
+follow it when the gap, borders, struts, or usable area change.
 
 `window-toggle-maximize-to-edges` removes layout struts, gaps, and borders while
 leaving panel exclusive zones visible.

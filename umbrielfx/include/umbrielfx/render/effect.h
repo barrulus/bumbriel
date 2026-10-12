@@ -116,7 +116,9 @@ struct fx_animation_parameters {
 static inline struct fx_uniform* fx_parameters_add_uniform(
     struct fx_animation_parameters* parameters, const char* name, enum fx_uniform_type type, unsigned count
 ) {
-  if (parameters->uniform_count >= FX_UNIFORMS_MAX || strlen(name) >= FX_UNIFORM_NAME_MAX || count == 0
+  if (parameters->uniform_count >= FX_UNIFORMS_MAX
+      || strlen(name) >= FX_UNIFORM_NAME_MAX
+      || count == 0
       || count * fx_uniform_components(type) > FX_UNIFORM_FLOATS_MAX
       || ((type == FX_UNIFORM_INT || type == FX_UNIFORM_BOOL) && count > 4)) {
     return NULL;
@@ -132,9 +134,8 @@ static inline struct fx_uniform* fx_parameters_add_uniform(
 // Compilation happens with the renderer's context current. Sources provide the
 // kind's entry point (vec4 animation(vec2 uv), border, window, screen, cursor),
 // not a main function, version, or precision declaration.
-struct fx_effect_shader* fx_effect_shader_create(
-    struct wlr_renderer* renderer, enum fx_effect_kind kind, const char* source, const char* label
-);
+struct fx_effect_shader*
+fx_effect_shader_create(struct wlr_renderer* renderer, enum fx_effect_kind kind, const char* source, const char* label);
 struct fx_effect_shader* fx_effect_shader_ref(struct fx_effect_shader* shader);
 void fx_effect_shader_unref(struct fx_effect_shader* shader);
 // A shape-preserving shader only scales its input's alpha uniformly. Shadows
@@ -143,6 +144,12 @@ void fx_effect_shader_set_shape_preserving(struct fx_effect_shader* shader, bool
 // True when the linked program has an active uniform of that name.
 bool fx_effect_shader_reads(const struct fx_effect_shader* shader, const char* uniform);
 enum fx_effect_kind fx_effect_shader_kind(const struct fx_effect_shader* shader);
+
+// Isolate this animated root's backdrop from roots with a different non-NULL
+// group. Group identities are compared, never dereferenced. Clear the binding
+// before the owner dies. Removing the selected slot clears isolation as well.
+// Returns false if the animation binding was not created.
+bool wlr_scene_node_set_animation_isolation(struct wlr_scene_node* node, unsigned slot, const void* group);
 
 // Slots compose in ascending order, then through effect-bearing ancestors.
 // A NULL shader removes a slot. Nodes hold their own reference to the program.
@@ -202,11 +209,12 @@ void wlr_scene_output_set_effect_capture_policy(struct wlr_scene_output* output,
 
 // Output effects shade the output in place after the scene, the screen slot
 // over the whole output, then the cursor slot over the square `radius` logical
-// px around the pointer (0: the whole output); software cursors draw above
-// both. A NULL shader removes the slot; NULL parameters are zeroed. Changing
-// the program resets its feedback history. A cursor program draws nothing
-// until wlr_scene_output_set_effect_pointer runs after it is set: pointer
-// updates while no cursor program is set are dropped.
+// px around the pointer (0: the whole output). Motion-history programs extend
+// that rectangle around retained samples. Software cursors draw above both. A
+// NULL shader removes the slot; NULL parameters are zeroed. Changing the
+// program resets its feedback history. A cursor program draws nothing until
+// wlr_scene_output_set_effect_pointer runs after it is set: pointer updates
+// while no cursor program is set are dropped.
 void wlr_scene_output_set_screen_effect(
     struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters
 );
@@ -214,6 +222,16 @@ void wlr_scene_output_set_cursor_effect(
     struct wlr_scene_output* output, struct fx_effect_shader* shader, const struct fx_animation_parameters* parameters,
     int radius
 );
+// Audio values latch per output. Updating them damages visible consumers.
+bool wlr_scene_output_audio_active(struct wlr_scene_output* output);
+void wlr_scene_output_set_effect_audio(struct wlr_scene_output* output, const float audio[2]);
+// Advance the cursor motion clock before pointer updates and composition. Uses
+// the compositor animation clock in milliseconds; frozen clocks freeze tails.
+// History holds eight positions for 300 ms, or 64 for 2000 ms when the shader
+// reads umbriel_pointer_path. Advancing damages fading/expired
+// positions, including the final cleanup frame.
+void wlr_scene_output_set_effect_time(struct wlr_scene_output* output, uint64_t msec);
+bool wlr_scene_output_cursor_motion_active(struct wlr_scene_output* output);
 // Layout coordinates. A hidden pointer, or one outside the output, draws no
 // cursor effect and resets its history.
 void wlr_scene_output_set_effect_pointer(struct wlr_scene_output* output, double lx, double ly, bool visible);
@@ -228,5 +246,10 @@ void wlr_scene_output_acknowledge_damage_for_test(
 void fx_renderer_fail_target_copies_for_test(struct wlr_renderer* renderer, bool fail);
 // Exists for tests/effects.c: makes saving an unfiltered effect capture fail.
 void fx_renderer_fail_effect_capture_for_test(struct wlr_renderer* renderer, bool fail);
+// Exists for tests/effects.c and the animation-capture-fail harness IPC: makes every animation capture fail.
+void fx_renderer_fail_animation_capture_for_test(struct wlr_renderer* renderer, bool fail);
+// Exists for the blur-composite-split harness IPC: draws backdrop blur's final upsample into an effect buffer and
+// composites that, as fx_render_pass_add_blur does when it cannot draw the upsample into the pass target directly.
+void fx_renderer_split_blur_composite_for_test(struct wlr_renderer* renderer, bool split);
 
 #endif

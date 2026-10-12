@@ -241,13 +241,13 @@ for a successful native frame before normal input resumes.
 
 ## Audio, palette and endpoints
 
-Add `audio = "desktop"` to a scene preset to use an explicitly configured named
-source, as described in [audio inputs](audio-effects.md). Without a source, audio
-inputs are exact zero and the bundled presets remain usable. The examples use
-`umbriel_audio_level()` and `umbriel_audio_envelope()` only inside endpoint-vanishing
-terms, so audio changes the intermediate shape without moving the destination.
-The same latched audio input is used across faces, companions and capture roles;
-source acquisition does not consume it independently for each face.
+Scene shaders use upstream's external audio feed, described in
+[Effects](effects.md#audio-input). `umbriel_audio` is a `vec2`: the normalized
+level in `.x` and availability in `.y`. Without a producer both values are zero.
+The bundled presets use the level only in terms that vanish at transition
+endpoints, so audio changes the intermediate shape without moving the destination.
+Faces, companions and capture roles share the same frame input. No named audio
+source or helper configuration is required.
 
 `palette = true` supplies four colors from the configured palette through
 `umbriel_palette_at(t)`; without it, palette inputs are zero. Audio and palette

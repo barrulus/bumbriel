@@ -1,6 +1,5 @@
 #include "scene/scene_program.h"
 
-#include "audio/state.h"
 #include "check.h"
 
 extern "C" {
@@ -37,7 +36,6 @@ namespace {
       result.sources.stages[i] = umbriel::ShaderSource{.code = "stage " + std::to_string(i), .file = {}};
     }
     result.parameters.push_back({.name = "amplitude", .components = 2, .values = {0.25F, 0.5F, 0, 0}});
-    result.audio = "desktop";
     result.palette = true;
     return result;
   }
@@ -129,7 +127,7 @@ UMBRIEL_TEST(sceneProgramsCacheFailedReplacementsAndRetainWholeInflightVersion) 
   fail = true;
   fixture.definitions[0].sources.stages[3]->code = "broken replacement composite";
   fixture.definitions[0].parameters[0].values[0] = 0.75F;
-  fixture.definitions[0].audio = "voice";
+  fixture.definitions[0].palette = true;
   fixture.prepare();
   CHECK_EQ(fixture.cache.state("water"), ProgramState::CompileFailed);
   CHECK(!fixture.cache.find("water"));
@@ -215,39 +213,19 @@ UMBRIEL_TEST(sceneProgramsRejectLimitsAndInvalidBundlesBeforeCompiler) {
   CHECK_EQ(compiles, 0U);
 }
 
-UMBRIEL_TEST(sceneFrameAudioCopiesCompletePackedInputAndClearsUnavailableDefault) {
-  umbriel::audio::Input input;
-  input.available = true;
-  input.features.rms = .25F;
-  input.features.peak = .5F;
-  input.features.envelope = .75F;
-  for (size_t i = 0; i < input.features.bands.size(); ++i) {
-    input.features.bands[i] = static_cast<float>(i) / 15;
-  }
+UMBRIEL_TEST(sceneFrameAudioCopiesUpstreamLevelAndAvailability) {
+  std::array<float, 2> input{.25F, 1.0F};
   fx_scene_frame frame{};
   frame.progress = .375F;
   setFrameAudio(frame, input);
-  const auto levels = input.levels();
-  for (size_t i = 0; i < levels.size(); ++i) {
-    CHECK_EQ(frame.audio_levels[i], levels[i]);
-  }
-  for (size_t i = 0; i < input.features.bands.size(); ++i) {
-    CHECK_EQ(frame.audio_bands[i], input.features.bands[i]);
-  }
+  CHECK_EQ(frame.audio[0], .25F);
+  CHECK_EQ(frame.audio[1], 1.0F);
   CHECK_EQ(frame.progress, .375F);
-  input.features.rms = 1;
-  CHECK_EQ(frame.audio_levels[1], .25F); // Descriptor owns a copied snapshot.
-  input.available = false;
-  setFrameAudio(frame, input);
-  CHECK_EQ(frame.audio_levels[0], 0.0F);
-  CHECK_EQ(frame.audio_levels[1], 1.0F); // An unavailable source may still be fading.
+  input[0] = 1.0F;
+  CHECK_EQ(frame.audio[0], .25F);
   setFrameAudio(frame, {});
-  for (const auto value : frame.audio_levels) {
-    CHECK_EQ(value, 0.0F);
-  }
-  for (const auto value : frame.audio_bands) {
-    CHECK_EQ(value, 0.0F);
-  }
+  CHECK_EQ(frame.audio[0], 0.0F);
+  CHECK_EQ(frame.audio[1], 0.0F);
 }
 
 int main() { return RUN_TESTS(); }

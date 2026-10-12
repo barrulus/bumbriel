@@ -515,9 +515,11 @@ namespace umbriel {
     if (!last) {
       return {.row = column.views.size(), .group = std::nullopt};
     }
-    const TabGroup& group = column.tabs.groups()[*last];
-    const bool afterActive = m_config->tabs.newTabPosition == NewTabPosition::AfterActive;
-    return {.row = afterActive ? group.active + 1 : group.end(), .group = last};
+    return {.row = newTabRow(column.tabs.groups()[*last]), .group = last};
+  }
+
+  size_t ScrollingLayout::newTabRow(const TabGroup& group) const {
+    return m_config->tabs.newTabPosition == NewTabPosition::AfterActive ? group.active + 1 : group.end();
   }
 
   // Weight for a row about to be added at `row`, and the gap it takes over. A column keeps free space at its ends as
@@ -626,6 +628,45 @@ namespace umbriel {
     if (source.views.empty()) {
       m_columns.erase(m_columns.begin() + sourceColumn);
     }
+    return true;
+  }
+
+  bool ScrollingLayout::consumeFrom(View* view, int direction) {
+    int destinationColumn = columnOf(view);
+    const int sourceColumn = destinationColumn + direction;
+    if ((direction != -1 && direction != 1)
+        || destinationColumn < 0
+        || sourceColumn < 0
+        || sourceColumn >= static_cast<int>(m_columns.size())) {
+      return false;
+    }
+    Column& source = m_columns[static_cast<size_t>(sourceColumn)];
+    View* pulled = columnEntry(source);
+    const int row = pulled != nullptr ? rowOf(pulled) : -1;
+    if (row < 0) {
+      return false;
+    }
+    // The row keeps the extent it was pulled from, so a later expel restores the column it came out of.
+    const double rememberedExtent = source.savedWidthFrac > 0 ? source.savedWidthFrac : source.widthFrac;
+    const ErasedRow erased = eraseRow(source, static_cast<size_t>(row));
+    if (source.views.empty()) {
+      m_columns.erase(m_columns.begin() + sourceColumn);
+      if (sourceColumn < destinationColumn) {
+        --destinationColumn;
+      }
+    }
+    Column& destination = m_columns[static_cast<size_t>(destinationColumn)];
+    // The focused row's place in the stack is the anchor: a tab takes the pulled window beside it as another tab, and
+    // any other row takes it as the row directly below. Focus stays where it was either way.
+    const int focusRow = rowOf(view);
+    if (const std::optional<size_t> group = destination.tabs.groupIndexAt(static_cast<size_t>(focusRow))) {
+      const size_t landing = newTabRow(destination.tabs.groups()[*group]);
+      insertRow(destination, landing, pulled, erased.heightWeight, rememberedExtent, group);
+      return true;
+    }
+    const auto landing = static_cast<size_t>(focusRow + 1);
+    const double insertedWeight = claimInsertWeight(destination, static_cast<int>(landing), erased.heightWeight);
+    insertRow(destination, landing, pulled, insertedWeight, rememberedExtent);
     return true;
   }
 
@@ -829,6 +870,18 @@ namespace umbriel {
   double ScrollingLayout::centeredScroll(int columnIndex, int viewportPrimary) const {
     return static_cast<double>(columnX(columnIndex, viewportPrimary))
         - (viewportPrimary - columnWidth(columnIndex, viewportPrimary)) / 2.0;
+  }
+
+  std::array<double, 2> ScrollingLayout::snapScrolls(int columnIndex, int viewportPrimary) const {
+    const auto x = static_cast<double>(columnX(columnIndex, viewportPrimary));
+    const auto width = static_cast<double>(columnWidth(columnIndex, viewportPrimary));
+    const auto viewport = static_cast<double>(viewportPrimary);
+    const auto max = static_cast<double>(maxScroll(viewportPrimary));
+    if (width >= viewport) {
+      const double cover = std::clamp(x + (width - viewport) / 2.0, 0.0, max);
+      return {cover, cover};
+    }
+    return {std::clamp(x, 0.0, max), std::clamp(x + width - viewport, 0.0, max)};
   }
 
   void ScrollingLayout::clampScroll(int viewportPrimary) {

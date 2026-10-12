@@ -1,4 +1,4 @@
-#define LEN %d
+#define LEN % d
 
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
@@ -18,8 +18,8 @@ uniform bool linear;
 uniform bool blend;
 uniform int count;
 
-vec4 gradient(vec4 colors[LEN], int count, vec2 size, vec2 grad_box, vec2 origin, float degree, bool linear, bool blend);
+vec4 gradient(
+    vec4 colors[LEN], int count, vec2 size, vec2 grad_box, vec2 origin, float degree, bool linear, bool blend
+);
 
-void main(){
-	gl_FragColor = gradient(colors, count, size, grad_box, origin, degree, linear, blend);
-}
+void main() { gl_FragColor = gradient(colors, count, size, grad_box, origin, degree, linear, blend); }

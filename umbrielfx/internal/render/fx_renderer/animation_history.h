@@ -1,9 +1,9 @@
 #ifndef UMBRIELFX_RENDER_ANIMATION_HISTORY_H
 #define UMBRIELFX_RENDER_ANIMATION_HISTORY_H
 
-#include <wayland-server-core.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <wayland-server-core.h>
 
 struct wlr_output;
 struct fx_renderer;
@@ -22,11 +22,13 @@ void fx_animation_history_move(struct fx_animation_history* destination, struct 
 
 // Internal source acquisition: copy both role histories before any role renders.
 // Destination must be initialized and empty. Failure rolls it back atomically.
-uint64_t fx_animation_history_bytes(const struct fx_animation_history* history,
-    struct wlr_output* output, struct fx_renderer* renderer);
-bool fx_animation_history_clone(struct fx_animation_history* destination,
-    const struct fx_animation_history* source, struct wlr_output* output,
-    struct fx_renderer* renderer, struct wlr_allocator* allocator);
+uint64_t fx_animation_history_bytes(
+    const struct fx_animation_history* history, struct wlr_output* output, struct fx_renderer* renderer
+);
+bool fx_animation_history_clone(
+    struct fx_animation_history* destination, const struct fx_animation_history* source, struct wlr_output* output,
+    struct fx_renderer* renderer, struct wlr_allocator* allocator
+);
 // Finish updates deferred by a source pass only after its final output submit.
 void fx_animation_history_finish_updates(struct wl_list* updates, bool success);
 

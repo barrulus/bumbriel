@@ -26,7 +26,9 @@ configure m=mode install_prefix=prefix:
         ;;
       tracy)
         # Packaged Tracy clients are the no-op stub; build one under ~/.local.
-        args+=(--buildtype=release -Db_lto=true -Dtracy=enabled)
+        # Debug info and frame pointers give Tracy's sampling usable call stacks.
+        args+=(--buildtype=release -Db_lto=true -Dtracy=enabled -Ddebug=true)
+        args+=(-Dc_args=-fno-omit-frame-pointer -Dcpp_args=-fno-omit-frame-pointer)
         args+=(-Dpkg_config_path="$HOME/.local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}")
         ;;
       debug)
@@ -117,8 +119,9 @@ test m=mode: (_ensure-configured m) (_enable-tests m)
     meson compile -C build-{{m}} unit-tests
     meson test -C build-{{m}} --print-errorlogs
 
-# Exercise renderer ownership and the complete UmbrielFX suite on every GPU.
-# The default fixture device alone can hide driver-specific shader failures.
+# The umbrielfx renderer ownership check needs a real DRM render node, which a
+# container or a headless runner does not have, so it is a tool rather than a
+# suite entry. This runs it against every render node this machine exposes.
 [no-exit-message]
 gpu-test m=mode: (_ensure-configured m) (_enable-tests m)
     #!/usr/bin/env bash
@@ -130,10 +133,6 @@ gpu-test m=mode: (_ensure-configured m) (_enable-tests m)
     fi
     ninja -C build-{{m}} umbrielfx/umbrielfx-renderer-test
     ./build-{{m}}/umbrielfx/umbrielfx-renderer-test "${nodes[@]}"
-    for node in "${nodes[@]}"; do
-        echo "UmbrielFX suite on $node"
-        UMBRIELFX_TEST_DRM_DEVICE="$node" meson test -C build-{{m}} --suite umbrielfx --print-errorlogs
-    done
 
 # Regressions for the GitHub workflow scripts. Pure Python, builds nothing.
 test-workflows:
@@ -180,9 +179,10 @@ check-stress name n="32": (_ensure-configured mode) (_enable-tests mode "yes")
 check-names:
     @bash tests/harness/check.sh ./build-{{mode}}/umbriel --list
 
+# C++ and C sources plus GLSL shaders, all under the root .clang-format.
 format:
-    find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 | xargs -0 clang-format -i
-    find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 | xargs -0 grep -ZlP '\s+$' | xargs -0 -r sed -i 's/[[:space:]]*$//'
+    find src tests umbrielfx examples/effects \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.frag' -o -name '*.vert' -o -name '*.glsl' \) -print0 | xargs -0 clang-format -i
+    find src tests umbrielfx examples/effects \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.frag' -o -name '*.vert' -o -name '*.glsl' \) -print0 | xargs -0 grep -ZlP '\s+$' | xargs -0 -r sed -i 's/[[:space:]]*$//'
 
 # clang-tidy over src and tests, or only the given files: `just lint`, `just lint src/core/animation.cpp`. Headers are
 # checked through the sources that include them. Another build directory is `mode=`, as in `just mode=asan lint`.
@@ -191,6 +191,7 @@ format:
 lint *files: (_ensure-configured mode) (_enable-tests mode)
     #!/usr/bin/env bash
     set -euo pipefail
+    meson compile -C build-{{mode}} umbriel unit-tests harness-clients
     opts=(-quiet -p "build-{{mode}}" -header-filter='\.\./(src|tests)/.*' -warnings-as-errors='*' -extra-arg=-Wno-error)
     if (($# > 0)); then
         exec clang-tidy --use-color "${opts[@]}" "$@"

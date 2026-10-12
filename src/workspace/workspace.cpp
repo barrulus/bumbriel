@@ -30,6 +30,10 @@
 #include "wlr.h"
 // clang-format on
 
+extern "C" {
+#include <umbrielfx/render/effect.h>
+}
+
 namespace umbriel {
 
   namespace {
@@ -111,6 +115,11 @@ namespace umbriel {
         layout.insertViewIntoColumn(view, column, placement.row);
       }
     }
+
+    // Whether a window shares its workspace with the others, which is what `match.is_only_window` measures. A pinned
+    // window floats above the workspace rather than on it, and a scratchpad window has already left it, so neither
+    // counts as company.
+    bool sharesWorkspace(const View* view) { return view != nullptr && view->mapped() && !view->pinned(); }
   } // namespace
 
   Workspace::Workspace(
@@ -215,11 +224,15 @@ namespace umbriel {
   void Workspace::updateUrgent() {
     const bool urgent = std::ranges::any_of(m_views, [](const View* view) { return view->urgent(); });
     wlr_ext_workspace_handle_v1_set_urgent(m_handle, urgent);
+    m_group->server()->scheduleIpcWorkspacesEvent();
   }
 
   void Workspace::setFocusedView(View* view) {
     if (view == nullptr || view->workspace() == this) {
-      m_focusedView = view;
+      if (m_focusedView != view) {
+        m_focusedView = view;
+        m_group->server()->scheduleIpcWorkspacesEvent();
+      }
       if (view != nullptr && view->floating()) {
         std::erase(m_floatingStack, view);
         m_floatingStack.push_back(view);
@@ -257,11 +270,9 @@ namespace umbriel {
       return;
     }
     m_views.push_back(view);
-    if (m_views.size() == 1) {
-      // Occupancy is part of the IPC workspace listing, so the empty-to-occupied edge has to push an event even on a
-      // static output, where reconciliation never adds or removes a workspace.
-      m_group->server()->scheduleIpcWorkspacesEvent();
-    }
+    // Occupancy and the window count are part of the IPC workspace listing, so every membership change pushes an event,
+    // even on a static output, where reconciliation never adds or removes a workspace.
+    m_group->server()->scheduleIpcWorkspacesEvent();
     updateUrgent();
     const bool fs = view->currentFullscreen() || view->scheduledFullscreen();
     if (view->pinned()) {
@@ -275,6 +286,8 @@ namespace umbriel {
     if (attachToLayout) {
       layoutAttach(view, std::nullopt, std::nullopt, origin);
     }
+    // A float joins no layout, so nothing below would mark the workspace for a pass; occupancy questions need one.
+    markArrange();
     m_group->reconcileDynamic();
   }
 
@@ -292,15 +305,19 @@ namespace umbriel {
       // detachFromLayout() judges the survivor once the column is gone, so the note and the new focus land first.
       noteRemovalOfFocusedColumn(m_layout->columnOf(view));
       m_focusedView = replacement;
+      m_group->server()->scheduleIpcWorkspacesEvent();
     }
     detachFromLayout(view);
-    if (std::erase(m_views, view) > 0 && m_views.empty()) {
+    if (std::erase(m_views, view) > 0) {
       m_group->server()->scheduleIpcWorkspacesEvent();
     }
     if (view == m_lastAloneSoleView) {
       // The window we remembered as the only one is gone: forget it, so another window that replaces it is still
       // noticed as new.
       m_lastAloneSoleView = nullptr;
+    }
+    if (view == m_lastOnlyWindowView) {
+      m_lastOnlyWindowView = nullptr;
     }
     updateUrgent();
     std::erase(m_floatingStack, view);
@@ -339,6 +356,19 @@ namespace umbriel {
         if (member != view) {
           return false;
         }
+      }
+    }
+    return true;
+  }
+
+  bool Workspace::isOnlyVisibleView(const View* view) const {
+    // A window that does not count as company cannot be the only one either.
+    if (!sharesWorkspace(view)) {
+      return false;
+    }
+    for (View* other : m_views) {
+      if (other != view && sharesWorkspace(other)) {
+        return false;
       }
     }
     return true;
@@ -624,9 +654,10 @@ namespace umbriel {
     }
   }
 
-  // Tells every window whether it is alone, but only when something actually changed. It compares the number of
-  // tiled windows, which window is the only one, and the config version, so every change is noticed (even one
-  // window replaced by another at the same time). The guard stops the window handlers from triggering another pass.
+  // Tells every window whether it is alone, and whether it is the workspace's only window, but only when one of those
+  // answers changed. It compares each answer's count and holder, and the config version, so every change is noticed
+  // (even one window replaced by another at the same time). The guard stops the window handlers from triggering another
+  // pass.
   void Workspace::refreshAloneRuleStates() {
     if (m_refreshingAloneRules) {
       return;
@@ -644,14 +675,32 @@ namespace umbriel {
     if (tiledViewCount != 1) {
       soleTiled = nullptr;
     }
+    View* soleVisible = nullptr;
+    size_t visibleViewCount = 0;
+    for (View* other : m_views) {
+      if (!sharesWorkspace(other)) {
+        continue;
+      }
+      ++visibleViewCount;
+      if (visibleViewCount == 1) {
+        soleVisible = other;
+      }
+    }
+    if (visibleViewCount != 1) {
+      soleVisible = nullptr;
+    }
     const uint64_t generation = configStore().generation();
     if (tiledViewCount == m_lastAloneViewCount
         && soleTiled == m_lastAloneSoleView
+        && visibleViewCount == m_lastOnlyWindowCount
+        && soleVisible == m_lastOnlyWindowView
         && generation == m_lastAloneGeneration) {
       return;
     }
     m_lastAloneViewCount = tiledViewCount;
     m_lastAloneSoleView = soleTiled;
+    m_lastOnlyWindowCount = visibleViewCount;
+    m_lastOnlyWindowView = soleVisible;
     m_lastAloneGeneration = generation;
     m_refreshingAloneRules = true;
     for (View* view : m_views) {
@@ -700,6 +749,13 @@ namespace umbriel {
     // Tab visibility follows the layout on hidden workspaces too, so a workspace always comes back showing the right
     // tabs.
     m_tabs.sync();
+    // A maximized float keeps the margin a maximized tile keeps, so it follows every change an arrange follows: gap,
+    // border, struts, and the usable area.
+    for (View* view : m_views) {
+      if (view != nullptr && !view->tiled()) {
+        view->refitFloatingMaximized();
+      }
+    }
     // The map-time IPC event can fire before this arrange runs, leaving the previous window positions in the listing.
     // Re-emit now that the layout boxes are settled; the event coalescer caps this at one per frame.
     m_group->server()->scheduleIpcWindowsEvent();
@@ -1474,6 +1530,15 @@ namespace umbriel {
     return true;
   }
 
+  bool Workspace::consumeFromFocused(int direction) {
+    if (!m_layout->consumeFrom(m_focusedView, direction)) {
+      return false;
+    }
+    ensureFocusedVisible();
+    markArrange();
+    return true;
+  }
+
   bool Workspace::expelFocused(int direction) {
     if (!m_layout->expel(m_focusedView, direction)) {
       return false;
@@ -1595,9 +1660,10 @@ namespace umbriel {
     if (m_focusedView != nullptr && m_focusedView->maximizedToEdges()) {
       m_focusedView->setMaximizedToEdges(false);
     }
-    const double current = m_layout->heightFraction(m_focusedView);
-    if (!m_layout->setHeightFraction(
-            m_focusedView, nextFractionPreset(m_layoutConfig.extentPresets, current, direction)
+    if (!cycleFractionPreset(
+            m_layoutConfig.extentPresets, m_layout->heightFraction(m_focusedView), direction,
+            [&](double fraction) { return m_layout->setHeightFraction(m_focusedView, fraction); },
+            [&] { return m_layout->heightFraction(m_focusedView); }
         )) {
       return false;
     }
@@ -1995,11 +2061,9 @@ namespace umbriel {
     m_inSwitchTransition = false;
     for (View* view : m_switchViews) {
       view->setFadeAlpha(1.0F);
-      if (!m_active) {
-        view->setNodeEnabled(false);
-      }
     }
     m_switchViews.clear();
+    applyVisibility();
     syncCloseSnapshots();
     // setSlideOffset() refreshes visibility and clips, but it does not move tiled scene nodes to their
     // authoritative horizontal strip positions. Reconcile after an interrupted switch so a fullscreen column cannot
@@ -2756,7 +2820,95 @@ namespace umbriel {
     return nullptr;
   }
 
+  void WorkspaceGroup::beginReveal() {
+    if (config().animation.workspaces.style != "reveal") {
+      return;
+    }
+    auto& registry = effectRegistry();
+    if (auto* shader = registry.lifecycleEffect(AnimationEvent::Workspaces)) {
+      m_slide.reveal = fx_effect_shader_ref(shader);
+      m_slide.transition = beginAnimationTransition();
+      if (const auto* preset = registry.animationPreset(AnimationEvent::Workspaces)) {
+        m_slide.revealPreset = *preset;
+      }
+    }
+  }
+
+  Workspace* WorkspaceGroup::revealIncoming(double progress) const {
+    Workspace* incoming = progress < 0 ? m_slide.previous : m_slide.next;
+    return progress == 0 && incoming == nullptr ? m_slide.previous : incoming;
+  }
+
+  wlr_scene_node* WorkspaceGroup::revealRoot(bool incoming) const {
+    auto* workspace = incoming ? revealIncoming(m_slide.progress) : m_slide.base;
+    return revealActive() && workspace != nullptr ? &workspace->tileShadowLayer()->node.parent->node : nullptr;
+  }
+
+  void WorkspaceGroup::refreshReveal() {
+    if (m_slide.reveal == nullptr) {
+      return;
+    }
+    const auto& animation = config().animation;
+    if (!animation.enabled || !animation.workspaces.enabled || animation.workspaces.style != "reveal") {
+      slideFinish();
+      return;
+    }
+    const double progress = m_slide.progress;
+    Workspace* incoming = revealIncoming(progress);
+    const float axis = incoming == m_slide.previous ? -1.0F : 1.0F;
+    for (Workspace* workspace : {m_slide.base, m_slide.previous, m_slide.next}) {
+      if (workspace == nullptr) {
+        continue;
+      }
+      for (auto* tree : {workspace->tileShadowLayer()->node.parent, workspace->fullscreenTree()}) {
+        fx_animation_parameters parameters{};
+        parameters.progress = static_cast<float>(std::clamp(std::abs(progress), 0.0, 1.0));
+        parameters.linear_progress = parameters.progress;
+        parameters.direction = workspace == m_slide.base ? -1.0F : 1.0F;
+        parameters.transition_id = m_slide.transition.id;
+        std::ranges::copy(m_slide.transition.seed, parameters.random_seed);
+        if (m_slide.revealPreset) {
+          auto& registry = effectRegistry();
+          registry.fillTimeUniforms(parameters, registry.clockSeconds(), *m_slide.revealPreset, m_slide.reveal);
+        }
+        if (auto* direction = fx_parameters_add_uniform(&parameters, "umbriel_workspace_axis", FX_UNIFORM_VEC2, 1)) {
+          direction->floats[0] = m_workspaceAxis == WorkspaceAxis::Horizontal ? axis : 0.0F;
+          direction->floats[1] = m_workspaceAxis == WorkspaceAxis::Vertical ? axis : 0.0F;
+        }
+        wlr_scene_node_set_animation(&tree->node, FX_SLOT_WORKSPACES, m_slide.reveal, &parameters);
+        if (!wlr_scene_node_set_animation_isolation(&tree->node, FX_SLOT_WORKSPACES, workspace)) {
+          abandonReveal();
+          return;
+        }
+      }
+    }
+  }
+
+  void WorkspaceGroup::cancelReveal() {
+    if (m_slide.reveal != nullptr) {
+      slideFinish();
+    }
+  }
+
+  void WorkspaceGroup::abandonReveal() {
+    if (m_slide.reveal != nullptr) {
+      for (Workspace* workspace : {m_slide.base, m_slide.previous, m_slide.next}) {
+        if (workspace != nullptr) {
+          wlr_scene_node_set_animation(
+              &workspace->tileShadowLayer()->node.parent->node, FX_SLOT_WORKSPACES, nullptr, nullptr
+          );
+          wlr_scene_node_set_animation(&workspace->fullscreenTree()->node, FX_SLOT_WORKSPACES, nullptr, nullptr);
+        }
+      }
+      fx_effect_shader_unref(m_slide.reveal);
+      m_slide.reveal = nullptr;
+      m_slide.revealPreset.reset();
+      slideApply(m_slide.progress);
+    }
+  }
+
   void WorkspaceGroup::slideFinish() {
+    abandonReveal();
     m_slideAnim.snap(0.0);
     if (m_slide.base != nullptr) {
       m_slide.base->endSwitchTransition();
@@ -2796,6 +2948,7 @@ namespace umbriel {
     const double start = carry ? m_slideAnim.current() - m_slideAnim.target() : 0.0;
     slideFinish();
     m_slide.base = m_active;
+    beginReveal();
     m_slide.extent = extent;
     m_slide.progress = start;
     const size_t idx = m_active->index();
@@ -2822,7 +2975,11 @@ namespace umbriel {
     // Increasing workspace index moves outgoing content toward negative coordinates
     // on the group's axis; the other coordinate stays at rest.
     const bool horizontal = m_workspaceAxis == WorkspaceAxis::Horizontal;
+    const Workspace* incoming = m_slide.reveal != nullptr ? revealIncoming(progress) : nullptr;
     const auto offset = [&](Workspace* workspace, double displacement) {
+      if (m_slide.reveal != nullptr && (workspace == m_slide.base || workspace == incoming)) {
+        displacement = 0.0;
+      }
       workspace->setSlideOffset(horizontal ? displacement : 0.0, horizontal ? 0.0 : displacement);
     };
     offset(m_slide.base, -progress * extent);
@@ -2887,7 +3044,11 @@ namespace umbriel {
       // now rather than letting it creep at amplitudes the pixel grid rounds away.
       static_cast<void>(m_slideAnim.finishSpringTail(m_slide.extent));
     }
-    bindAnimationEffect(&m_output->viewRoot()->node, AnimationEvent::Workspaces, m_slideAnim);
+    if (config().animation.workspaces.style == "slide") {
+      bindAnimationEffect(&m_output->viewRoot()->node, AnimationEvent::Workspaces, m_slideAnim);
+    } else {
+      wlr_scene_node_set_animation(&m_output->viewRoot()->node, FX_SLOT_WORKSPACES, nullptr, nullptr);
+    }
     bool active = false;
     if (ticked) {
       slideApply(m_slideAnim.current());
@@ -2973,6 +3134,7 @@ namespace umbriel {
     }
     const int sign = workspace->index() > m_active->index() ? 1 : -1;
     m_slide.base = m_active;
+    beginReveal();
     m_slide.extent = extent;
     m_slide.progress = 0;
     if (sign > 0) {

@@ -10,14 +10,9 @@ boundaries, or regression-sensitive behavior.
 
 - [Configuration reload](configuration-reload.md)
 - [Effects](effects.md)
-- [Fork feature split and porting handoff](feature-porting-2026-10-01.md)
-- [Programmable effects: design specification and implementation plan](effects-implementation-plan.md)
-- [Effects implementation and acceptance status](effects-progress.md)
-- [Effects hardware validation](effects-hardware-validation.md)
-- [Native effects cost review](effects-native-cost-review.md)
-- [Scene transitions (proposal)](scene-transitions.md)
-- [Audio inputs for shaders (proposal)](audio-inputs.md)
+- [Audio shader input](audio-shader-input.md)
 - [Workspace lifecycle](workspace-lifecycle.md)
+- [Live workspace reveal](workspace-reveal.md)
 - [Overview rendering](overview-rendering.md)
 - [Touchpad gestures](touchpad-gestures.md)
 - [Border rendering](border-rendering.md)
@@ -30,7 +25,8 @@ boundaries, or regression-sensitive behavior.
 ## Harness-only IPC
 
 `settle`, `clock-freeze`, `clock-advance`, `clock-resume`, `renderer-recover`,
-and `effect-frames` exist for `tests/harness` and are compiled only with the
+`animation-capture-fail`, `blur-composite-split`, `swipe-test`, and
+`effect-frames` exist for `tests/harness` and are compiled only with the
 `test_ipc` option (auto: debug builds). The harness also drives hotplug through
 `output-create` and `output-destroy`, which every build ships for
 [virtual outputs](../user/outputs.md#virtual-outputs). `settle` replies once no
@@ -49,7 +45,11 @@ emits two consecutive notifications through the renderer's real mutable lost
 signal. The recovery check uses them to assert that one deferred renderer
 replacement completes and draws a new frame. `effect-frames` reports, per
 output, how many drawn frames advanced persistent effects' time and how many
-effect instances currently need frames of their own.
+effect instances currently need frames of their own. `blur-composite-split on`
+makes backdrop blur store its full-resolution result and composite it as a
+texture instead of drawing it straight into the target, and `off` restores the
+direct draw; both redraw every output and reply once each has drawn, so a check
+can compare the two at one frozen instant.
 
 ## Pointer drag completion
 
@@ -64,10 +64,14 @@ While the grab remains active, holding the pointer near a scrolling strip edge
 moves the layout on a delayed timer. Scene refreshes route enter and motion
 through the grab as each frame settles, allowing a newly revealed client to
 become the drop target without physical pointer motion.
+A compositor window move drives the same timer; the post-arrange refresh then
+recomputes its drop target instead of replaying client pointer focus.
 
 The short-drag cursor refresh is covered by
 [`drag/external_drag.sh`](../../tests/harness/checks/drag/external_drag.sh), and
 cross-window focus is covered by
 [`drag/data_drag_hover_focus.sh`](../../tests/harness/checks/drag/data_drag_hover_focus.sh).
 Edge scrolling and stationary drop-target retargeting are covered by
-[`drag/data_drag_edge_scroll.sh`](../../tests/harness/checks/drag/data_drag_edge_scroll.sh).
+[`drag/data_drag_edge_scroll.sh`](../../tests/harness/checks/drag/data_drag_edge_scroll.sh),
+and the same behavior for compositor window moves by
+[`drag/move_drag_edge_scroll.sh`](../../tests/harness/checks/drag/move_drag_edge_scroll.sh).

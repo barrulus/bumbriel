@@ -41,6 +41,7 @@ pinning a fullscreen window, leave the window unchanged.
 layout = ""           # empty uses the system default
 variant = ""
 options = ""
+model = ""
 repeat_rate = 25
 repeat_delay = 600
 numlock_toggle = true
@@ -63,8 +64,8 @@ options = "grp:alt_shift_toggle"
 ```
 
 `options` accepts XKB options such as `caps:escape` or `compose:ralt`. Invalid
-layouts and variants are reported in the log and fall back to the system
-default. Run `xkbcli list` to inspect available values.
+layouts, variants, and models are reported in the log and fall back to the
+system default. Run `xkbcli list` to inspect available values.
 
 Run `umbriel keyboard-layouts` to list the configured layouts. The active one
 is prefixed with `*`.
@@ -183,6 +184,7 @@ the `Device` value from `libinput list-devices`:
 name = "Acme Split Keyboard"
 layout = "us"
 variant = "colemak_dh"
+model = "pc104angle"
 repeat_rate = 40
 repeat_delay = 250
 
@@ -276,6 +278,33 @@ moves the cursor regardless of this setting. Active-workspace output swaps keep
 the cursor and seat focus on the invoking output when this setting is false;
 when it is true, both follow the previously focused window to its new output.
 
+### Drag edge scroll
+
+```toml
+[input.drag_edge_scroll]
+enabled = true
+trigger_zone = 30
+delay_ms = 100
+max_speed = 1500.0
+```
+
+While a drag-and-drop or a tiled window move (Mod+left-click or the tab bar)
+is held near either end of a scrolling layout, the layout scrolls so offscreen
+columns can be reached.
+
+| Key | Range or values | Description |
+| --- | --- | --- |
+| `enabled` | bool | Enable edge scrolling during a data drag or a tiled window move. |
+| `trigger_zone` | 1 to 1000 | Width of the zone at each end, in logical pixels. |
+| `delay_ms` | 0 to 10000 | Time inside the zone before scrolling starts. |
+| `max_speed` | 1.0 to 100000.0 | Peak scroll speed in logical pixels per second. |
+
+Speed rises from zero at the inner edge of the trigger zone to `max_speed` at
+the outer edge of the layout, so scrolling accelerates as the pointer pushes
+further in. The zone is clamped to half the viewport, so the two zones never
+overlap. `delay_ms = 0` starts scrolling as soon as the pointer enters the
+zone. `enabled = false` turns the behavior off entirely.
+
 ### Focus
 
 ```toml
@@ -284,10 +313,11 @@ follows_mouse = false
 follows_mouse_max_scroll = 0.5
 ```
 
-`follows_mouse = true` focuses the window under the pointer when pointer motion
-or a layout change places a different window there. This follows the actual
-seat focus across tiled, floating, and pinned windows, including pinned windows
-whose owning workspace is inactive.
+`follows_mouse = true` focuses the window that the pointer enters through real
+pointer motion. Scrolling or dragging a layout beneath a stationary pointer
+does not change focus. This follows the actual seat focus across tiled,
+floating, and pinned windows, including pinned windows whose owning workspace
+is inactive.
 
 `follows_mouse_max_scroll` limits how far Umbriel may scroll a layout to reveal
 that window, measured in viewport widths. `0.0` allows only fully visible

@@ -155,14 +155,24 @@ namespace umbriel {
       resolved.edgePad = resolved.gap + borderWidth;
     }
 
-    // A rule without a pattern places no constraint. With one, the value must be present: a client that never set an
-    // identity string matches nothing, while one that set it to empty matches a pattern accepting the empty string.
-    bool
-    patternMatches(const std::string& pattern, const std::regex& regex, const std::optional<std::string_view>& value) {
-      if (pattern.empty()) {
+    // A rule without a pattern places no constraint, which an empty pattern does not change. With any, the value must
+    // be present and one of them must match: a client that never set an identity string matches nothing, while one that
+    // set it to empty matches a pattern accepting the empty string.
+    bool patternMatches(const RegexPatterns& patterns, const std::optional<std::string_view>& value) {
+      if (!patterns.constrains()) {
         return true;
       }
-      return value.has_value() && std::regex_search(value->begin(), value->end(), regex);
+      return value.has_value() && std::ranges::any_of(patterns.regexes, [&](const std::regex& regex) {
+               return std::regex_search(value->begin(), value->end(), regex);
+             });
+    }
+
+    // Unlike window rules, the whole value must match: a substring grant would let an application choose an ID
+    // embedding someone else's pattern.
+    bool matchesWhole(const RegexPatterns& patterns, std::string_view value) {
+      return !value.empty() && std::ranges::any_of(patterns.regexes, [&](const std::regex& regex) {
+        return std::regex_match(value.begin(), value.end(), regex);
+      });
     }
 
   } // namespace
@@ -230,9 +240,9 @@ namespace umbriel {
     ResolvedWindowRule resolved;
 
     for (const auto& rule : config.windowRules) {
-      if (!patternMatches(rule.appIdPattern, rule.appIdRegex, appId)
-          || !patternMatches(rule.titlePattern, rule.titleRegex, title)
-          || !patternMatches(rule.xdgTagPattern, rule.xdgTagRegex, xdgTag)) {
+      if (!patternMatches(rule.appIdPatterns, appId)
+          || !patternMatches(rule.titlePatterns, title)
+          || !patternMatches(rule.xdgTagPatterns, xdgTag)) {
         continue;
       }
       if (rule.matchContentType && *rule.matchContentType != contentType) {
@@ -253,7 +263,10 @@ namespace umbriel {
       if (rule.matchAlone && *rule.matchAlone != state.alone) {
         continue;
       }
-      if (rule.matchAtStartup && *rule.matchAtStartup != (uptimeMs < kStartupWindowRuleDurationMs)) {
+      if (rule.matchOnlyWindow && *rule.matchOnlyWindow != state.onlyWindow) {
+        continue;
+      }
+      if (rule.matchAtStartup && *rule.matchAtStartup != (uptimeMs < kStartupRuleDurationMs)) {
         continue;
       }
       // Last writer wins: overwrite each field the rule sets.
@@ -307,6 +320,9 @@ namespace umbriel {
       }
       if (rule.defaultPinned) {
         resolved.defaultPinned = rule.defaultPinned;
+      }
+      if (rule.confinePointer) {
+        resolved.confinePointer = rule.confinePointer;
       }
       if (rule.focusOnActivate) {
         resolved.focusOnActivate = rule.focusOnActivate;
@@ -366,10 +382,18 @@ namespace umbriel {
     return resolved;
   }
 
-  ResolvedLayerRule resolveLayerRules(const Config& config, std::optional<std::string_view> layerNamespace) {
+  ResolvedLayerRule resolveLayerRules(
+      const Config& config, std::optional<std::string_view> layerNamespace, LayerShellLayer layer, uint64_t uptimeMs
+  ) {
     ResolvedLayerRule resolved;
     for (const auto& rule : config.layerRules) {
-      if (!patternMatches(rule.namespacePattern, rule.namespaceRegex, layerNamespace)) {
+      if (!patternMatches(rule.namespacePatterns, layerNamespace)) {
+        continue;
+      }
+      if (rule.matchLayer && *rule.matchLayer != layer) {
+        continue;
+      }
+      if (rule.matchAtStartup && *rule.matchAtStartup != (uptimeMs < kStartupRuleDurationMs)) {
         continue;
       }
       if (rule.blur) {
@@ -394,17 +418,11 @@ namespace umbriel {
     const std::string_view appIdView = appId != nullptr ? appId : "";
     std::vector<std::string> globals;
     for (const auto& rule : config.securityContextRules) {
-      // Unlike window rules, the whole value must match: a substring grant
-      // would let an application choose an ID embedding someone else's pattern.
-      if (!rule.sandboxEnginePattern.empty()) {
-        if (engineView.empty() || !std::regex_match(engineView.begin(), engineView.end(), rule.sandboxEngineRegex)) {
-          continue;
-        }
+      if (rule.sandboxEnginePatterns.constrains() && !matchesWhole(rule.sandboxEnginePatterns, engineView)) {
+        continue;
       }
-      if (!rule.appIdPattern.empty()) {
-        if (appIdView.empty() || !std::regex_match(appIdView.begin(), appIdView.end(), rule.appIdRegex)) {
-          continue;
-        }
+      if (rule.appIdPatterns.constrains() && !matchesWhole(rule.appIdPatterns, appIdView)) {
+        continue;
       }
       for (const std::string& global : rule.allowGlobals) {
         if (std::ranges::find(globals, global) == globals.end()) {
@@ -416,7 +434,9 @@ namespace umbriel {
   }
 
   bool anyWindowRuleHasTitlePattern(const Config& config) {
-    return std::ranges::any_of(config.windowRules, [](const WindowRule& rule) { return !rule.titlePattern.empty(); });
+    return std::ranges::any_of(config.windowRules, [](const WindowRule& rule) {
+      return rule.titlePatterns.constrains();
+    });
   }
 
   ResolvedLayoutConfig resolveGlobalLayout(const Config& config) {

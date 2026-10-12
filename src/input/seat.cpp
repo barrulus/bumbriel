@@ -115,7 +115,9 @@ namespace umbriel {
     // Recorded even while the compositor owns the cursor, so ending that
     // override replays the client's cursor instead of making it resend one.
     if (m_seat->pointer_state.focused_client == event->seat_client) {
-      m_server->cursor()->setCursorSurface(event->surface, event->hotspot_x, event->hotspot_y);
+      m_server->cursor()->setCursorSurface(
+          event->surface, event->hotspot_x, event->hotspot_y, event->seat_client->client
+      );
     }
   }
 
@@ -144,7 +146,7 @@ namespace umbriel {
       return;
     }
     if (pointer) {
-      m_server->cursor()->setCursorShape(name);
+      m_server->cursor()->setCursorShape(name, event->seat_client->client);
     } else if (!m_server->cursor()->compositorOwnsCursor()) {
       m_server->cursor()->setXcursor(name);
     }

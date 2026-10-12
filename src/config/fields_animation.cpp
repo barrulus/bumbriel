@@ -191,8 +191,9 @@ namespace umbriel {
           scene_experiment::Binding::WindowClose
       );
       static const registry::Fields<A::WindowsMove> windowsMove = eventFields<A::WindowsMove>({});
-      static const registry::Fields<A::Workspaces> workspaces =
-          eventFields<A::Workspaces>({}, scene_experiment::Binding::WorkspaceSwitch);
+      static const registry::Fields<A::Workspaces> workspaces = eventFields<A::Workspaces>(
+          {styleField<A::Workspaces>({"slide", "reveal"})}, scene_experiment::Binding::WorkspaceSwitch
+      );
       static const registry::Fields<A::Overview> overview = [] {
         auto fields = eventFields<A::Overview>({});
         fields.push_back(curveField("workspace_curve", &A::Overview::workspaceCurve));

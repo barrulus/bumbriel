@@ -5,6 +5,7 @@
 #include "input/event_time.h"
 #include "input/gestures.h"
 #include "input/seat.h"
+#include "input/xcursor_matcher.h"
 #include "layer/layer_surface.h"
 #include "layout/drop_target.h"
 #include "layout/layout.h"
@@ -22,7 +23,11 @@
 // clang-format off
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <ctime>
+#include <drm_fourcc.h>
 #include <linux/input-event-codes.h>
+#include <limits>
 #include "wlr.h"
 // clang-format on
 #include "wlr/util/edges.h"
@@ -35,9 +40,6 @@ namespace umbriel {
   namespace {
     constexpr Logger kLog("cursor");
     constexpr double kHotCornerExtent = 8.0;
-    constexpr double kDataDragEdgeScrollTrigger = 30.0;
-    constexpr double kDataDragEdgeScrollMaxSpeed = 1500.0;
-    constexpr int kDataDragEdgeScrollDelayMs = 100;
     constexpr int kDataDragEdgeScrollTickMs = 16;
     constexpr uint32_t kDataDragEdgeScrollMaxElapsedMs = 50;
 
@@ -171,8 +173,14 @@ namespace umbriel {
     wl_signal_add(&m_cursor->events.tablet_tool_button, &m_tabletToolButton);
 
     m_constraintDestroy.link.next = nullptr;
+    m_clientCursorOwnerDestroy.notify = onClientCursorOwnerDestroy;
+    m_clientCursorOwnerDestroy.link.next = nullptr;
     m_clientCursorDestroy.notify = onClientCursorDestroy;
     m_clientCursorDestroy.link.next = nullptr;
+    m_clientCursorClientCommit.notify = onClientCursorClientCommit;
+    m_clientCursorClientCommit.link.next = nullptr;
+    m_clientCursorCommit.notify = onClientCursorCommit;
+    m_clientCursorCommit.link.next = nullptr;
     updateHideTimer();
   }
 
@@ -189,8 +197,17 @@ namespace umbriel {
     if (m_constraintDestroy.link.next != nullptr) {
       wl_list_remove(&m_constraintDestroy.link);
     }
+    if (m_clientCursorOwnerDestroy.link.next != nullptr) {
+      wl_list_remove(&m_clientCursorOwnerDestroy.link);
+    }
     if (m_clientCursorDestroy.link.next != nullptr) {
       wl_list_remove(&m_clientCursorDestroy.link);
+    }
+    if (m_clientCursorClientCommit.link.next != nullptr) {
+      wl_list_remove(&m_clientCursorClientCommit.link);
+    }
+    if (m_clientCursorCommit.link.next != nullptr) {
+      wl_list_remove(&m_clientCursorCommit.link);
     }
     wl_list_remove(&m_motion.link);
     wl_list_remove(&m_motionAbsolute.link);
@@ -236,10 +253,26 @@ namespace umbriel {
     m_xcursorTheme = configured.theme;
     m_xcursorSize = configured.size;
 
-    if (m_activeXcursorManager == oldManager) {
+    const bool hasXwaylandClientCursor = m_clientCursorFromXwayland && m_clientCursorSurface != nullptr;
+    if (hasXwaylandClientCursor) {
+      if (const std::optional<std::string> match = matchXwaylandCursor()) {
+        m_clientCursorShape = *match;
+      } else {
+        m_clientCursorShape.clear();
+      }
+    }
+
+    if (m_compositorOwnsCursor) {
+      setXcursor(m_compositorCursorName.c_str());
+    } else if (hasXwaylandClientCursor) {
+      applyClientCursor();
+    } else if (m_activeXcursorManager == oldManager) {
       setXcursor(m_activeXcursorName.c_str());
     } else if (m_server->seat()->wlr()->pointer_state.focused_surface == nullptr) {
       setXcursor("default");
+    }
+    if (hasXwaylandClientCursor && !m_clientCursorShape.empty()) {
+      finishClientCursorFrame();
     }
     // Xwayland's default cursor is a buffer of the manager's image, so it moves over before the old manager dies.
     if (Xwayland* xwayland = m_server->xwayland()) {
@@ -438,10 +471,17 @@ namespace umbriel {
     return 0;
   }
 
+  bool Cursor::tiledMoveDragActive() const {
+    const auto* grab = std::get_if<MoveGrab>(&m_grab);
+    return grab != nullptr && grab->view != nullptr && !grab->pending && grab->target == DragTarget::Tiled;
+  }
+
   Workspace* Cursor::dataDragEdgeScrollTarget(double* speed) const {
     *speed = 0;
-    if (m_server->sessionLocked()
-        || m_server->seat()->wlr()->drag == nullptr
+    const Config::Input::DragEdgeScroll& edge = config().input.dragEdgeScroll;
+    if (!edge.enabled
+        || m_server->sessionLocked()
+        || (m_server->seat()->wlr()->drag == nullptr && !tiledMoveDragActive())
         || (m_server->overview() != nullptr && m_server->overview()->active())) {
       return nullptr;
     }
@@ -462,12 +502,12 @@ namespace umbriel {
     if (extent <= 0) {
       return nullptr;
     }
-    const double trigger = std::min(kDataDragEdgeScrollTrigger, extent / 2.0);
+    const double trigger = std::min(static_cast<double>(edge.triggerZone), extent / 2.0);
     const double position = vertical ? m_cursor->y : m_cursor->x;
     if (position < origin + trigger) {
-      *speed = -kDataDragEdgeScrollMaxSpeed * std::clamp((origin + trigger - position) / trigger, 0.0, 1.0);
+      *speed = -edge.maxSpeed * std::clamp((origin + trigger - position) / trigger, 0.0, 1.0);
     } else if (position > origin + extent - trigger) {
-      *speed = kDataDragEdgeScrollMaxSpeed * std::clamp((position - (origin + extent - trigger)) / trigger, 0.0, 1.0);
+      *speed = edge.maxSpeed * std::clamp((position - (origin + extent - trigger)) / trigger, 0.0, 1.0);
     }
     if (*speed == 0) {
       return nullptr;
@@ -485,6 +525,7 @@ namespace umbriel {
   }
 
   void Cursor::updateDataDragEdgeScroll() {
+    const Config::Input::DragEdgeScroll& edge = config().input.dragEdgeScroll;
     double speed = 0;
     Workspace* workspace = dataDragEdgeScrollTarget(&speed);
     const int direction = (speed > 0) - (speed < 0);
@@ -508,7 +549,11 @@ namespace umbriel {
     m_dataDragEdgeScrollSpeed = speed;
     m_dataDragEdgeScrollLastMsec = 0;
     m_dataDragEdgeScrollPending = true;
-    wl_event_source_timer_update(m_dataDragEdgeScrollTimer, kDataDragEdgeScrollDelayMs);
+    if (edge.delayMs > 0) {
+      wl_event_source_timer_update(m_dataDragEdgeScrollTimer, edge.delayMs);
+    } else {
+      handleDataDragEdgeScrollTimer();
+    }
   }
 
   void Cursor::cancelDataDragEdgeScroll() {
@@ -572,17 +617,50 @@ namespace umbriel {
     return 0;
   }
 
-  void Cursor::setCursorSurface(wlr_surface* surface, int32_t hotspotX, int32_t hotspotY) {
-    forgetClientCursor();
-    m_clientCursorKnown = true;
-    m_clientCursorSurface = surface;
+  void Cursor::setCursorSurface(wlr_surface* surface, int32_t hotspotX, int32_t hotspotY, wl_client* owner) {
+    const bool sameSurface = m_clientCursorKnown && surface != nullptr && surface == m_clientCursorSurface;
+    const bool sameHotspot = sameSurface && hotspotX == m_clientCursorHotspotX && hotspotY == m_clientCursorHotspotY;
+    const bool keepPromotion = sameHotspot && m_clientCursorFromXwayland && !m_clientCursorShape.empty();
+    if (!sameSurface) {
+      forgetClientCursor();
+      m_clientCursorKnown = true;
+      m_clientCursorOwner = owner;
+      if (owner != nullptr) {
+        wl_client_add_destroy_listener(owner, &m_clientCursorOwnerDestroy);
+      }
+      m_clientCursorSurface = surface;
+      if (surface != nullptr) {
+        Xwayland* xwayland = m_server->xwayland();
+        m_clientCursorFromXwayland = xwayland != nullptr && xwayland->ownsSurface(surface);
+        wl_signal_add(&surface->events.destroy, &m_clientCursorDestroy);
+        if (m_clientCursorFromXwayland) {
+          wl_signal_add(&surface->events.client_commit, &m_clientCursorClientCommit);
+          wl_signal_add(&surface->events.commit, &m_clientCursorCommit);
+          if (surface->buffer != nullptr) {
+            captureXwaylandCursorImage(&surface->buffer->base);
+          }
+        }
+      }
+    }
     m_clientCursorHotspotX = hotspotX;
     m_clientCursorHotspotY = hotspotY;
-    if (surface != nullptr) {
-      wl_signal_add(&surface->events.destroy, &m_clientCursorDestroy);
+    // Xwayland may commit a static cursor before assigning it to the pointer.
+    // Inspect that already-current buffer now; later animation and cursor
+    // changes arrive through m_clientCursorCommit.
+    if ((!sameSurface || !sameHotspot) && m_clientCursorFromXwayland && !m_clientCursorPixels.empty()) {
+      handleClientCursorCommit();
+      if (m_compositorOwnsCursor || !m_clientCursorShape.empty()) {
+        return;
+      }
+    } else if (!sameHotspot) {
+      m_clientCursorShape.clear();
     }
     if (m_compositorOwnsCursor) {
       // Replayed when the override ends.
+      return;
+    }
+    if (keepPromotion) {
+      setXcursor(m_clientCursorShape.c_str());
       return;
     }
     if (!m_cursorHidden) {
@@ -592,9 +670,13 @@ namespace umbriel {
     m_activeXcursorName.clear();
   }
 
-  void Cursor::setCursorShape(const char* name) {
+  void Cursor::setCursorShape(const char* name, wl_client* owner) {
     forgetClientCursor();
     m_clientCursorKnown = true;
+    m_clientCursorOwner = owner;
+    if (owner != nullptr) {
+      wl_client_add_destroy_listener(owner, &m_clientCursorOwnerDestroy);
+    }
     m_clientCursorShape = name;
     if (m_compositorOwnsCursor) {
       return;
@@ -618,25 +700,179 @@ namespace umbriel {
     m_activeXcursorName.clear();
   }
 
+  void Cursor::captureXwaylandCursorImage(wlr_buffer* buffer) {
+    m_clientCursorPixels.clear();
+    m_clientCursorImageWidth = 0;
+    m_clientCursorImageHeight = 0;
+    if (buffer == nullptr || buffer->width <= 0 || buffer->height <= 0) {
+      return;
+    }
+
+    void* pixels = nullptr;
+    uint32_t format = DRM_FORMAT_INVALID;
+    size_t stride = 0;
+    if (!wlr_buffer_begin_data_ptr_access(buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ, &pixels, &format, &stride)) {
+      return;
+    }
+
+    constexpr size_t kBytesPerPixel = sizeof(uint32_t);
+    const auto width = static_cast<uint32_t>(buffer->width);
+    const auto height = static_cast<uint32_t>(buffer->height);
+    const bool widthOverflows = width > std::numeric_limits<size_t>::max() / kBytesPerPixel;
+    const size_t rowBytes = widthOverflows ? 0 : static_cast<size_t>(width) * kBytesPerPixel;
+    const bool sizeOverflows = rowBytes == 0 || height > std::numeric_limits<size_t>::max() / rowBytes;
+    if (format == DRM_FORMAT_ARGB8888 && pixels != nullptr && stride >= rowBytes && !sizeOverflows) {
+      m_clientCursorPixels.resize(rowBytes * height);
+      const auto* source = static_cast<const uint8_t*>(pixels);
+      for (uint32_t y = 0; y < height; ++y) {
+        std::memcpy(
+            m_clientCursorPixels.data() + static_cast<size_t>(y) * rowBytes, source + static_cast<size_t>(y) * stride,
+            rowBytes
+        );
+      }
+      m_clientCursorImageWidth = width;
+      m_clientCursorImageHeight = height;
+    }
+    wlr_buffer_end_data_ptr_access(buffer);
+  }
+
+  std::optional<std::string> Cursor::matchXwaylandCursor() const {
+    if (!m_clientCursorFromXwayland
+        || m_clientCursorSurface == nullptr
+        || m_clientCursorSurface->current.scale != 1
+        || m_clientCursorSurface->current.transform != WL_OUTPUT_TRANSFORM_NORMAL
+        || m_clientCursorSurface->current.viewport.has_src
+        || m_clientCursorSurface->current.viewport.has_dst
+        || m_clientCursorPixels.empty()
+        || m_clientCursorSurface->current.width != static_cast<int>(m_clientCursorImageWidth)
+        || m_clientCursorSurface->current.height != static_cast<int>(m_clientCursorImageHeight)
+        || m_clientCursorHotspotX < 0
+        || m_clientCursorHotspotY < 0) {
+      return std::nullopt;
+    }
+
+    return matchXcursorManagerImage(
+        m_xcursorManager,
+        {
+            .width = m_clientCursorImageWidth,
+            .height = m_clientCursorImageHeight,
+            .hotspotX = static_cast<uint32_t>(m_clientCursorHotspotX),
+            .hotspotY = static_cast<uint32_t>(m_clientCursorHotspotY),
+            .pixels = m_clientCursorPixels.data(),
+            .stride = static_cast<size_t>(m_clientCursorImageWidth) * sizeof(uint32_t),
+        },
+        m_clientCursorShape
+    );
+  }
+
+  void Cursor::finishClientCursorFrame() const {
+    if (m_clientCursorSurface == nullptr) {
+      return;
+    }
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    wlr_surface_send_frame_done(m_clientCursorSurface, &now);
+  }
+
+  void Cursor::handleClientCursorCommit() {
+    const bool wasPromoted = !m_clientCursorShape.empty();
+    if (const std::optional<std::string> match = matchXwaylandCursor()) {
+      m_clientCursorShape = *match;
+      if (!m_compositorOwnsCursor) {
+        setXcursor(m_clientCursorShape.c_str());
+      }
+      // Xwayland waits for this callback before committing an animated cursor's
+      // next frame. wlroots no longer owns the source surface after promotion.
+      finishClientCursorFrame();
+      return;
+    }
+
+    m_clientCursorShape.clear();
+    if (!m_compositorOwnsCursor) {
+      if (wasPromoted && !m_cursorHidden) {
+        wlr_cursor_set_surface(m_cursor, m_clientCursorSurface, m_clientCursorHotspotX, m_clientCursorHotspotY);
+      }
+      m_activeXcursorManager = nullptr;
+      m_activeXcursorName.clear();
+    }
+    // wlroots paces a visible raw surface. When Umbriel has detached it for a
+    // compositor override or cursor hiding, complete Xwayland's callback here.
+    if (m_compositorOwnsCursor || m_cursorHidden) {
+      finishClientCursorFrame();
+    }
+  }
+
   void Cursor::forgetClientCursor() {
+    if (m_clientCursorOwnerDestroy.link.next != nullptr) {
+      wl_list_remove(&m_clientCursorOwnerDestroy.link);
+      m_clientCursorOwnerDestroy.link.next = nullptr;
+    }
     if (m_clientCursorDestroy.link.next != nullptr) {
       wl_list_remove(&m_clientCursorDestroy.link);
       m_clientCursorDestroy.link.next = nullptr;
     }
+    if (m_clientCursorClientCommit.link.next != nullptr) {
+      wl_list_remove(&m_clientCursorClientCommit.link);
+      m_clientCursorClientCommit.link.next = nullptr;
+    }
+    if (m_clientCursorCommit.link.next != nullptr) {
+      wl_list_remove(&m_clientCursorCommit.link);
+      m_clientCursorCommit.link.next = nullptr;
+    }
     m_clientCursorKnown = false;
+    m_clientCursorOwner = nullptr;
     m_clientCursorSurface = nullptr;
     m_clientCursorHotspotX = 0;
     m_clientCursorHotspotY = 0;
     m_clientCursorShape.clear();
+    m_clientCursorFromXwayland = false;
+    m_clientCursorPixels.clear();
+    m_clientCursorImageWidth = 0;
+    m_clientCursorImageHeight = 0;
+  }
+
+  void Cursor::onClientCursorOwnerDestroy(wl_listener* listener, void* /*data*/) {
+    Cursor* self;
+    self = wl_container_of(listener, self, m_clientCursorOwnerDestroy);
+    self->forgetClientCursor();
+    if (!self->m_compositorOwnsCursor) {
+      self->setXcursor("default");
+    }
   }
 
   void Cursor::onClientCursorDestroy(wl_listener* listener, void* /*data*/) {
     Cursor* self;
     self = wl_container_of(listener, self, m_clientCursorDestroy);
+    const bool promoted = self->m_clientCursorSurface != nullptr && !self->m_clientCursorShape.empty();
     self->forgetClientCursor();
+    if (promoted && !self->m_compositorOwnsCursor) {
+      self->setXcursor("default");
+    }
+  }
+
+  void Cursor::onClientCursorClientCommit(wl_listener* listener, void* /*data*/) {
+    Cursor* self;
+    self = wl_container_of(listener, self, m_clientCursorClientCommit);
+    wlr_surface_state& pending = self->m_clientCursorSurface->pending;
+    if ((pending.committed & WLR_SURFACE_STATE_BUFFER) != 0) {
+      self->captureXwaylandCursorImage(pending.buffer);
+    }
+  }
+
+  void Cursor::onClientCursorCommit(wl_listener* listener, void* /*data*/) {
+    Cursor* self;
+    self = wl_container_of(listener, self, m_clientCursorCommit);
+    self->m_clientCursorHotspotX -= self->m_clientCursorSurface->current.dx;
+    self->m_clientCursorHotspotY -= self->m_clientCursorSurface->current.dy;
+    self->handleClientCursorCommit();
   }
 
   void Cursor::notePointerFocusChange(wlr_surface* newSurface) {
+    if (newSurface != nullptr
+        && m_clientCursorOwner != nullptr
+        && wl_resource_get_client(newSurface->resource) == m_clientCursorOwner) {
+      return;
+    }
     forgetClientCursor();
     if (newSurface == nullptr && !m_compositorOwnsCursor) {
       setXcursor("default");
@@ -650,6 +886,38 @@ namespace umbriel {
     m_activeXcursorManager = m_xcursorManager;
     m_activeXcursorName = name;
   }
+
+#ifdef UMBRIEL_TEST_IPC
+  std::string Cursor::clientCursorSourceForTest() const {
+    if (!m_clientCursorKnown) {
+      return "none";
+    }
+    if (!m_clientCursorShape.empty()) {
+      return "xcursor";
+    }
+    return m_clientCursorSurface != nullptr ? "surface" : "hidden";
+  }
+
+  std::optional<Cursor::RenderedCursorStateForTest> Cursor::renderedCursorStateForTest() const {
+    wlr_output* output = wlr_output_layout_output_at(m_server->outputLayout(), m_cursor->x, m_cursor->y);
+    if (output == nullptr) {
+      return std::nullopt;
+    }
+
+    wlr_output_cursor* outputCursor = nullptr;
+    wl_list_for_each(outputCursor, &output->cursors, link) {
+      if (outputCursor->enabled && outputCursor->visible && outputCursor->texture != nullptr) {
+        return RenderedCursorStateForTest{
+            .textureWidth = outputCursor->texture->width,
+            .textureHeight = outputCursor->texture->height,
+            .renderWidth = outputCursor->width,
+            .renderHeight = outputCursor->height,
+        };
+      }
+    }
+    return std::nullopt;
+  }
+#endif
 
   bool Cursor::isPassthrough() const { return std::holds_alternative<PassthroughGrab>(m_grab); }
 
@@ -930,6 +1198,7 @@ namespace umbriel {
 
   void Cursor::resetMode() {
     m_server->hideInsertHint();
+    cancelDataDragEdgeScroll();
     View* view = grabbedView();
     if (std::holds_alternative<ScrollDragGrab>(m_grab)) {
       m_server->gestures()->endPointerScroll(true, 0);
@@ -1023,14 +1292,11 @@ namespace umbriel {
         event->delta_x, event->delta_y, event->unaccel_dx, event->unaccel_dy
     );
 
+    if (m_activeConstraint != nullptr && !constraintSurfaceActive()) {
+      clearConstraint();
+    }
     if (m_activeConstraint != nullptr && m_activeConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED) {
-      // Workspace switch (etc.) can hide the locking surface without pointer motion.
-      // Drop the lock so the cursor can move and become visible again.
-      if (!constraintSurfaceActive()) {
-        clearConstraint();
-      } else {
-        return;
-      }
+      return;
     }
 
     double dx = event->delta_x;
@@ -1041,6 +1307,7 @@ namespace umbriel {
       }
     }
 
+    confineRuleDelta(&dx, &dy);
     const double oldX = m_cursor->x;
     const double oldY = m_cursor->y;
     wlr_cursor_move(m_cursor, &event->pointer->base, dx, dy);
@@ -1051,12 +1318,11 @@ namespace umbriel {
     auto* event = static_cast<wlr_pointer_motion_absolute_event*>(data);
     noteActivity();
     m_server->notifyInputActivity();
+    if (m_activeConstraint != nullptr && !constraintSurfaceActive()) {
+      clearConstraint();
+    }
     if (m_activeConstraint != nullptr && m_activeConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED) {
-      if (!constraintSurfaceActive()) {
-        clearConstraint();
-      } else {
-        return;
-      }
+      return;
     }
 
     double lx = 0;
@@ -1065,16 +1331,15 @@ namespace umbriel {
 
     const double oldX = m_cursor->x;
     const double oldY = m_cursor->y;
-    if (m_activeConstraint != nullptr && m_activeConstraint->type == WLR_POINTER_CONSTRAINT_V1_CONFINED) {
-      double dx = lx - m_cursor->x;
-      double dy = ly - m_cursor->y;
-      if (!confineDelta(&dx, &dy)) {
-        return;
-      }
-      wlr_cursor_move(m_cursor, &event->pointer->base, dx, dy);
-    } else {
-      wlr_cursor_warp_absolute(m_cursor, &event->pointer->base, event->x, event->y);
+    double dx = lx - m_cursor->x;
+    double dy = ly - m_cursor->y;
+    if (m_activeConstraint != nullptr
+        && m_activeConstraint->type == WLR_POINTER_CONSTRAINT_V1_CONFINED
+        && !confineDelta(&dx, &dy)) {
+      return;
     }
+    confineRuleDelta(&dx, &dy);
+    wlr_cursor_move(m_cursor, &event->pointer->base, dx, dy);
     processMotion(event->time_msec, oldX, oldY);
   }
 
@@ -1183,9 +1448,9 @@ namespace umbriel {
         if (button == grab->button) {
           m_server->gestures()->endPointerScroll(m_server->sessionLocked(), timeMsec);
           resetMode();
-          // The grab cleared client focus on press and consumed every motion; re-run hit testing so hover/focus is
-          // correct without further motion.
-          processMotion(timeMsec, m_cursor->x, m_cursor->y);
+          // The grab cleared client focus on press and consumed every motion. Restore pointer delivery at the final
+          // position without letting this synthetic pass override the column selected by the gesture.
+          processMotion(timeMsec, m_cursor->x, m_cursor->y, false);
         }
         return;
       }
@@ -1787,6 +2052,7 @@ namespace umbriel {
         }
         processMove();
         updateDropTarget();
+        updateDataDragEdgeScroll();
         return;
       }
     }
@@ -1895,7 +2161,9 @@ namespace umbriel {
     double oldSx = 0;
     double oldSy = 0;
     View* oldView = m_server->viewAt(oldX, oldY, &oldSurface, &oldSx, &oldSy);
-    const bool entered = refocus || view != oldView;
+    // Keyboard focus is an escape from rule confinement. While the pointer remains inside that window, an
+    // invalidated hover must not immediately focus it again. A real re-entry (or a click) can still focus it.
+    const bool entered = view != oldView || (refocus && !ruleConstraintApplies(*view));
     // Workspace focus is remembered independently from the seat. A pinned window from another workspace can own the
     // seat while this view remains its active workspace's remembered focus, so only seat-global activation makes this
     // handoff redundant.
@@ -1956,7 +2224,7 @@ namespace umbriel {
         || wl_resource_get_client(watch->v2->focused_surface->resource) != event->seat_client->client) {
       return;
     }
-    watch->cursor->setCursorSurface(event->surface, event->hotspot_x, event->hotspot_y);
+    watch->cursor->setCursorSurface(event->surface, event->hotspot_x, event->hotspot_y, event->seat_client->client);
   }
 
   Cursor::TabletToolState* Cursor::toolState(wlr_tablet_tool* tool) {
@@ -2930,6 +3198,12 @@ namespace umbriel {
         wlr_seat_pointer_notify_clear_focus(seat);
       }
       wlr_seat_pointer_notify_frame(seat);
+      return;
+    }
+    if (tiledMoveDragActive()) {
+      // The compositor owns drop targeting during a window move; client pointer focus stays suspended.
+      updateDataDragEdgeScroll();
+      updateDropTarget();
       return;
     }
     if (!isPassthrough() || seat->pointer_state.button_count != 0) {

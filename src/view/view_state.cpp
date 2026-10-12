@@ -140,16 +140,7 @@ namespace umbriel {
       };
       m_hasMaximizeRestoreBox = restoreWidth > 0 && restoreHeight > 0;
 
-      const wlr_box usable = floatingUsableArea();
-      if (usable.width > 0 && usable.height > 0) {
-        configureSize(usable.width, usable.height);
-        if (animateFloating) {
-          beginResizeAnimation(usable.width, usable.height);
-          animateTo(usable.x, usable.y);
-        } else {
-          setPosition(usable.x, usable.y);
-        }
-      }
+      placeFloatingMaximized(floatingMaximizedBox(floatingUsableArea()), animateFloating);
     } else if (!maximized && wasMaximized && m_hasMaximizeRestoreBox) {
       requestFloatingSize(m_maximizeRestoreBox.width, m_maximizeRestoreBox.height);
       if (animateFloating) {
@@ -159,12 +150,48 @@ namespace umbriel {
         setPosition(m_maximizeRestoreBox.x, m_maximizeRestoreBox.y);
       }
       m_hasMaximizeRestoreBox = false;
+    } else if (maximized) {
+      // Maximize and maximize-to-edges fill different boxes, so a float switching between them is refit.
+      placeFloatingMaximized(floatingMaximizedBox(floatingUsableArea()), false);
     }
     setMaximizedState(maximized);
     if (!sizeAnimating()) {
       syncFloatingSurfaceClip();
     }
     updateForeignState();
+  }
+
+  void View::placeFloatingMaximized(const wlr_box& box, bool animate) {
+    if (box.width <= 0 || box.height <= 0) {
+      return;
+    }
+    m_floatingMaximizedBox = box;
+    configureSize(box.width, box.height);
+    if (animate) {
+      beginResizeAnimation(box.width, box.height);
+      animateTo(box.x, box.y);
+    } else {
+      setPosition(box.x, box.y);
+    }
+  }
+
+  void View::refitFloatingMaximized() {
+    // A scratchpad window has no workspace: its manager refits it with the box this view computes.
+    if (m_tiled || !m_mapped || !m_floatingMaximized || m_workspace == nullptr || scheduledFullscreen()) {
+      return;
+    }
+    if (m_server->cursor()->isDraggingView(this)) {
+      return;
+    }
+    const wlr_box box = floatingMaximizedBox(floatingUsableArea());
+    const bool moved = box.x != m_floatingMaximizedBox.x
+        || box.y != m_floatingMaximizedBox.y
+        || box.width != m_floatingMaximizedBox.width
+        || box.height != m_floatingMaximizedBox.height;
+    if (moved) {
+      placeFloatingMaximized(box, false);
+      syncFloatingSurfaceClip();
+    }
   }
 
   void View::handleRequestMaximize() {
@@ -311,6 +338,11 @@ namespace umbriel {
     );
 
     const bool requested = requestedFullscreen();
+    if (!requested && scheduledFullscreen() && m_xCompositorFullscreen) {
+      kLog.debug("request_fullscreen denied for compositor-owned X11 '{}'", appId() != nullptr ? appId() : "?");
+      reassertRoleState();
+      return;
+    }
     const FullscreenRequestDisposition disposition =
         m_deferredUnfullscreen.observeClientRequest(requested, scheduledActivated(), scheduledFullscreen());
 
@@ -344,6 +376,8 @@ namespace umbriel {
       }
       raiseToTop();
     }
+    // The IPC window listing reports the parent.
+    m_server->scheduleIpcWindowsEvent();
   }
 
   void View::recordOpeningParentRequest(bool parentRequested) {
@@ -358,7 +392,9 @@ namespace umbriel {
     if (!roleInitialized()) {
       return;
     }
-    setFullscreen(!scheduledFullscreen());
+    const bool fullscreen = !scheduledFullscreen();
+    m_xCompositorFullscreen = m_xsurface != nullptr && fullscreen;
+    setFullscreen(fullscreen);
   }
 
   void View::applyDeferredUnfullscreen() {
@@ -387,6 +423,7 @@ namespace umbriel {
 
   void View::applyPinnedState() {
     m_pinned = true;
+    m_server->scheduleIpcWindowsEvent();
     restorePinnedSceneParent();
     if (m_workspace != nullptr) {
       m_workspace->syncViewPresentation(this);
@@ -418,12 +455,17 @@ namespace umbriel {
         m_server->focusView(this);
       }
       refreshStateRuleEffects();
+      // A float pins without touching the layout, so the occupancy questions need a pass of their own.
+      if (m_workspace != nullptr) {
+        m_workspace->markArrange();
+      }
       return;
     }
 
     const bool restoreTiled = m_restoreTiledAfterUnpin;
     m_restoreTiledAfterUnpin = false;
     m_pinned = false;
+    m_server->scheduleIpcWindowsEvent();
     if (restoreTiled) {
       setFloating(false, focus);
       if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
@@ -442,6 +484,9 @@ namespace umbriel {
       overview->onViewPinnedChanged(this);
     }
     refreshStateRuleEffects();
+    if (m_workspace != nullptr) {
+      m_workspace->markArrange();
+    }
   }
 
   void View::setFloating(bool floating, bool focus, TilePlacement placement) {
@@ -688,6 +733,7 @@ namespace umbriel {
     // Any leave-fullscreen invalidates a pending float-toggle restore: the
     // float path re-sets the flag right after its own setFullscreen(false).
     if (!fullscreen) {
+      m_xCompositorFullscreen = false;
       m_refullscreenOnTile = false;
     }
     const bool unpinning = fullscreen && m_pinned;

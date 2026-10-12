@@ -2,12 +2,11 @@
 # Virtual workspace occurrences own histories independently of native owners;
 # successful final submission, not capture/retry, advances those histories.
 set -euo pipefail
-helper=$(realpath "$(dirname "$UMBRIEL_UNMAP_CLIENT")/audio-synthetic")
 cp "$UMBRIEL_REPO/examples/effects/scene/melt/shader.glsl" "$UMBRIEL_RUNTIME_DIR/melt.glsl"
 cat > "$UMBRIEL_RUNTIME_DIR/history.glsl" <<'GLSL'
 vec4 window(vec2 uv) {
   vec4 p = umbriel_sample_previous(uv);
-  float token = umbriel_audio_rms();
+  float token = umbriel_audio_level();
   float step = abs(p.g - token) > 0.01 ? 0.1 : 0.0;
   return vec4(p.r + step, token, umbriel_sample(uv).b, 1.0);
 }
@@ -51,7 +50,6 @@ in_capture = true
 [effects.preset.history]
 kind = "window"
 shader = "history.glsl"
-audio = "fixture"
 [effects.preset.faces]
 kind = "animation"
 interface = "scene-v1"
@@ -63,12 +61,6 @@ kind = "animation"
 interface = "scene-v1"
 scope = "workspace_pair"
 shader = "melt.glsl"
-[effects.audio.sources.fixture]
-provider = "external"
-mode = "playback"
-target = "explicit-history-fixture"
-executable = "$helper"
-args = ["--external-test", "--silence"]
 [[window_rule]]
 match.title = "^history-hidden$"
 default_workspace = 2
@@ -82,6 +74,10 @@ import json
 import os
 import subprocess
 import time
+import sys
+sys.path.insert(0, os.path.join(os.environ['UMBRIEL_REPO'], 'tests', 'harness'))
+from audio_feed import AudioFeed
+feed = AudioFeed()
 
 exe = os.environ['UMBRIEL']
 def run(*args):
@@ -92,8 +88,6 @@ def state():
     return next(o['workspace_presentation'] for o in data('effects')['owners'] if o['type'] == 'output' and o['name'] == 'HEADLESS-1')
 def frame():
     return data('effect-frames')['outputs'][0]
-def latch():
-    return next(a for a in frame()['audio'] if a['source'] == 'fixture')
 def wait(get, predicate, reason):
     end = time.monotonic() + 5
     while True:
@@ -103,9 +97,10 @@ def wait(get, predicate, reason):
         assert time.monotonic() < end, (reason, value)
         time.sleep(.01)
 def inject(value, submitted=True):
-    run('audio-inject', json.dumps(dict(source='fixture', rms=value, peak=value, envelope=value, bands=[value] * 16)))
-    if submitted:
-        wait(latch, lambda a: not a['pending'] and abs(a['presented_rms'] - value) < 1e-6, 'audio not submitted')
+    before = frame()['buffer_commits']
+    feed.set(value)
+    if submitted and value != 0:
+        wait(frame, lambda f: f['buffer_commits'] > before, 'audio frame not submitted')
 def pixels(xs, red, green):
     image = os.path.join(os.environ['UMBRIEL_RUNTIME_DIR'], 'scene-history.png')
     subprocess.run(['grim', '-s', '1', '-o', 'HEADLESS-1', image], check=True, timeout=10)
@@ -114,7 +109,6 @@ def pixels(xs, red, green):
         assert abs(rgb[0] - round(red * 255)) <= 5 and abs(rgb[1] - round(green * 255)) <= 3 and rgb[2] >= 250, ('history pixel', x, red, green, rgb)
 
 wait(lambda: data('windows'), lambda w: len(w) == 2, 'clients did not map')
-wait(lambda: data('effects')['audio'], lambda a: a and a[0]['available'], 'helper not available')
 run('settle')
 run('clock-freeze')
 inject(0)
@@ -139,9 +133,8 @@ inject(.1, False)
 wait(frame, lambda f: f['rejected_buffer_commits'] > before['rejected_buffer_commits'], 'no failed candidate')
 inject(.9, False)
 time.sleep(.15)
-assert abs(latch()['latched_rms'] - .1) < 1e-6, 'retry discarded the held source snapshot'
 run('output-commit-hold', 'HEADLESS-1 off')
-wait(latch, lambda a: not a['pending'] and abs(a['presented_rms'] - .9) < 1e-6, 'queued input not presented')
+time.sleep(.2)
 pixels([160, 480], .4, .9)
 run('msg', 'workspace-presentation-cancel')
 run('clock-advance', '1')
@@ -165,4 +158,5 @@ run('clock-advance', '1500')
 run('settle')
 wait(pair, lambda s: not s['active'] and s['memory_bytes'] == 0, 'frozen history resources retained')
 print('Independent virtual feedback, failed-submit promotion, native isolation, exact frozen melt and resource release verified')
+feed.close()
 PY

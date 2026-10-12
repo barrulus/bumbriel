@@ -173,13 +173,27 @@ require a running-session check.
 
 A `tracy` build carries CPU zones at those boundaries through
 [`src/core/tracy.h`](../../src/core/tracy.h): `Output::handleFrame`,
-`Output::flushDirty`, `Output::render`, `Server::tickAnimations`, and
-`WineColorManager::applySurfaceDescriptions`. umbrielfx carries paired CPU and
+`Output::flushDirty`, `Output::render` (split into `Output::buildState` and
+`Output::commitState`), `Server::tickAnimations`,
+`WineColorManager::applySurfaceDescriptions`, and the overview's setup:
+`Overview::open`, `Overview::beginPresentation`, `Overview::buildState`, and
+`Overview::layoutOutput`. umbrielfx carries paired CPU and
 GPU zones across its render pass. Every `wlr_scene_output_build_state` exit
 emits a frame mark, including the scanout one, so a capture separates
 scanned-out frames from composited ones: a scanned-out frame has a frame mark
 and no render-pass zones. Build and capture instructions are in
 [CONTRIBUTING.md](../../CONTRIBUTING.md#profiling).
+
+Two plots per output come from `Output::handlePresent` and show whether frames
+reached the screen: `<output> present interval ms`, the time between presented
+frames, and `<output> vblanks per present`, the vblank counter's step between
+them. While frames keep coming, a step above 1 is a missed vblank. The vblank
+plot is absent on backends without a vblank counter, such as headless.
+
+The GPU zone `fx_render_pass` spans a whole render pass, from
+`fx_begin_buffer_pass` to the last command `render_pass_submit` issues, so its
+length is the pass's GPU time. Both GPU zones end before the flush or fence that
+submits the pass.
 
 umbrielfx adds these zones for effect costs:
 
@@ -192,10 +206,10 @@ umbrielfx adds these zones for effect costs:
 | `draw_animation_texture` (CPU and GPU) | [`fx_pass.c:691`](../../umbrielfx/render/fx_renderer/fx_pass.c) | Every effect program draw: animation slots, border, window, screen, and cursor effects, border light, and the shadow of a slot program | |
 
 `tracy-csvexport -u` prints each CPU zone event with its text in the `value`
-column, and `-g` prints each GPU zone event. These zones end with
-`TRACY_ZONE_END_QUIET`, which adds no text. `draw_animation_texture`, like the
-other render-pass zones, ends with `TRACY_BOTH_ZONES_END`, which appends a
-`Success On Line` line to its text.
+column, and `-g` prints each GPU zone event. Zone text is formatted only while
+a profiler is connected, so a disconnected `tracy` build pays no formatting per
+draw. A render-pass zone that ends on a failure path carries a `Fail On Line`
+text; a successful one carries only the labels its draw adds.
 
 ## Workloads
 
@@ -293,10 +307,12 @@ carries the effect and B a workload that stays the same. Transient animations
 are off (`[animation] enabled = false`), blur is off, and the effect is toggled
 by editing the configuration and running `umbriel msg config-reload`.
 
-- **Scanout.** A shows an ordinary desktop with several visible windows, so it
-  never scans out. B runs an eligible fullscreen client, such as
-  `vkmark --fullscreen --present-mode fifo`, whose `render list` zone reads
-  `1`, and `~/.cache/umbriel/umbriel.log` shows `Direct scan-out enabled`.
+- **Scanout.** The scan-out messages are wlroots debug output, so this run
+  starts the compositor with `UMBRIEL_WLR_DEBUG=1`. A shows an ordinary desktop
+  with several visible windows, so it never scans out. B runs an eligible
+  fullscreen client, such as `vkmark --fullscreen --present-mode fifo`, whose
+  `render list` zone reads `1`, and `~/.cache/umbriel/umbriel.log` shows
+  `Direct scan-out enabled`.
   Toggling A's effect at least three times must add no
   `Direct scan-out disabled` after that line. The log rotates at 1 MiB and
   keeps one previous file, so the check reads both, oldest first:

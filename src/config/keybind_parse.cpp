@@ -16,6 +16,7 @@ extern "C" {
 #include <cctype>
 #include <charconv>
 #include <cstddef>
+#include <ranges>
 #include <system_error>
 #include <utility>
 
@@ -126,6 +127,19 @@ namespace umbriel {
       }
       arg = value.substr(spec.name.size() + 1);
       return true;
+    }
+
+    std::optional<LayoutMode> layoutModeNamed(std::string_view name) {
+      if (name == "scrolling") {
+        return LayoutMode::Scrolling;
+      }
+      if (name == "dwindle") {
+        return LayoutMode::Dwindle;
+      }
+      if (name == "master") {
+        return LayoutMode::Master;
+      }
+      return std::nullopt;
     }
 
     bool parseWorkspaceArg(std::string_view arg, WorkspaceArg& workspace) {
@@ -279,6 +293,10 @@ namespace umbriel {
          KeybindAction::ScratchpadFocusNext, ActionArgKind::OptionalScratchpad},
         {"scratchpad-toggle", "[<scratchpad>]", "Show or hide the selected scratchpad windows",
          KeybindAction::ScratchpadToggle, ActionArgKind::OptionalScratchpad},
+        {"scratchpad-window-show-next", "[<scratchpad>]", "Show only the next scratchpad window",
+         KeybindAction::ScratchpadWindowShowNext, ActionArgKind::OptionalScratchpad},
+        {"scratchpad-window-show-previous", "[<scratchpad>]", "Show only the previous scratchpad window",
+         KeybindAction::ScratchpadWindowShowPrevious, ActionArgKind::OptionalScratchpad},
         {"screencast-clear", "", "Pause the screencast and stop following", KeybindAction::ScreenCastClear},
         {"screencast-follow-output", "", "Follow the focused output", KeybindAction::ScreenCastFollowOutput},
         {"screencast-follow-stop", "", "Stop following and keep the current target",
@@ -299,6 +317,10 @@ namespace umbriel {
         {"window-center", "", "Center the focused floating window on its output", KeybindAction::WindowCenter},
         {"window-close", "[<window-id>]", "Close the focused window, or the given window", KeybindAction::WindowClose,
          ActionArgKind::OptionalWindowId},
+        {"window-consume-from-left", "", "Pull the left column's window into the focused column",
+         KeybindAction::WindowConsumeFromLeft},
+        {"window-consume-from-right", "", "Pull the right column's window into the focused column",
+         KeybindAction::WindowConsumeFromRight},
         {"window-consume-left", "", "Stack the focused window into the column left", KeybindAction::WindowConsumeLeft},
         {"window-consume-or-expel-left", "", "Split the window out, or stack it into the column left",
          KeybindAction::WindowConsumeOrExpelLeft},
@@ -441,8 +463,8 @@ namespace umbriel {
         {"workspace-presentation-select", "<workspace>[/<output>]", "Select a workspace face",
          KeybindAction::WorkspacePresentationSelect, ActionArgKind::Workspace},
         {"workspace-previous", "", "Switch to the previous workspace on this output", KeybindAction::WorkspacePrevious},
-        {"workspace-set-layout", "<scrolling|dwindle|master|toggle>", "Set the active workspace's layout mode",
-         KeybindAction::WorkspaceSetLayout, ActionArgKind::LayoutMode},
+        {"workspace-set-layout", "<scrolling|dwindle|master|toggle[:mode1,mode2,...]>",
+         "Set the active workspace's layout mode", KeybindAction::WorkspaceSetLayout, ActionArgKind::LayoutMode},
         {"workspace-swap-active-output-down", "", "Swap active workspace windows with the output below",
          KeybindAction::WorkspaceSwapActiveOutputDown},
         {"workspace-swap-active-output-left", "", "Swap active workspace windows with the output left",
@@ -739,30 +761,39 @@ namespace umbriel {
           return true;
         }
         break;
-      case ActionArgKind::LayoutMode:
-        if (takeActionArg(value, spec, arg)) {
-          if (arg == "scrolling") {
-            output.action = spec.action;
-            output.payload = LayoutModeArg{.mode = LayoutMode::Scrolling};
-            return true;
-          }
-          if (arg == "dwindle") {
-            output.action = spec.action;
-            output.payload = LayoutModeArg{.mode = LayoutMode::Dwindle};
-            return true;
-          }
-          if (arg == "master") {
-            output.action = spec.action;
-            output.payload = LayoutModeArg{.mode = LayoutMode::Master};
-            return true;
-          }
-          if (arg == "toggle") {
-            output.action = spec.action;
-            output.payload = LayoutModeArg{};
-            return true;
-          }
+      case ActionArgKind::LayoutMode: {
+        if (!takeActionArg(value, spec, arg)) {
+          break;
         }
-        break;
+        if (const auto mode = layoutModeNamed(arg)) {
+          output.action = spec.action;
+          output.payload = LayoutModeArg{.mode = mode, .toggleSequence = {}};
+          return true;
+        }
+        if (arg == "toggle") {
+          output.action = spec.action;
+          output.payload = LayoutModeArg{};
+          return true;
+        }
+        constexpr std::string_view kTogglePrefix = "toggle:";
+        if (!arg.starts_with(kTogglePrefix)) {
+          break;
+        }
+        std::vector<LayoutMode> sequence;
+        for (const auto token : arg.substr(kTogglePrefix.size()) | std::views::split(',')) {
+          const auto mode = layoutModeNamed(std::string_view(token.begin(), token.end()));
+          if (!mode || std::ranges::contains(sequence, *mode)) {
+            return false;
+          }
+          sequence.push_back(*mode);
+        }
+        if (sequence.size() < 2) {
+          break;
+        }
+        output.action = spec.action;
+        output.payload = LayoutModeArg{.mode = std::nullopt, .toggleSequence = std::move(sequence)};
+        return true;
+      }
       }
     }
     return false;
@@ -851,6 +882,8 @@ namespace umbriel {
 
     add(KeybindAction::WindowConsumeLeft, XKB_KEY_comma);
     add(KeybindAction::WindowConsumeRight, XKB_KEY_period);
+    add(KeybindAction::WindowConsumeFromLeft, XKB_KEY_comma, WLR_MODIFIER_CTRL);
+    add(KeybindAction::WindowConsumeFromRight, XKB_KEY_period, WLR_MODIFIER_CTRL);
     add(KeybindAction::WindowCyclePrimaryExtent, XKB_KEY_r);
     add(KeybindAction::WindowCyclePrimaryExtentBack, XKB_KEY_r, WLR_MODIFIER_SHIFT);
     add(KeybindAction::ToggleFullscreen, XKB_KEY_f);

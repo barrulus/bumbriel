@@ -16,6 +16,12 @@ namespace umbriel {
     Sdr8,
   };
 
+  enum class FormatCommitResult : uint8_t {
+    Committed,
+    Rejected,
+    Retry,
+  };
+
   struct FormatSequenceParams {
     bool hdrRequested;
     bool imageDescAvailable;
@@ -34,7 +40,7 @@ namespace umbriel {
     std::function<bool(uint32_t format, bool vrr)> stageSdr;
     std::function<bool(uint32_t format, bool vrr)> stageHdr;
     std::function<bool()> test;
-    std::function<bool()> commit;
+    std::function<FormatCommitResult()> commit;
     std::function<void()> clearImageDescription;
     std::function<void(wlr_output_mode*)> stageMode;
     std::function<void(std::string_view requested, const wlr_output_mode& fallback)> warnModeFallback;
@@ -45,6 +51,7 @@ namespace umbriel {
     bool committed = false;
     bool usedModeFallback = false;
     bool modeFallbackWarnedNow = false;
+    bool retry = false;
     FormatTier committedTier = FormatTier::Sdr8;
     uint32_t committedFormat = 0;
     bool vrrDropped = false;

@@ -11,8 +11,11 @@
 #include "output/cursor_plane_pace.h"
 #include "output/format_sequence.h"
 #include "output/frame_schedule.h"
+#include "output/gamma_transition.h"
+#include "output/hdr_metadata.h"
 #include "output/identity.h"
 #include "output/mode_selection.h"
+#include "output/rendered_state_commit.h"
 #include "output/sdr_format.h"
 #include "overview/overview.h"
 #include "scene/cheatsheet.h"
@@ -32,16 +35,21 @@
 
 extern "C" {
 #include <umbrielfx/render/effect.h>
+#include <wlr/util/transform.h>
 }
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <drm_fourcc.h>
 #include <format>
 
-namespace umbriel {
+#ifdef TRACY_ENABLE
+#include <set>
+#endif
 
+namespace umbriel {
 #ifdef UMBRIEL_TEST_IPC
   void Output::setTestCommitHold(bool held) {
     if (m_testCommitHeld == held) {
@@ -90,6 +98,40 @@ namespace umbriel {
       Server& server;
     };
 
+    wlr_box
+    pendingSceneBox(const wlr_output& output, const wlr_output_state& state, const wlr_scene_output& sceneOutput) {
+      int width = output.width;
+      int height = output.height;
+      if ((state.committed & WLR_OUTPUT_STATE_MODE) != 0) {
+        if (state.mode_type == WLR_OUTPUT_STATE_MODE_FIXED && state.mode != nullptr) {
+          width = state.mode->width;
+          height = state.mode->height;
+        } else if (state.mode_type == WLR_OUTPUT_STATE_MODE_CUSTOM) {
+          width = state.custom_mode.width;
+          height = state.custom_mode.height;
+        }
+      }
+
+      const wl_output_transform transform =
+          (state.committed & WLR_OUTPUT_STATE_TRANSFORM) != 0 ? state.transform : output.transform;
+      wlr_output_transform_coords(transform, &width, &height);
+      const float scale = (state.committed & WLR_OUTPUT_STATE_SCALE) != 0 ? state.scale : output.scale;
+      if (scale > 0.0F) {
+        width = static_cast<int>(std::ceil(static_cast<double>(width) / scale));
+        height = static_cast<int>(std::ceil(static_cast<double>(height) / scale));
+      }
+      return {.x = sceneOutput.x, .y = sceneOutput.y, .width = width, .height = height};
+    }
+
+#ifdef TRACY_ENABLE
+    // Tracy keeps a plot's name pointer and reads it while a capture runs, so
+    // the per-output names live for the rest of the process.
+    const char* tracyPlotName(std::string name) {
+      static std::set<std::string> names;
+      return names.insert(std::move(name)).first->c_str();
+    }
+#endif
+
   } // namespace
 
   OutputIdentity Output::identity() const {
@@ -105,9 +147,18 @@ namespace umbriel {
   }
 
   Output::Output(Server& server, wlr_output* output)
-      : m_server(&server), m_output(output), m_defaultScale(output->scale) {
+      : m_server(&server), m_output(output), m_defaultScale(output->scale),
+        m_hdrStaticMetadata(hdrStaticMetadataForOutput(output)) {
     m_output->data = this;
     wlr_output_init_render(m_output, m_server->allocator(), m_server->renderer());
+    // Create the scene output before the initial configuration so startup and
+    // resume modesets carry rendered content instead of wlroots' empty buffer.
+    m_sceneOutput = wlr_scene_output_create(m_server->scene(), m_output);
+    if (m_sceneOutput == nullptr) {
+      kLog.error("output '{}': failed to create scene output", m_output->name);
+      std::abort();
+    }
+    wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
 
     m_frame.notify = onFrame;
     wl_signal_add(&m_output->events.frame, &m_frame);
@@ -131,8 +182,6 @@ namespace umbriel {
       // Keeping it disabled lets a later output-enable action retry the commit.
       m_desktopEnabled = false;
     }
-    m_sceneOutput = wlr_scene_output_create(m_server->scene(), m_output);
-    wlr_scene_output_set_direct_scanout_enabled(m_sceneOutput, configuredDirectScanoutEnabled());
     updateSceneSdrWhite();
     if (desktopEnabled()) {
       wlr_output_layout_output* layoutOutput = addToLayout();
@@ -166,14 +215,22 @@ namespace umbriel {
   }
 
   void Output::scheduleAudioFrame() {
-    if (m_handlingFrame
-        || m_server->sessionLocked()
-        || !outputFrameAllowed(m_server->stopping(), m_server->session())) {
+    if (m_server->sessionLocked() || !outputFrameAllowed(m_server->stopping(), m_server->session())) {
+      m_effectAudio = {};
+      wlr_scene_output_set_effect_audio(m_sceneOutput, m_effectAudio.data());
+      return;
+    }
+    if (!wlr_scene_output_audio_active(m_sceneOutput) && !m_server->effects().sceneAudioActive(this)) {
       return;
     }
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
     armEffectFrame(static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000);
+  }
+
+  bool Output::audioPending() const {
+    return m_effectAudio != m_server->effects().audio()
+        && (wlr_scene_output_audio_active(m_sceneOutput) || m_server->effects().sceneAudioActive(this));
   }
 
   void Output::applyOutputEffects() {
@@ -196,22 +253,23 @@ namespace umbriel {
 #ifdef UMBRIEL_TEST_IPC
     advancing = !m_server->animationClockFrozen();
 #endif
+    wlr_scene_output_set_effect_time(m_sceneOutput, m_server->animationClockMsec());
     m_outputEffectsTimed = false;
-    // Registers the slot's instance and returns its parameters at this output's effect time.
-    const auto bind = [&](const void* owner, const EffectPreset& preset, fx_effect_shader* shader, bool visible) {
-      fx_animation_parameters parameters{};
-      registry.fillTimeUniforms(parameters, m_effectSeconds, preset, shader, this);
-      const bool readsTime = fx_effect_shader_reads(shader, "umbriel_time");
-      m_outputEffectsTimed =
-          m_outputEffectsTimed || ((readsTime || !registry.audioSource(preset, shader).empty()) && visible);
+    // Register demand after the cursor program and motion history have been updated.
+    const auto bind = [&](const void* owner, fx_effect_shader* shader, bool visible) {
+      const bool motion = fx_effect_shader_reads(shader, "umbriel_pointer_history")
+          || fx_effect_shader_reads(shader, "umbriel_pointer_path");
+      const bool readsTime = fx_effect_shader_reads(shader, "umbriel_time")
+          || (motion && wlr_scene_output_cursor_motion_active(m_sceneOutput));
+      m_outputEffectsTimed = m_outputEffectsTimed || (readsTime && visible);
       registry.updateInstance(
-          owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing},
-          registry.audioSource(preset, shader)
+          owner, {.output = this, .visible = visible, .readsTime = readsTime, .advancing = advancing}
       );
-      return parameters;
     };
     if (screenPreset != nullptr) {
-      const fx_animation_parameters parameters = bind(this, *screenPreset, screen, m_output->enabled);
+      fx_animation_parameters parameters{};
+      registry.fillTimeUniforms(parameters, m_effectSeconds, *screenPreset, screen);
+      bind(this, screen, m_output->enabled);
       wlr_scene_output_set_screen_effect(m_sceneOutput, screen, &parameters);
     } else {
       wlr_scene_output_set_screen_effect(m_sceneOutput, nullptr, nullptr);
@@ -222,11 +280,13 @@ namespace umbriel {
       const double lx = pointer->wlr()->x;
       const double ly = pointer->wlr()->y;
       const bool here = wlr_output_layout_output_at(m_server->outputLayout(), lx, ly) == m_output;
-      const fx_animation_parameters parameters =
-          bind(&m_cursorEffectOwner, *cursorPreset, cursor, m_output->enabled && here && pointer->visible());
+      fx_animation_parameters parameters{};
+      registry.fillTimeUniforms(parameters, m_effectSeconds, *cursorPreset, cursor);
       wlr_scene_output_set_cursor_effect(m_sceneOutput, cursor, &parameters, cursorPreset->radius);
       // A newly set cursor program draws nothing until the pointer is pushed after it.
+      wlr_scene_output_set_effect_time(m_sceneOutput, m_server->animationClockMsec());
       wlr_scene_output_set_effect_pointer(m_sceneOutput, lx, ly, pointer->visible());
+      bind(&m_cursorEffectOwner, cursor, m_output->enabled && here && pointer->visible());
     } else {
       wlr_scene_output_set_cursor_effect(m_sceneOutput, nullptr, nullptr, 0);
       registry.removeInstance(&m_cursorEffectOwner);
@@ -263,9 +323,7 @@ namespace umbriel {
     return captureLocks > 0 && !config().effects.inCapture && m_server->effects().inPlaceReferenced();
   }
 
-  unsigned Output::effectEligible() const {
-    return m_server->effects().ledger().eligible(this) + (m_server->effects().audioDirty(this) ? 1U : 0U);
-  }
+  unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
 
   wlr_box Output::layoutBox() const {
     wlr_box box{.x = m_arrangedLayoutX, .y = m_arrangedLayoutY, .width = 0, .height = 0};
@@ -419,34 +477,45 @@ namespace umbriel {
     wlr_scene_output_set_sdr_white_level(m_sceneOutput, sdrWhite);
   }
 
-  void Output::rejectGammaControl(wlr_gamma_control_v1* control) {
-    if (control != nullptr) {
-      wlr_gamma_control_v1_send_failed_and_destroy(control);
-      if (!m_hdrGammaWarningLogged) {
-        kLog.warn("output '{}': gamma control is unavailable while HDR is active", m_output->name);
-        m_hdrGammaWarningLogged = true;
-      }
+  wlr_scene_rect* Output::createConfiguredFrameMask(const wlr_output_state& state) const {
+    const wlr_box box = pendingSceneBox(*m_output, state, *m_sceneOutput);
+    if (box.width <= 0 || box.height <= 0) {
+      kLog.error("output '{}': configured frame has no secure logical extent", m_output->name);
+      return nullptr;
     }
-    m_gammaDirty = false;
+    auto color = config().colors.backdrop;
+    color[3] = 1.0F;
+    wlr_scene_rect* mask = wlr_scene_rect_create(&m_server->scene()->tree, box.width, box.height, color.data());
+    if (mask == nullptr) {
+      kLog.error("output '{}': failed to create secure mask for configured frame", m_output->name);
+      return nullptr;
+    }
+    wlr_scene_node_set_position(&mask->node, box.x, box.y);
+    wlr_scene_node_raise_to_top(&mask->node);
+    return mask;
   }
 
-  bool Output::applyConfiguredState() {
+  bool Output::applyConfiguredState(bool stageGeometry) {
+    if (m_workspaceGroup != nullptr) {
+      m_workspaceGroup->abandonReveal();
+    }
     const OutputRule* rule = findOutputRule(config(), identity());
     const std::optional<double> configuredScale = rule != nullptr ? rule->scale : std::nullopt;
     const bool enabled = desktopEnabled() && !m_dpmsOff;
     wlr_output_state state{};
     wlr_output_state_init(&state);
-    wlr_output_state_set_enabled(&state, enabled);
+    if (stageGeometry) {
+      wlr_output_state_set_enabled(&state, enabled);
+    }
 
     const bool hdrWasActive = hdrActive();
     const bool hdrRequested = this->hdrRequested();
-    m_lastHdrRequested = hdrRequested;
 
     // Stage geometry.
     bool scaleStaged = false;
     const OutputMode* configuredModeSpec = nullptr;
     wlr_output_mode* stagedMode = nullptr;
-    if (enabled) {
+    if (enabled && stageGeometry) {
       if (rule != nullptr && rule->mode) {
         if (wlr_output_is_wl(m_output)) {
           kLog.info("output '{}': mode is ignored in nested sessions", m_output->name);
@@ -477,6 +546,12 @@ namespace umbriel {
       }
     }
 
+    if (enabled && !stageGeometry) {
+      // Image-description and max-bpc changes may require a modeset even
+      // though the live mode and geometry stay unchanged.
+      state.allow_reconfiguration = true;
+    }
+
     // VRR variants. Try with VRR first (if requested and supported), then without.
     const bool vrrRequested = enabled && configuredVrrEnabled();
     const bool vrrSupported = m_output->adaptive_sync_supported;
@@ -498,14 +573,7 @@ namespace umbriel {
       } else if (!m_server->renderer()->features.output_color_transform) {
         earlyHdrFail = "renderer lacks FP16 output transform";
       } else {
-        hdrDescription = {
-            .primaries = WLR_COLOR_NAMED_PRIMARIES_BT2020,
-            .transfer_function = WLR_COLOR_TRANSFER_FUNCTION_ST2084_PQ,
-            .mastering_display_primaries = {},
-            .mastering_luminance = {},
-            .max_cll = 0,
-            .max_fall = 0,
-        };
+        hdrDescription = makeHdrOutputDescription(m_output->default_primaries, m_hdrStaticMetadata);
 
         if (!wlr_output_state_set_image_description(&state, &hdrDescription)) {
           earlyHdrFail = "failed to stage HDR image description";
@@ -529,12 +597,28 @@ namespace umbriel {
         wlr_output_state_set_adaptive_sync_enabled(&state, vrr);
       }
     };
+    const GammaTransitionOps gammaOps{
+        .clear = [&] { wlr_output_state_set_color_transform(&state, nullptr); },
+        .apply =
+            [&] {
+              wlr_gamma_control_v1* control =
+                  wlr_gamma_control_manager_v1_get_control(m_server->gammaManager(), m_output);
+              if (wlr_gamma_control_v1_apply(control, &state)) {
+                return true;
+              }
+              if (control != nullptr) {
+                wlr_gamma_control_v1_send_failed_and_destroy(control);
+              }
+              return false;
+            },
+    };
 
     const auto stageHdr = [&](uint32_t fmt, bool vrr) -> bool {
       if (!isPrimaryFormat(fmt)) {
         return false;
       }
       stageVrr(vrr);
+      (void)stageGammaForOutputMode(GammaOutputMode::Hdr, gammaOps);
       wlr_output_state_set_image_description(&state, &hdrDescription);
       wlr_output_state_set_render_format(&state, fmt);
       return true;
@@ -545,6 +629,7 @@ namespace umbriel {
         return false;
       }
       stageVrr(vrr);
+      (void)stageGammaForOutputMode(GammaOutputMode::Sdr, gammaOps);
       wlr_output_state_set_render_format(&state, fmt);
       return true;
     };
@@ -563,18 +648,96 @@ namespace umbriel {
           .currentRenderFormat = m_output->render_format,
           .bitDepth = bitDepth,
           .tryVrrOn = tryVrrOn,
-          .configuredModeSpec = configuredModeSpec,
-          .preferredMode = preferredFallbackMode(m_output, stagedMode),
+          .configuredModeSpec = stageGeometry ? configuredModeSpec : nullptr,
+          .preferredMode = stageGeometry ? preferredFallbackMode(m_output, stagedMode) : nullptr,
           .modeFallbackAlreadyWarned = m_modeFallbackWarned,
           .vrrDroppedTier = m_vrrDroppedTier,
           .earlyHdrFail = earlyHdrFail,
+      };
+
+      const auto commitStagedState = [&]() -> FormatCommitResult {
+        const bool targetHdr = state.image_description != nullptr;
+        wlr_scene_output_set_sdr_white_level(m_sceneOutput, targetHdr ? configuredSdrWhite() : 0.0F);
+        wlr_damage_ring_add_whole(&m_sceneOutput->damage_ring);
+
+        wlr_output_state frameState{};
+        wlr_output_state_init(&frameState);
+        if (!wlr_output_state_copy(&frameState, &state)) {
+          wlr_output_state_finish(&frameState);
+          return FormatCommitResult::Retry;
+        }
+
+        wlr_scene_rect* secureMask = nullptr;
+        const bool unbound = wlr_output_layout_get(m_server->outputLayout(), m_output) == nullptr;
+        if (stageGeometry && (m_server->sessionLocked() || unbound)) {
+          // An unbound scene output still samples the scene origin, and a
+          // locked geometry change can outgrow the permanent blank until the
+          // layout callback resizes it. Render this configured frame through
+          // a temporary opaque mask so neither path exposes unrelated content.
+          secureMask = createConfiguredFrameMask(frameState);
+          if (secureMask == nullptr) {
+            wlr_output_state_finish(&frameState);
+            return FormatCommitResult::Retry;
+          }
+        }
+
+        const int captureLocks = captureRenderLocks(externalRenderLocks());
+        wlr_scene_output_state_options sceneOptions{};
+        sceneOptions.capture_sdr = targetHdr && captureLocks > 0;
+        sceneOptions.effect_capture_pending = effectCapturePending(captureLocks);
+        m_effectCaptureBuilt = sceneOptions.effect_capture_pending;
+
+        const RenderedStateCommitResult commitResult = commitRenderedState(
+            frameState,
+            [&](wlr_output_state& pending) {
+              return wlr_scene_output_build_state(m_sceneOutput, &pending, &sceneOptions);
+            },
+            [&](const wlr_output_state& pending) { return wlr_output_commit_state(m_output, &pending); }
+        );
+        if (secureMask != nullptr) {
+          wlr_scene_node_destroy(&secureMask->node);
+        }
+        const bool commitAttempted = commitResult == RenderedStateCommitResult::Committed
+            || commitResult == RenderedStateCommitResult::CommitFailed;
+        const bool commitOk = commitResult == RenderedStateCommitResult::Committed;
+        if (commitResult == RenderedStateCommitResult::MissingBuffer) {
+          kLog.error("output '{}': configured scene state has no buffer", m_output->name);
+        }
+        const bool recoveringFromFailedCommit = m_tearingRecovery.regularCommitPending();
+        if (commitAttempted) {
+          m_tearingRecovery.recordCommit(false, commitOk);
+        }
+        if (commitOk) {
+          m_lastCommitTearing = false;
+          m_trackingPresentation = true;
+          m_trackedPresentationCommitSeq = m_output->commit_seq;
+          m_lastPresentationPresented.reset();
+          m_lastPresentationFlags.reset();
+          if (recoveringFromFailedCommit && !m_tearingRecovery.regularCommitPending()) {
+            m_tearingFallbackReason = "recovered with regular page flip";
+          }
+          if (SessionLock* lock = m_server->sessionLock()) {
+            lock->handleOutputCommit(*this, m_output->commit_seq);
+          }
+        }
+        wlr_output_state_finish(&frameState);
+        switch (commitResult) {
+        case RenderedStateCommitResult::Committed:
+          return FormatCommitResult::Committed;
+        case RenderedStateCommitResult::CommitFailed:
+          return FormatCommitResult::Rejected;
+        case RenderedStateCommitResult::BuildFailed:
+        case RenderedStateCommitResult::MissingBuffer:
+          return FormatCommitResult::Retry;
+        }
+        return FormatCommitResult::Retry;
       };
 
       const FormatSequenceOps seqOps{
           .stageSdr = stageSdr,
           .stageHdr = stageHdr,
           .test = [&] { return wlr_output_test_state(m_output, &state); },
-          .commit = [&] { return wlr_output_commit_state(m_output, &state); },
+          .commit = commitStagedState,
           .clearImageDescription = [&] { wlr_output_state_set_image_description(&state, nullptr); },
           .stageMode = [&](wlr_output_mode* mode) { wlr_output_state_set_mode(&state, mode); },
           .warnModeFallback =
@@ -633,30 +796,34 @@ namespace umbriel {
     }
 
     wlr_output_state_finish(&state);
+    m_hdrTransition.recordCommit(enabled, hdrRequested, anyCommitted);
     if (!anyCommitted) {
+      // A failed candidate may have prepared the scene for the requested
+      // transfer function. Keep the renderer aligned with the live output.
+      updateSceneSdrWhite();
       kLog.error("output '{}': failed to commit configured state", m_output->name);
       return false;
     }
-    if (!usedModeFallback) {
+    if (stageGeometry && !usedModeFallback) {
       m_modeFallbackWarned = false;
     }
     if (enabled && scaleStaged) {
       m_appliedConfiguredScale = configuredScale.has_value();
     }
+    if (enabled) {
+      // Every successful enabled-state commit above staged either an HDR bypass
+      // or the latest SDR gamma table.
+      m_gammaDirty = false;
+    }
     const bool hdrIsActive = hdrActive();
     if (hdrIsActive) {
       setHdrFallbackReason({});
-      rejectGammaControl(wlr_gamma_control_manager_v1_get_control(m_server->gammaManager(), m_output));
     } else {
       if (!hdrRequested) {
         setHdrFallbackReason({});
       } else if (enabled) {
         setHdrFallbackReason(pendingHdrFail);
       }
-      if (hdrWasActive) {
-        m_gammaDirty = true;
-      }
-      m_hdrGammaWarningLogged = false;
     }
     if (!enabled || bitDepthActive() || hdrIsActive || bitDepth != 10) {
       setBitDepthFallbackReason({});
@@ -742,8 +909,8 @@ namespace umbriel {
       m_autoHdrOwner = nullptr;
     }
 
-    if (hdrRequested() != m_lastHdrRequested && applyConfiguredState()) {
-      m_server->updateOutputManagerConfig();
+    if (m_hdrTransition.pending(m_output->enabled, hdrRequested())) {
+      scheduleFullFrame();
     }
     m_server->updateColorPreferences();
   }
@@ -755,8 +922,8 @@ namespace umbriel {
     if (m_autoHdrOwner == view) {
       m_autoHdrOwner = nullptr;
     }
-    if (hdrRequested() != m_lastHdrRequested && applyConfiguredState()) {
-      m_server->updateOutputManagerConfig();
+    if (m_hdrTransition.pending(m_output->enabled, hdrRequested())) {
+      scheduleFullFrame();
     }
     m_server->updateColorPreferences();
   }
@@ -1163,11 +1330,22 @@ namespace umbriel {
       scratchpad->refreshOutputGeometry(this);
     }
 
+    // Layer geometry and the usable area settle here.
+    m_server->scheduleIpcLayersEvent();
+    m_server->scheduleIpcOutputsEvent();
     const wlr_box layoutUsableArea = this->usableArea();
-    kLog.debug(
-        "{} usable={}x{}+{}+{}", m_output->name, layoutUsableArea.width, layoutUsableArea.height, layoutUsableArea.x,
-        layoutUsableArea.y
-    );
+    // Arrangement runs on every layer commit; only a changed result is worth a line.
+    const wlr_box& logged = m_loggedUsableArea;
+    if (layoutUsableArea.x != logged.x
+        || layoutUsableArea.y != logged.y
+        || layoutUsableArea.width != logged.width
+        || layoutUsableArea.height != logged.height) {
+      m_loggedUsableArea = layoutUsableArea;
+      kLog.debug(
+          "{} usable={}x{}+{}+{}", m_output->name, layoutUsableArea.width, layoutUsableArea.height, layoutUsableArea.x,
+          layoutUsableArea.y
+      );
+    }
     if (m_workspaceGroup != nullptr && m_workspaceGroup->active() != nullptr) {
       m_workspaceGroup->active()->markArrange(false);
     }
@@ -1213,9 +1391,11 @@ namespace umbriel {
     }
   }
 
-  void Output::onGammaChanged(wlr_gamma_control_v1* control) {
+  void Output::onGammaChanged(wlr_gamma_control_v1* /*control*/) {
     if (hdrActive()) {
-      rejectGammaControl(control);
+      // wlroots has already retained the client's latest table. Keep it for
+      // the next SDR transition without applying an SDR LUT to HDR output.
+      m_gammaDirty = false;
       return;
     }
     // DRM gamma LUT upload is expensive; apply once on change, not every frame.
@@ -1388,12 +1568,13 @@ namespace umbriel {
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
     const uint64_t nowMsec = static_cast<uint64_t>(now.tv_sec) * 1000 + static_cast<uint64_t>(now.tv_nsec) / 1'000'000;
-    // A frame is an effect frame when one was asked for, or when an instance here is eligible and the max_fps interval
-    // has elapsed (a delay of 1 ms is the helper's "due now"), whichever timeline scheduled the frame. The output's own
-    // timer supplies the frames nothing else asks for.
+    // A frame is an effect frame when one was asked for, or when an instance here is eligible or an audio change is
+    // pending and the max_fps interval has elapsed (a delay of 1 ms is the helper's "due now"), whichever timeline
+    // scheduled the frame. The output's own timer supplies the frames nothing else asks for.
+    m_server->effects().refreshSceneClock();
     const bool effectFrame = m_effectFrameDue
         || (!m_server->sessionLocked()
-            && effectEligible() > 0
+            && (effectEligible() > 0 || audioPending())
             && effectFrameDelayMs(config().effects.maxFps, nowMsec, m_lastEffectFrameMsec) <= 1);
     m_effectFrameDue = false;
     if (effectFrame) {
@@ -1403,7 +1584,7 @@ namespace umbriel {
     // Effect time moves only on effect frames, which caps them at max_fps. It follows the clock while nothing here
     // needs frames of its own, so a new instance starts from now, and while the clock is frozen, so the first frozen
     // frame draws the frozen instant.
-    EffectRegistry& effects = m_server->effects();
+    const EffectRegistry& effects = m_server->effects();
     bool stampEffectTime =
         effectFrame || (effectEligible() == 0 && (effects.persistentReferenced() || effects.active()));
 #ifdef UMBRIEL_TEST_IPC
@@ -1412,7 +1593,13 @@ namespace umbriel {
     if (stampEffectTime) {
       m_effectSeconds = effects.clockSeconds();
     }
-    effects.beginAudioFrame(this, effectFrame);
+    if (effectFrame) {
+      if (m_effectAudio != effects.audio()) {
+        ++m_effectAudioRevision;
+        m_effectAudio = effects.audio();
+      }
+      wlr_scene_output_set_effect_audio(m_sceneOutput, m_effectAudio.data());
+    }
     m_server->tickAnimations(m_server->animationClockMsec());
 #ifdef UMBRIEL_TEST_IPC
     tickPresentationProbe(m_server->animationClockMsec());
@@ -1420,13 +1607,16 @@ namespace umbriel {
       m_workspaceSourceProbe->tick(effectFrame || m_server->animationsActiveFor(this));
     }
 #endif
-    if ((stampEffectTime && m_outputEffectsTimed) || effects.audioActive(this)) {
+    if (stampEffectTime && m_outputEffectsTimed) {
       applyOutputEffects();
     }
 
     // Surface commits reset scene-buffer opacity to the protocol alpha. Repair
     // pending rule opacity after every commit listener and before composition.
     m_server->flushPendingViewOpacities();
+    if (m_workspaceGroup != nullptr) {
+      m_workspaceGroup->refreshReveal();
+    }
     if (m_workspacePresentation) {
       m_workspacePresentation->prepareFrame(effectFrame || m_server->animationsActiveFor(this));
     }
@@ -1443,6 +1633,7 @@ namespace umbriel {
     const bool animationsActive = m_server->animationsActiveFor(this);
     // Persistent effects reading time keep an output drawing on their own timer, never through the animation
     // registry: settle, tearing, and the render lock keep their meanings.
+    const bool effectsEligible = !m_server->sessionLocked() && effectEligible() > 0;
     if (animationsActive != m_animationRenderLocked) {
       wlr_output_lock_attach_render(m_output, animationsActive);
       m_animationRenderLocked = animationsActive;
@@ -1513,7 +1704,7 @@ namespace umbriel {
     // video players) block on wl_surface.frame before submitting their next buffer. If we skip frame_done on the
     // "nothing to render" path, they never commit again, damage stays clean, and the output stops producing frames.
     bool commitFailed = false;
-    bool audioSubmitted = false;
+    bool presentationSubmitted = false;
     // Sample the plane before the needs_frame test below: a cursor-only move
     // damages nothing else, so this frame is the only commit that can carry
     // the damage. wlroots clears needs_frame on commit, so every mutation
@@ -1527,7 +1718,23 @@ namespace umbriel {
         cursor->refreshPointerContents(this);
       }
     }
-    if (sceneChanged || m_gammaDirty) {
+    const bool hdrTransitionPending = m_hdrTransition.pending(m_output->enabled, hdrRequested());
+    if (hdrTransitionPending) {
+      // Run at the frame boundary, after the previous page flip completed. The
+      // configured-state commit builds the scene into the same state as the
+      // image-description and render-format switch.
+      m_inFrame = true;
+      const bool committed = applyConfiguredState(false);
+      m_inFrame = false;
+      commitFailed = !committed;
+      if (committed) {
+        if (effectFrame) {
+          ++m_effectFrames;
+        }
+        m_server->updateOutputManagerConfig();
+      }
+    }
+    if (!hdrTransitionPending && (sceneChanged || m_gammaDirty)) {
       m_inFrame = true;
       if (effectFrame) {
         ++m_effectFrames;
@@ -1543,13 +1750,27 @@ namespace umbriel {
       sceneOptions.capture_sdr = hdrActive() && captureLocks > 0;
       sceneOptions.effect_capture_pending = effectCapturePending(captureLocks);
       m_effectCaptureBuilt = sceneOptions.effect_capture_pending;
-      if (wlr_scene_output_build_state(m_sceneOutput, &state, &sceneOptions)) {
+      sceneOptions.require_animation_success = m_workspaceGroup != nullptr && m_workspaceGroup->revealActive();
+      if (sceneOptions.require_animation_success) {
+        sceneOptions.workspace_from = m_workspaceGroup->revealRoot(false);
+        sceneOptions.workspace_to = m_workspaceGroup->revealRoot(true);
+      }
+      bool built = false;
+      {
+        UMBRIEL_ZONE("Output::buildState");
+        built = wlr_scene_output_build_state(m_sceneOutput, &state, &sceneOptions);
+      }
+      if (!built && sceneOptions.require_animation_success) {
+        // Reject the incomplete frame and resume native slide at the same progress.
+        m_workspaceGroup->abandonReveal();
+      }
+      if (built) {
         // Hardware gamma only (DRM). Nested Wayland has no gamma LUT; leave that alone.
         // Apply only when dirty: uploading the LUT every frame stalls the compositor.
         bool gammaPending = false;
         if (m_gammaDirty) {
           if (hdrActive()) {
-            rejectGammaControl(wlr_gamma_control_manager_v1_get_control(m_server->gammaManager(), m_output));
+            m_gammaDirty = false;
           } else if (wlr_output_get_gamma_size(m_output) > 0) {
             wlr_gamma_control_v1* control =
                 wlr_gamma_control_manager_v1_get_control(m_server->gammaManager(), m_output);
@@ -1588,6 +1809,7 @@ namespace umbriel {
         } else
 #endif
         {
+          UMBRIEL_ZONE("Output::commitState");
 #ifdef TRACY_ENABLE
           const uint32_t traceCommitSequence = m_output->commit_seq + 1;
           traceOutputEvent(m_output, "commit_begin", traceCommitSequence, hasBuffer, false);
@@ -1597,7 +1819,6 @@ namespace umbriel {
           traceOutputEvent(m_output, "commit_end", traceCommitSequence, hasBuffer, commitOk);
 #endif
         }
-        audioSubmitted = commitOk && hasBuffer;
         if (hasBuffer) {
           m_tearingRecovery.recordCommit(commitTearing, commitOk);
         }
@@ -1605,6 +1826,7 @@ namespace umbriel {
           m_gammaDirty = false;
         }
         if (commitOk && hasBuffer) {
+          presentationSubmitted = true;
           sceneRestoreCommitted();
 #ifdef UMBRIEL_TEST_IPC
           ++m_successfulBufferCommits;
@@ -1641,15 +1863,14 @@ namespace umbriel {
     }
 
     if (m_workspacePresentation) {
-      m_workspacePresentation->frameSubmitted(audioSubmitted);
+      m_workspacePresentation->frameSubmitted(presentationSubmitted);
     }
     if (m_workspaceTransition) {
-      m_workspaceTransition->frameSubmitted(audioSubmitted);
+      m_workspaceTransition->frameSubmitted(presentationSubmitted);
     }
     if (m_windowPresentation) {
-      m_windowPresentation->frameSubmitted(audioSubmitted);
+      m_windowPresentation->frameSubmitted(presentationSubmitted);
     }
-    effects.finishAudioFrame(this, audioSubmitted);
 
     // Screencopy drops its lock inside the commit; image-copy sessions ask for the release frame when they end.
     if (m_effectCaptureBuilt && !effectCapturePending(captureRenderLocks(externalRenderLocks()))) {
@@ -1684,7 +1905,7 @@ namespace umbriel {
       break;
     }
 
-    if (!m_server->sessionLocked() && effectEligible() > 0 && !commitFailed) {
+    if ((effectsEligible || audioPending()) && !commitFailed) {
       armEffectFrame(nowMsec);
     } else {
       disarmEffectFrame();
@@ -1745,6 +1966,22 @@ namespace umbriel {
   void Output::handlePresent(void* data) {
     const auto* event = static_cast<const wlr_output_event_present*>(data);
 #ifdef TRACY_ENABLE
+    if (event->presented) {
+      if (m_tracyIntervalPlot == nullptr) {
+        m_tracyIntervalPlot = tracyPlotName(std::format("{} present interval ms", m_output->name));
+        m_tracyVblankPlot = tracyPlotName(std::format("{} vblanks per present", m_output->name));
+      }
+      const int64_t whenNs = static_cast<int64_t>(event->when.tv_sec) * 1'000'000'000 + event->when.tv_nsec;
+      if (m_tracyLastPresentNs != 0) {
+        TracyPlot(m_tracyIntervalPlot, static_cast<double>(whenNs - m_tracyLastPresentNs) / 1e6);
+      }
+      // Above 1 while frames keep coming, the output repeated a vblank: a missed frame.
+      if (event->seq != 0 && m_tracyLastPresentSeq != 0) {
+        TracyPlot(m_tracyVblankPlot, static_cast<int64_t>(event->seq - m_tracyLastPresentSeq));
+      }
+      m_tracyLastPresentNs = whenNs;
+      m_tracyLastPresentSeq = event->seq;
+    }
     traceOutputEvent(m_output, "present", event->commit_seq, false, event->presented, event);
 #endif
     if (SessionLock* lock = m_server->sessionLock()) {

@@ -53,12 +53,16 @@ namespace umbriel {
     [[nodiscard]] bool
     assignByWindowRule(View* view, std::string_view name, Output* placementOutput, const AutomaticAdmission& options);
     [[nodiscard]] bool assignFromParent(View* view, const View* parent, const AutomaticAdmission& options);
-    // Show a scratchpad on the invoking output without changing keyboard focus.
-    bool summon(std::string_view name, Output* invokingOutput);
+    // Show a scratchpad on the invoking output without changing keyboard focus. Naming `member` while the pad shows a
+    // single window shows that member instead.
+    bool summon(std::string_view name, Output* invokingOutput, View* member = nullptr);
     bool toggle(std::string_view name, Output* invokingOutput);
     void hideAll();
     bool restoreFocused(std::string_view name);
     bool focusNext(std::string_view name);
+    // Show one window of the scratchpad at a time: the one after (`direction` > 0) or before the window on show,
+    // wrapping at the ends. A hidden pad shows its most recently focused window.
+    bool showStep(std::string_view name, int direction, Output* invokingOutput);
     [[nodiscard]] View* focused(std::string_view name) const;
     [[nodiscard]] bool hasFocus(std::string_view name) const;
     // The most recently focused window when that focus went to a scratchpad
@@ -78,6 +82,8 @@ namespace umbriel {
     // layout or usable area changes.
     void refreshOutputGeometry(Output* output);
     void applyConfig();
+    // Refit the maximized windows of visible scratchpads to the margin their settings give them now.
+    void refitMaximized();
     // Reconcile runtime scratchpads after a successful [[scratchpad]] reload.
     // Windows belonging to removed definitions return to their saved workspaces.
     void reconcileConfig();
@@ -97,6 +103,8 @@ namespace umbriel {
       Output* output = nullptr;
       bool visible = false;
       View* lastFocused = nullptr;
+      // While visible, the one member shown in place of all of them; null when every member shows.
+      View* solo = nullptr;
       std::optional<PendingSpawn> pendingSpawn;
       // Set only while an output disappearance has temporarily parked this
       // scratchpad elsewhere.
@@ -122,6 +130,16 @@ namespace umbriel {
     [[nodiscard]] const Entry* findEntry(const View* view) const;
     [[nodiscard]] bool hasEntries(std::string_view name) const;
     [[nodiscard]] bool visibleOn(Output* output) const;
+    // Whether `view`, a member of `scratchpad`, is on screen.
+    [[nodiscard]] static bool presents(const Scratchpad& scratchpad, const View* view);
+    // Whether `view` is a dialog of another member of scratchpad `name`, shown along with that member.
+    [[nodiscard]] bool ridesWithParent(const View* view, std::string_view name) const;
+    // The regular member of scratchpad `name` that `view` belongs to: `view` itself, or for a dialog the member it was
+    // opened from.
+    [[nodiscard]] View* memberFor(View* view, std::string_view name) const;
+    // Called as `view` leaves scratchpad `name`: if it was the window focused last, a dialog hands that over to the
+    // nearest window of the scratchpad it was opened from, and any other window clears it.
+    void forgetLastFocused(Scratchpad& scratchpad, std::string_view name, const View* view) const;
     enum class Admission { Interactive, Automatic };
     bool admit(
         View* view, std::string_view name, Output* invokingOutput, Admission admission,

@@ -5,9 +5,9 @@ workspaces, window rules, blur, shadows, and fluid animations.
 
 It runs independently and can be paired with [Noctalia](https://github.com/noctalia-dev/noctalia), which provides a
 first-class desktop shell experience for Umbriel. Umbriel is built in C++23 on
-[wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) and `umbrielfx`, its own hard fork of
-[SceneFX](https://github.com/wlrfx/scenefx). Xwayland support comes from wlroots' Xwayland server, which needs the
-`Xwayland` binary installed and on `PATH`. Portal screen capture and sharing is provided by
+[wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) and `umbrielfx`, its independently maintained, in-tree hard fork
+of [SceneFX](https://github.com/wlrfx/scenefx). Xwayland support comes from wlroots' Xwayland server, which starts on
+demand and needs the `Xwayland` binary installed and on `PATH`. Portal screen capture and sharing is provided by
 [xdg-desktop-portal-umbriel](https://github.com/noctalia-dev/xdg-desktop-portal-umbriel), an
 xdg-desktop-portal backend for Umbriel.
 
@@ -35,6 +35,9 @@ simply disappointed with the choices available to us, so we built the compositor
 not to conquer the world or take over the big names; it is to feel at home with something we have a say in, with less
 friction. That is exactly how Noctalia came to life, and Umbriel is its compositor side.
 
+We want one desktop for productivity and gaming: flexible layouts, tab groups, and scratchpads for organizing work,
+alongside HDR, variable refresh rate, and configurable fullscreen presentation for games.
+
 To understand the values and philosophy guiding the project, read our [ethos](https://noctalia.dev/ethos).
 
 ## Features
@@ -43,34 +46,52 @@ To understand the values and philosophy guiding the project, read our [ethos](ht
   mouse-driven resizing and tiled reordering
 - [Tab groups](docs/user/layout.md#tab-groups) that stack, move, and resize like any row in the scrolling layout,
   and tab whole areas in the master layout, with a clickable, scrollable, draggable tab bar that can be hidden
-- Independent workspaces per output, with hotplug support and configurable modes, positions, scales, and transforms
+- Independent workspaces per output, with dynamic or named workspaces, hotplug restoration, fractional scaling, and
+  configurable modes, positions, and transforms
 - Floating, pinned, and fullscreen windows with configurable placement, focus, sizing, opacity, and visual effects
+- [Window rules](docs/user/window-rules.md) and [layer rules](docs/user/layer-rules.md) for application placement,
+  focus, decorations, and effects
 - [Global named scratchpads](docs/user/scratchpad.md) for temporarily hiding
   window groups and summoning them on any output
 - An animated overview, directional focus, configurable keybinds, submaps, and activation policy
 - Blur, shadows, rounded corners, double borders, opacity, and animated position, size, and fade transitions
 - Keyboard, pointer, touch, touchpad gestures, XKB configuration, and text-input-v3/input-method-v2 input method support
+- Tablet and pad input, relative pointer motion, pointer locking, and per-window pointer confinement
+- [Color-managed HDR](docs/user/outputs.md#hdr) with automatic fullscreen activation, configurable SDR reference white,
+  and SDR screen capture, plus optional [10-bit SDR rendering](docs/user/outputs.md#bit-depth)
+- [Variable refresh rate](docs/user/outputs.md#variable-refresh-rate), opt-in [tearing](docs/user/outputs.md#tearing),
+  and [direct scanout](docs/user/outputs.md#direct-scanout) for eligible fullscreen content
+- Explicit GPU synchronization through linux-drm-syncobj when supported by the renderer and backend
 - [Restricted Wayland connections](docs/user/security.md) for sandbox engines through security-context-v1, with
   per-application protocol grants
 - Layer shell, session locking, clipboard management, screen capture, output control, and gamma control
-- X11 application support through Xwayland, when `Xwayland` is installed and on `PATH`
+- On-demand X11 application support through Xwayland, with optional native-resolution rendering on scaled outputs
+- [Virtual outputs](docs/user/outputs.md#virtual-outputs) for screen sharing and
+  [Sunshine/Moonlight game streaming](docs/user/streaming.md)
 - Live-reloaded TOML configuration with diagnostics and includes, plus local IPC and runtime inspection commands
-- Stable effect pools, runtime effect actions, and `umbriel effects [--json]` selection and program inspection
+- [GLSL effect presets](docs/user/effects.md) for animations, borders, windows, screens, and cursors, with effect pools,
+  runtime selection, and inspection
 - Runs as a nested Wayland compositor inside an existing Wayland or X11 desktop for development, or directly on DRM
   for daily use
+
+HDR, VRR, tearing, direct scanout, and explicit synchronization depend on the display, graphics stack, and client.
+HDR, VRR, and tearing are opt-in; see the [output reference](docs/user/outputs.md) for policies and fallback behavior.
 
 ## Building
 
 Distribution maintainers should also read [PACKAGING.md](PACKAGING.md) for the
 installed layout, dependency notes, and config fallback.
 
-The scene graph and renderer live in [`umbrielfx/`](umbrielfx/) and build as part of the tree.
+The scene graph and renderer live in [`umbrielfx/`](umbrielfx/) and build as part of the tree. They are maintained as
+part of Umbriel rather than rebased onto upstream SceneFX; no separate SceneFX package is needed.
 
 ### System build
 
-Install a C++23 compiler, Meson, Ninja, pkg-config, wayland-scanner, and development packages for wlroots 0.20
-(0.20.1 or newer), Wayland, xkbcommon, libinput, pixman, libdrm, EGL, GLES2, GBM, lcms2, Cairo, Pango, tomlplusplus,
-and nlohmann-json. Native `[drm]` GPU exclusions also require libudev. Then build Umbriel:
+Install a C++23 compiler, Meson, Ninja, Just, pkg-config, wayland-scanner, and development packages for wlroots 0.20
+(0.20.1 or newer, built with Xwayland support), Wayland, wayland-protocols, xkbcommon, libinput, pixman, libdrm,
+libdisplay-info, EGL, GLES2, GBM, Cairo, Pango, tomlplusplus, nlohmann-json, xcb, xcb-icccm, and xcb-ewmh.
+Native `[drm]` GPU exclusions also require libudev. lcms2 is optional. See [PACKAGING.md](PACKAGING.md#dependencies)
+for dependency version requirements and test-only dependencies. Then build Umbriel:
 
 ```sh
 just release
@@ -100,33 +121,8 @@ nix develop
 just debug
 ```
 
-### Testing
-
-The development shell includes the clients and command-line tools used by the
-test suite. Unit tests and the contained headless compositor harness are two
-commands:
-
-```sh
-nix develop
-just test                 # unit and umbrielfx suites, through Meson
-just check                # every harness check
-```
-
-`just check` also takes name fragments, and `just check-names` lists them:
-
-```sh
-just check 310            # one check
-just check 310 520        # several
-just check overview       # every check in a group
-just check 310 -v         # keep the full output of passing checks
-just mode=asan check 310  # the same check against build-asan
-```
-
-Each check gets its own contained headless compositor, so a failure stays local
-and checks run in any order. Every passing check emits a concise completion
-message, summarized to a single dimmed line unless `-v` is enabled; failing
-checks print their whole output. A failing check keeps its runtime directory
-(compositor log, config, per-client logs) and prints the path.
+For unit tests, the headless compositor harness, and contributor checks, see
+[Development Commands](CONTRIBUTING.md#development-commands).
 
 ## Running
 
@@ -161,14 +157,14 @@ Or run the binary directly:
 ./build-debug/umbriel -s kitty
 ```
 
-Inside the session:
+With the packaged starting configuration:
 
 | Shortcut | Action |
 |----------|--------|
 | mod+Escape | Quit (asks for confirmation) |
 | mod+F1 | Cycle window focus |
 | mod+H/J/K/L or arrows | Focus adjacent window |
-| mod+Shift+H/J/K/L or arrows | Move focused window |
+| mod+Shift+arrows | Move column left/right or window up/down |
 | mod+comma / mod+period | Consume left / consume right |
 | mod+R / mod+F | Cycle width / toggle fullscreen |
 | mod+T | Toggle floating for the focused window |
@@ -179,8 +175,9 @@ Inside the session:
 | mod+Shift+1..9 | Move focused window to workspace and follow |
 
 `kitty` is an optional startup command. Replace it with another command, or omit it by running `just run debug`
-or `./build-debug/umbriel`. There is no default spawn keybind, so add one under `[keybinds]` (see
-[`examples/config.toml`](examples/config.toml)) to open more terminals from inside the session, e.g. `"Mod+Return" = "spawn:kitty"`.
+or `./build-debug/umbriel`. The packaged configuration binds mod+Return to `spawn:kitty` and mod alone to the Noctalia
+launcher. Change those commands under `[keybinds]` if you use another terminal or shell (see
+[`examples/config.toml`](examples/config.toml)).
 
 Stop with mod+Escape or `Ctrl+C` from the parent terminal.
 

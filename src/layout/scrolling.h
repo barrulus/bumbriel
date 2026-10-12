@@ -2,6 +2,7 @@
 
 #include "layout/layout.h"
 
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -37,11 +38,16 @@ namespace umbriel {
     [[nodiscard]] int maxScroll(int viewportPrimary) const {
       return std::max(0, totalWidth(viewportPrimary) - viewportPrimary);
     }
+    // Scroll offsets where a strip gesture can rest on `columnIndex`: flush with the viewport's leading and trailing
+    // edges, within [0, maxScroll]. A column at least as wide as the viewport (fullscreen, maximize-to-edges) overhangs
+    // it by an edge pad on each side, so both are the offset covering the viewport, as ensureVisible places it.
+    [[nodiscard]] std::array<double, 2> snapScrolls(int columnIndex, int viewportPrimary) const;
 
     void insertView(View* view, int columnIndex) override;
     void insertViewIntoColumn(View* view, int columnIndex, int rowIndex) override;
     bool consume(View* view, int direction) override;
     bool expel(View* view, int direction) override;
+    bool consumeFrom(View* view, int direction) override;
     bool moveViewVertical(View* view, int direction) override;
     bool swapViews(View* a, View* b) override;
     void removeView(View* view) override;
@@ -152,6 +158,8 @@ namespace umbriel {
       std::optional<size_t> group;
     };
     [[nodiscard]] JoinPoint joinPoint(const Column& column) const;
+    // The row a window joining `group` as a tab takes: after its shown tab when new tabs go there, else at its end.
+    [[nodiscard]] size_t newTabRow(const TabGroup& group) const;
     // Weight for a row being added to `column` at `row`, taking over the column's edge gap when the row lands against
     // one. Shared by fresh inserts and by consume, so free space always becomes the incoming row's extent.
     double claimInsertWeight(Column& column, int row, double fallbackWeight);

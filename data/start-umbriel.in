@@ -91,6 +91,7 @@ umbriel_status=$?
 
 systemctl --user start --job-mode=replace-irreversibly umbriel-shutdown.target
 systemctl --user unset-environment WAYLAND_DISPLAY WAYLAND_SOCKET DISPLAY \
-  XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE UMBRIEL_SOCKET
+  XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XCURSOR_THEME \
+  XCURSOR_SIZE UMBRIEL_SOCKET
 
 exit "$umbriel_status"

@@ -32,19 +32,21 @@ still presented at the size it committed.
 
 ## Capture readback format
 
-`fx_texture_preferred_read_format` in `umbrielfx` never reports packed
-24-bit. It is the only shm format the capture protocols offer clients, and the
-NVIDIA blob reports `GL_RGB` / `GL_UNSIGNED_BYTE` for opaque targets, which maps
-to `DRM_FORMAT_BGR888`. Clients assume a 4-byte pixel, derive `width * 4`, and
+`fx_texture_preferred_read_format` in `umbrielfx` never reports packed 24-bit or
+packed 10-bit for shared-memory capture. For XR30 and XB30 targets it publishes
+XRGB8888 when BGRA readback is available, and XBGR8888 otherwise. GLES performs
+the depth conversion during readback. The NVIDIA blob reports `GL_RGB` /
+`GL_UNSIGNED_BYTE` for opaque 8-bit targets, which maps to
+`DRM_FORMAT_BGR888`. Clients assume a 4-byte pixel, derive `width * 4`, and
 wlroots rejects it because a stride must divide by the pixel size. GLES2 always
-allows `GL_RGBA` / `GL_UNSIGNED_BYTE` readback, so the clamp to 32-bit costs
-nothing at 8bpc.
+allows `GL_RGBA` / `GL_UNSIGNED_BYTE` readback, so publishing a 32-bit format
+avoids that mismatch.
 
 Do not fix this by dropping `DRM_FORMAT_BGR888` from `umbrielfx`'s pixel format
 table: the table also drives `wl_shm` advertisement and texture upload, and it
 is identical to wlroots' gles2 table.
 
-Readback support must also accept the bound framebuffer's
+Explicit texture readback must also accept the bound framebuffer's
 `GL_IMPLEMENTATION_COLOR_READ_FORMAT` / `GL_IMPLEMENTATION_COLOR_READ_TYPE`
 pair. NVIDIA supports AB30 readback without advertising its texture-upload
 extension. Applying only the upload capability check rejects valid 10-bit
@@ -70,6 +72,49 @@ is core functionality in GLES3. The capability is enabled by either the
 context version or the extension string. Framebuffer readback retains its
 separate implementation-format check.
 
+## HDR output transitions
+
+Every enabled configured-state commit must carry a scene buffer built for that
+same pending output state. This is especially important for HDR image-description
+and render-format changes. Without a buffer, wlroots may supply a cleared buffer
+for the reconfiguration, and a following nonblocking scene commit can race the
+DRM modeset and leave that cleared buffer visible.
+
+Dynamic HDR policy changes therefore schedule a full frame. At the frame
+boundary, `Output::applyConfiguredState` enables reconfiguration, damages the
+whole output, builds the scene into a copy of the staged state, requires both
+`WLR_OUTPUT_STATE_BUFFER` and a nonnull buffer, then commits the state and
+rendered frame together. Output creation also creates its scene output before
+initial configuration, preserving this invariant when DRM outputs are recreated
+after resume.
+
+Failures before the backend commit are retryable. A pending-state copy failure,
+scene build failure, missing buffer, or temporary neutral-mask failure stops the
+format sequence without trying SDR, VRR, or mode fallbacks. The requested policy
+remains pending for the delayed frame retry because none of these failures proves
+that the staged output format is unsupported.
+
+A backend commit failure is instead treated as a rejection and retains the
+existing format fallback behavior. If a fallback commits successfully,
+`HdrTransition` records the requested policy as handled and reports the fallback
+reason instead of retrying HDR every frame. If no candidate commits, the
+transition remains pending for a later frame.
+
+A full geometry commit made while the session is locked, or before the output is
+bound to the logical output layout, renders through a temporary opaque
+backdrop-colored mask. Its logical extent is derived from the pending mode,
+transform, and scale, and it remains above the scene through state building and
+the backend commit. Grouped output-management commits use the same protection.
+This prevents an unbound output from sampling the scene origin and prevents a
+geometry change from exposing content beyond a lock blank that has not yet been
+resized.
+
+`output-hdr-transition` covers transition bookkeeping, build-before-commit
+ordering, and the rendered-buffer guards. `output-format-sequence` covers the
+distinction between retryable preparation failures and backend rejection. The
+headless color-management check covers policy entry and release, but a real HDR
+monitor is still required to validate the KMS transition.
+
 ## Implicit scene-buffer primaries
 
 A raw `wlr_scene_buffer` uses zero primaries as an internal unset sentinel.
@@ -85,11 +130,13 @@ causes the check to abort in the converter.
 
 ## HDR capture view
 
-Capture protocols negotiate their buffer constraints before they lock the
-output for an attach-render frame. The SDR capture sidecar must therefore keep
-the output buffer's DRM format while storing Gamma 2.2 SDR values. For an XR30
-HDR output, replacing that sidecar with XR24 after negotiation makes the client
-request packed 10-bit readback from an 8-bit framebuffer.
+Capture protocols advertise their shared-memory and DMA-BUF constraints before
+they lock the output for an attach-render frame. For XR30 and XB30 sources,
+shared-memory capture is advertised as 8-bit and GLES converts the SDR sidecar
+during readback. The sidecar itself must continue to use the output buffer's
+DRM format because DMA-BUF capture may already have negotiated that 10-bit
+storage, and texture substitution must remain storage-compatible. Its stored
+values are Gamma 2.2 SDR even when its DRM format is 10-bit.
 
 Each output owns one shared FP16 blend buffer and one shared SDR capture
 sidecar. Their lifetime is tied to that output, rather than to its swapchain

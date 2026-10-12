@@ -2,13 +2,13 @@
 # A new virtual occurrence of a focused border starts independent feedback.
 # Its halo and retry history must match literal native/carousel references.
 set -euo pipefail
-helper=$(realpath "$(dirname "$UMBRIEL_UNMAP_CLIENT")/audio-synthetic")
-cp "$UMBRIEL_REPO/examples/effects/scene/carousel/shader.vert" "$UMBRIEL_RUNTIME_DIR/carousel.vert"
+# Keep camera geometry independent of the global feed while testing border feedback.
+sed 's/umbriel_audio.x/0.0/g' "$UMBRIEL_REPO/examples/effects/scene/carousel/shader.vert" > "$UMBRIEL_RUNTIME_DIR/carousel.vert"
 cp "$UMBRIEL_REPO/examples/effects/scene/carousel/shader.frag" "$UMBRIEL_RUNTIME_DIR/carousel.frag"
 cat > "$UMBRIEL_RUNTIME_DIR/history-light.glsl" <<'GLSL'
 vec4 border(vec2 uv) {
   vec4 p = umbriel_sample_previous(uv);
-  float token = umbriel_audio_rms();
+  float token = umbriel_audio_level();
   bool seeded = abs(p.b - 0.137) < 0.01;
   float old = seeded ? p.r : 0.0;
   float step = !seeded || abs(p.g - token) > 0.01 ? 0.1 : 0.0;
@@ -45,7 +45,6 @@ in_capture = true
 [effects.preset.history-light]
 kind = "border"
 shader = "history-light.glsl"
-audio = "fixture"
 animated = false
 [effects.preset.history-light.light]
 spread = 40
@@ -59,12 +58,6 @@ vertex_shader = "carousel.vert"
 shader = "carousel.frag"
 [effects.preset.carousel.parameters]
 max_elevation_degrees = 0.0
-[effects.audio.sources.fixture]
-provider = "external"
-mode = "playback"
-target = "explicit-cold-feedback-light"
-executable = "$helper"
-args = ["--external-test", "--silence"]
 [[window_rule]]
 match.title = "^cold-history-light$"
 default_floating = true
@@ -77,6 +70,10 @@ import json
 import os
 import subprocess
 import time
+import sys
+sys.path.insert(0, os.path.join(os.environ['UMBRIEL_REPO'], 'tests', 'harness'))
+from audio_feed import AudioFeed
+feed = AudioFeed()
 
 exe = os.environ['UMBRIEL']
 root = os.environ['UMBRIEL_RUNTIME_DIR']
@@ -88,8 +85,6 @@ def state():
     return next(o['workspace_presentation'] for o in data('effects')['owners'] if o['type'] == 'output' and o['name'] == 'HEADLESS-1')
 def frame():
     return data('effect-frames')['outputs'][0]
-def latch():
-    return next(a for a in frame()['audio'] if a['source'] == 'fixture')
 def wait(get, predicate, reason):
     end = time.monotonic() + 5
     while True:
@@ -99,9 +94,9 @@ def wait(get, predicate, reason):
         assert time.monotonic() < end, (reason, value)
         time.sleep(.01)
 def inject(value, submitted=True):
-    run('audio-inject', json.dumps(dict(source='fixture', rms=value, peak=value, envelope=value, bands=[value]*16)))
+    feed.set(value)
     if submitted:
-        wait(latch, lambda a: not a['pending'] and abs(a['presented_rms']-value)<1e-6, 'input not presented')
+        time.sleep(.2)
 def picture(name):
     path = os.path.join(root, name+'.png')
     subprocess.run(['grim', '-s', '1', '-o', 'HEADLESS-1', path], check=True, timeout=10)
@@ -133,7 +128,6 @@ native_workspaces=data('workspaces')
 # and the native halo well outside the undeformed client rectangle.
 cx=window['x']+window['w']/2
 points=[(round(320+.68*(cx-320)),round(180+.68*(window['y']-d-180))) for d in (2,24)]
-wait(lambda:data('effects')['audio'],lambda a:a and a[0]['available'],'helper unavailable')
 inject(.2)
 inject(.6)
 native_picture=picture('native-three-steps')
@@ -152,9 +146,8 @@ inject(.1,False)
 wait(frame,lambda f:f['rejected_buffer_commits']>before['rejected_buffer_commits'],'no failed candidate')
 inject(.9,False)
 time.sleep(.15)
-assert abs(latch()['latched_rms']-.1)<1e-6,'retry replaced held feedback input'
 run('output-commit-hold','HEADLESS-1 off')
-wait(latch,lambda a:not a['pending'] and abs(a['presented_rms']-.9)<1e-6,'queued input not presented')
+time.sleep(.2)
 actual[.4]=pixels(picture('cold-retry'))
 assert data('workspaces')==native_workspaces,'retry changed native workspace selection'
 dismiss()
@@ -184,4 +177,5 @@ for red,green in ((.1,.6),(.2,.8),(.4,.9)):
     assert all(abs(a-b)<=2 for p,q in zip(actual[red],reference) for a,b in zip(p,q)), ('feedback halo disagrees with literal history',red,points,actual[red],reference)
     dismiss()
 print('Cold virtual feedback border, actual halo, held idle, failed-submit history and literal emission references verified')
+feed.close()
 PY

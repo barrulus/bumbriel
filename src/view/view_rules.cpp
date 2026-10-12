@@ -62,6 +62,9 @@ namespace umbriel {
         && m_workspace->isOnlyTiledView(this);
   }
 
+  // True when nothing else occupies the workspace, a float counting as much as a tile.
+  bool View::isOnlyWindowOnWorkspace() const { return m_workspace != nullptr && m_workspace->isOnlyVisibleView(this); }
+
   // Reads the rules with the alone state forced either way, so the alone effect knows what it should change, and so
   // the opening configure can read the alone rules while the view is not in the layout yet.
   ResolvedWindowRule View::resolveRulesWithAlone(bool alone) const {
@@ -202,8 +205,9 @@ namespace umbriel {
     m_aloneAction = AloneAction::None;
   }
 
-  // Called by the workspace whenever the tiled windows change or the config reloads. If the window is no longer
-  // alone, the applied effect is undone. While alone, the four settings are only re-applied when they changed.
+  // Called by the workspace whenever what occupies it changes, or on a config reload. The dynamic rules come first, so
+  // `match.is_only_window` lands with them. If the window is no longer alone, the applied effect is undone. While
+  // alone, the four settings are only re-applied when they changed.
   bool View::notifyAloneStateChanged() {
     if (!m_mapped || m_workspace == nullptr) {
       return false;
@@ -259,6 +263,8 @@ namespace umbriel {
     notifyAloneStateChanged();
     m_aloneOpeningSeed = AloneSeed::None;
   }
+
+  bool View::confinePointer() { return resolvedRules().confinePointer.value_or(false); }
 
   std::optional<bool> View::tearingRuleOverride() { return resolvedRules().allowTearing; }
 
@@ -420,7 +426,7 @@ namespace umbriel {
         if (assignedScratchpad
             && scratchpadChanged
             && rule.defaultFocused.value_or(false)
-            && scratchpadManager->summon(*scratchpadTarget, targetOutput)
+            && scratchpadManager->summon(*scratchpadTarget, targetOutput, this)
             && wasActivated) {
           m_server->focusView(this);
         }
@@ -564,6 +570,7 @@ namespace umbriel {
         .pinned = m_pinned,
         .scratchpad = m_inScratchpad,
         .alone = isAloneInLayout(),
+        .onlyWindow = isOnlyWindowOnWorkspace(),
     };
   }
 

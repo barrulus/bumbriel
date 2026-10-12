@@ -133,6 +133,7 @@ namespace umbriel {
     [[nodiscard]] Output* currentOutput() const;
     // Effective optional window-rule override used by tearing diagnostics.
     [[nodiscard]] std::optional<bool> tearingRuleOverride();
+    [[nodiscard]] bool confinePointer();
     [[nodiscard]] bool onActiveWorkspace() const { return m_onActiveWorkspace; }
     // Source occurrences prepare ordinary geometry while native nodes remain
     // disabled on hidden workspaces; capture never arranges or configures.
@@ -142,6 +143,7 @@ namespace umbriel {
     [[nodiscard]] bool tiled() const { return m_tiled; }
     [[nodiscard]] bool floating() const { return !m_tiled; }
     [[nodiscard]] bool isAloneInLayout() const;
+    [[nodiscard]] bool isOnlyWindowOnWorkspace() const;
     [[nodiscard]] const std::optional<std::string>& namedScrollingColumnName() const {
       return m_namedScrollingColumnName;
     }
@@ -154,6 +156,8 @@ namespace umbriel {
     // Fullscreen for layout purposes follows the state already scheduled for the next configure.
     [[nodiscard]] bool layoutFullscreen() const;
     [[nodiscard]] bool urgent() const { return m_urgent; }
+    // The mapped window the client named as this one's parent (xdg parent or X11 WM_TRANSIENT_FOR), or null.
+    [[nodiscard]] View* shellParent() const;
     // The window id the ext-foreign-toplevel protocol hands to clients, which the IPC surface reuses verbatim for its
     // own window identity. Null only while no ext handle exists (the handle lives for the whole map lifetime).
     [[nodiscard]] const char* extForeignIdentifier() const {
@@ -337,6 +341,12 @@ namespace umbriel {
     [[nodiscard]] std::array<int, 2> floatingRestoreSize() const;
     // The home output's usable area.
     [[nodiscard]] wlr_box floatingUsableArea() const;
+    // `usable` less the margin a maximized tile keeps (struts, then gap and border), so the border stays on screen.
+    // A client capped below that box by its maximum size keeps the capped size, centered in it.
+    [[nodiscard]] wlr_box floatingMaximizedBox(const wlr_box& usable) const;
+    // Put a maximized float back in the box its settings give it now, after a layout, border, strut, or usable area
+    // change. Does nothing unless that box moved, so every arrange can ask.
+    void refitFloatingMaximized();
     // The usable area an opening window is sized against: the target output's,
     // then its full layout box, then whatever sits under the cursor. A hotplug
     // race can leave an output with no usable area computed yet.
@@ -413,6 +423,8 @@ namespace umbriel {
     friend class Output;
     friend class Server;
     friend class Popup;
+    // Size and place a maximized float in `box`, sliding there when `animate`, and remember it as its maximized box.
+    void placeFloatingMaximized(const wlr_box& box, bool animate);
     friend class Overview;
     friend class Workspace;
 
@@ -501,10 +513,6 @@ namespace umbriel {
     static void onViewSurfaceDestroy(wl_listener* listener, void* data);
 
     static void onCaptureSourceDestroy(wl_listener* listener, void* data);
-    static void onCaptureAudioFrame(wl_listener* listener, void* data);
-    static void onCaptureAudioAfterFrame(wl_listener* listener, void* data);
-    static void onCaptureAudioCommit(wl_listener* listener, void* data);
-    static int onCaptureAudioTimer(void* data);
     void handleMap();
     void handleUnmap();
     void handleCommit(bool reconfigureOpeningState = false);
@@ -528,10 +536,6 @@ namespace umbriel {
     void handleForeignDestroy();
     void handleExtForeignDestroy();
     void handleCaptureSourceDestroy();
-    void attachCaptureAudio();
-    void detachCaptureAudio();
-    void scheduleCaptureAudio();
-    void changeCaptureSessions(int delta);
     void updateBorderGeometry();
     void updateBorderGeometry(int contentWidth, int contentHeight);
     // Lay the chrome attachment out around content of that size, which is remembered for later relayouts.
@@ -685,7 +689,6 @@ namespace umbriel {
     // The output box a fullscreen window covers: its workspace's output, else the one under it.
     [[nodiscard]] wlr_box fullscreenArea() const;
     void setPinned(bool pinned, bool focus);
-    [[nodiscard]] View* shellParent() const;
     [[nodiscard]] View* transientParent() const;
     [[nodiscard]] bool inheritScratchpadFromParent(bool restoreTiled);
     void syncTransientSceneParent();
@@ -832,11 +835,6 @@ namespace umbriel {
     wlr_ext_foreign_toplevel_handle_v1* m_extForeign = nullptr;
     wlr_output* m_foreignOutput = nullptr;
     wlr_ext_image_capture_source_v1* m_captureSource = nullptr;
-    wlr_output* m_captureOutput = nullptr;
-    wl_event_source* m_captureAudioTimer = nullptr;
-    unsigned m_captureSessions = 0;
-    uint64_t m_captureAudioLastMsec = 0;
-    bool m_captureAudioSubmitted = false;
     Workspace* m_workspace = nullptr;
     std::optional<DisplacedHome> m_displacedHome;
 
@@ -897,6 +895,9 @@ namespace umbriel {
     // Inactive client unfullscreen requests wait briefly for xdg or foreign activation. Any later client request or
     // compositor-driven fullscreen change clears the parked request.
     DeferredUnfullscreen m_deferredUnfullscreen;
+    // An X11 window entered through the compositor toggle stays fullscreen until another compositor action releases
+    // it. This prevents Wine from immediately undoing the explicit user action with a contradictory EWMH request.
+    bool m_xCompositorFullscreen = false;
     bool m_onActiveWorkspace = false;
     uint32_t m_presentationSourceOccurrences = 0;
     bool m_inScratchpad = false;
@@ -927,6 +928,8 @@ namespace umbriel {
     std::vector<std::unique_ptr<ViewSurfaceWatch>> m_viewSurfaceWatches;
     bool m_hasMaximizeRestoreBox = false;
     wlr_box m_maximizeRestoreBox{};
+    // The box a maximized float was last placed in, so a refit acts only when its settings moved it.
+    wlr_box m_floatingMaximizedBox{};
     FloatingGeometry m_floating;
     // Unapplied floating defaults stay in their configured units until the first float transition.
     std::optional<int> m_pendingFloatingWidthPx;
@@ -959,9 +962,6 @@ namespace umbriel {
     wl_listener m_xRequestConfigure{};
     wl_listener m_xRequestActivate{};
     wl_listener m_xSetHints{};
-    wl_listener m_captureAudioFrame{};
-    wl_listener m_captureAudioAfterFrame{};
-    wl_listener m_captureAudioCommit{};
   };
 
 } // namespace umbriel

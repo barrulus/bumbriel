@@ -1,6 +1,5 @@
 #pragma once
 
-#include "config/audio.h"
 #include "config/scene_effects.h"
 #include "config/shader_source.h"
 
@@ -61,7 +60,6 @@ namespace umbriel {
     ShaderSource shader = {};
     std::optional<scene_experiment::Preset> scene = std::nullopt;
     bool palette = false;
-    std::string audio = {};   // NOLINT(readability-redundant-member-init) one named input source
     int padding = 0;          // border: 0-1024 logical px
     float speed = 1.0F;       // border: 0-10
     bool animated = true;     // border
@@ -81,7 +79,6 @@ namespace umbriel {
   };
 
   struct Effects {
-    std::vector<AudioSource> audioSources;
     std::vector<EffectPreset> presets;
     std::vector<EffectPool> pools;
     std::string border; // "" = off

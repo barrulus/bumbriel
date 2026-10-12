@@ -20,6 +20,10 @@ namespace umbriel {
     // paths, invalid includes, syntax errors, and DRM policy errors fail closed;
     // other parsed errors retain the compatibility fallback to defaults.
     [[nodiscard]] bool load(const char* explicitPath);
+    // Replace the root config file. On failure the previous configuration is kept
+    // and the generation does not move: a config with a syntax error must not take
+    // the session down.
+    [[nodiscard]] ConfigReloadResult replace(const std::filesystem::path& explicitPath, std::string& errors);
     // Re-parse. On failure the previous configuration is kept and the generation
     // does not move: a config with a syntax error must not take the session down.
     [[nodiscard]] ConfigReloadResult reload();

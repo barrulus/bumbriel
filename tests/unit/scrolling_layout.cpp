@@ -6,6 +6,7 @@
 // See keybind_parse.cpp: <cmath> must precede the wayland chain.
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <wlr/util/box.h>
 #include <wlr/util/edges.h>
@@ -940,6 +941,20 @@ UMBRIEL_TEST(snapVisibleCentersFullWidthColumn) {
   fixture.layout.snapVisible(column, kViewport);
 
   CHECK_EQ(fixture.layout.scroll(), expected);
+}
+
+// A gesture released onto a fullscreen column rests covering the viewport, not with an edge pad of strip showing on
+// either side of it.
+UMBRIEL_TEST(snapScrollsCoverTheViewportWithAFullscreenColumn) {
+  Fixture fixture;
+  fixture.addColumns(2);
+  fixture.layout.setConstraints([](const View* view) { return LayoutConstraints{.fullscreen = view == stub(1)}; });
+  const auto cover = static_cast<double>(fixture.layout.columnX(1, kViewport) + fixture.config.edgePad);
+  CHECK(cover < static_cast<double>(fixture.layout.maxScroll(kViewport)));
+
+  const std::array<double, 2> snaps = fixture.layout.snapScrolls(1, kViewport);
+  CHECK_EQ(snaps[0], cover);
+  CHECK_EQ(snaps[1], cover);
 }
 
 UMBRIEL_TEST(centerFocusedCentersAnInteriorColumn) {

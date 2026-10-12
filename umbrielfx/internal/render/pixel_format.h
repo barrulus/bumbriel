@@ -16,17 +16,17 @@
  * next to each other in a byte-aligned memory region.
  */
 struct wlr_pixel_format_info {
-	uint32_t drm_format;
+  uint32_t drm_format;
 
-	/* Equivalent of the format if it has an alpha channel,
-	 * DRM_FORMAT_INVALID (0) if NA
-	 */
-	uint32_t opaque_substitute;
+  /* Equivalent of the format if it has an alpha channel,
+   * DRM_FORMAT_INVALID (0) if NA
+   */
+  uint32_t opaque_substitute;
 
-	/* Bytes per block (including padding) */
-	uint32_t bytes_per_block;
-	/* Size of a block in pixels (zero for 1×1) */
-	uint32_t block_width, block_height;
+  /* Bytes per block (including padding) */
+  uint32_t bytes_per_block;
+  /* Size of a block in pixels (zero for 1×1) */
+  uint32_t block_width, block_height;
 };
 
 /**
@@ -34,20 +34,19 @@ struct wlr_pixel_format_info {
  *
  * NULL is returned if the pixel format is unknown.
  */
-const struct wlr_pixel_format_info *drm_get_pixel_format_info(uint32_t fmt);
+const struct wlr_pixel_format_info* drm_get_pixel_format_info(uint32_t fmt);
 /**
  * Get the number of pixels per block for a pixel format.
  */
-uint32_t pixel_format_info_pixels_per_block(const struct wlr_pixel_format_info *info);
+uint32_t pixel_format_info_pixels_per_block(const struct wlr_pixel_format_info* info);
 /**
  * Get the minimum stride for a given pixel format and width.
  */
-int32_t pixel_format_info_min_stride(const struct wlr_pixel_format_info *info, int32_t width);
+int32_t pixel_format_info_min_stride(const struct wlr_pixel_format_info* info, int32_t width);
 /**
  * Check whether a stride is large enough for a given pixel format and width.
  */
-bool pixel_format_info_check_stride(const struct wlr_pixel_format_info *info,
-	int32_t stride, int32_t width);
+bool pixel_format_info_check_stride(const struct wlr_pixel_format_info* info, int32_t stride, int32_t width);
 
 /**
  * Convert an enum wl_shm_format to a DRM FourCC.

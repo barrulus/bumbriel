@@ -195,21 +195,28 @@ namespace {
         return name;
       case umbriel::ActionArgKind::LayoutMode:
         if (const auto* arg = umbriel::payloadIf<umbriel::LayoutModeArg>(bind)) {
-          if (arg->mode.has_value()) {
-            const auto modeName = [](umbriel::LayoutMode mode) {
-              switch (mode) {
-              case umbriel::LayoutMode::Scrolling:
-                return "scrolling";
-              case umbriel::LayoutMode::Dwindle:
-                return "dwindle";
-              case umbriel::LayoutMode::Master:
-                return "master";
-              }
+          const auto modeName = [](umbriel::LayoutMode mode) {
+            switch (mode) {
+            case umbriel::LayoutMode::Scrolling:
               return "scrolling";
-            };
+            case umbriel::LayoutMode::Dwindle:
+              return "dwindle";
+            case umbriel::LayoutMode::Master:
+              return "master";
+            }
+            return "scrolling";
+          };
+          if (arg->mode.has_value()) {
             return name + ": " + modeName(*arg->mode);
           }
-          return name + ": toggle";
+          std::string label = name + ": toggle";
+          char separator = ':';
+          for (const auto mode : arg->toggleSequence) {
+            label += separator;
+            label += modeName(mode);
+            separator = ',';
+          }
+          return label;
         }
         return name;
       case umbriel::ActionArgKind::ColumnDisplay:
@@ -365,6 +372,8 @@ namespace {
     case A::WindowMoveOrWorkspaceDown:
     case A::WindowMoveOrOutputUp:
     case A::WindowMoveOrOutputDown:
+    case A::WindowConsumeFromLeft:
+    case A::WindowConsumeFromRight:
     case A::WindowConsumeLeft:
     case A::WindowConsumeOrExpelLeft:
     case A::WindowConsumeRight:
@@ -425,6 +434,8 @@ namespace {
     case A::WindowToggleScratchpad:
     case A::ScratchpadToggle:
     case A::ScratchpadFocusNext:
+    case A::ScratchpadWindowShowNext:
+    case A::ScratchpadWindowShowPrevious:
       return Group::Scratchpad;
     case A::WorkspaceSwitch:
     case A::ColumnMoveToWorkspace:

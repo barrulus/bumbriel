@@ -255,6 +255,20 @@ UMBRIEL_TEST(cycleWidthWalksThePresets) {
   CHECK(std::abs(fixture.layout.widthFraction(0) - 1.0 / 3.0) < 1e-9);
 }
 
+UMBRIEL_TEST(cycleWidthWrapsWhenTheNextPresetIsOutOfReach) {
+  // A centered side column tops out at 0.45, short of the 0.5 preset.
+  Fixture fixture;
+  fixture.config.master.position = umbriel::MasterPosition::Center;
+  fixture.addViews(3);
+  CHECK(std::abs(fixture.layout.widthFraction(0) - 0.225) < 1e-9);
+  CHECK(fixture.layout.cycleWidth(0, 1));
+  CHECK(std::abs(fixture.layout.widthFraction(0) - 1.0 / 3.0) < 1e-9);
+  CHECK(fixture.layout.cycleWidth(0, 1));
+  CHECK(std::abs(fixture.layout.widthFraction(0) - 0.45) < 1e-9);
+  CHECK(fixture.layout.cycleWidth(0, 1));
+  CHECK(std::abs(fixture.layout.widthFraction(0) - 1.0 / 3.0) < 1e-9);
+}
+
 UMBRIEL_TEST(toggleFullWidthExpandsAndRestores) {
   Fixture fixture;
   fixture.addViews(2);
@@ -684,6 +698,79 @@ UMBRIEL_TEST(leavingCenterFoldsTheSecondStackOntoTheStack) {
   CHECK_EQ(fixture.layout.columns()[1].views.size(), size_t{2});
   CHECK_EQ(fixture.layout.columns()[1].views[0], stub(1));
   CHECK_EQ(fixture.layout.columns()[1].views[1], stub(2));
+}
+
+UMBRIEL_TEST(openStackLandsWhereItsEmptyStackSaidInEveryPosition) {
+  for (const auto position :
+       {umbriel::MasterPosition::Left, umbriel::MasterPosition::Right, umbriel::MasterPosition::Center}) {
+    Fixture probe;
+    probe.config.master.position = position;
+    probe.addViews(1);
+    probe.layout.arrange(kUsable);
+    const auto stacks = probe.layout.emptyStacks(kUsable);
+    CHECK_EQ(stacks.size(), position == umbriel::MasterPosition::Center ? size_t{2} : size_t{1});
+
+    for (const MasterStackLayout::EmptyStack& stack : stacks) {
+      Fixture fixture;
+      fixture.config.master.position = position;
+      fixture.addViews(1);
+      CHECK(fixture.layout.openStack(stub(9), stack.gap));
+      fixture.layout.arrange(kUsable);
+      const wlr_box box = fixture.layout.targetBox(stub(9));
+      CHECK_EQ(box.x, stack.box.x);
+      CHECK_EQ(box.y, stack.box.y);
+      CHECK_EQ(box.width, stack.box.width);
+      CHECK_EQ(box.height, stack.box.height);
+      CHECK_EQ(fixture.layout.columnOf(stub(9)), stack.gap == 0 ? 0 : 1);
+      // The master keeps its single row.
+      CHECK_EQ(fixture.layout.rowOf(stub(0)), 0);
+      CHECK_EQ(fixture.layout.columns().size(), size_t{2});
+    }
+  }
+}
+
+UMBRIEL_TEST(emptyStacksOfferOnlyEmptySidesBesideAMaster) {
+  Fixture empty;
+  CHECK(empty.layout.emptyStacks(kUsable).empty());
+  CHECK(!empty.layout.openStack(stub(9), 0));
+
+  Fixture filled;
+  filled.addViews(2);
+  CHECK(filled.layout.emptyStacks(kUsable).empty());
+  CHECK(!filled.layout.openStack(stub(9), 0));
+  CHECK(!filled.layout.openStack(stub(9), 2));
+
+  // Master on the left: its own side is not a stack.
+  Fixture left;
+  left.addViews(1);
+  CHECK(!left.layout.openStack(stub(9), 0));
+  CHECK_EQ(left.layout.columns().size(), size_t{1});
+
+  // Center with the left side filled leaves only the right side, after both areas.
+  CenterFixture center;
+  center.addViews(2);
+  const auto stacks = center.layout.emptyStacks(kUsable);
+  CHECK_EQ(stacks.size(), size_t{1});
+  CHECK_EQ(stacks[0].gap, 2);
+  CHECK_EQ(stacks[0].box.x, 992);
+  CHECK_EQ(stacks[0].box.width, 278);
+  CHECK(!center.layout.openStack(stub(9), 0));
+}
+
+UMBRIEL_TEST(emptyMasterBoxIsWhereTheFirstWindowLandsInEveryPosition) {
+  for (const auto position :
+       {umbriel::MasterPosition::Left, umbriel::MasterPosition::Right, umbriel::MasterPosition::Center}) {
+    Fixture fixture;
+    fixture.config.master.position = position;
+    const wlr_box expected = fixture.layout.emptyMasterBox(kUsable);
+    fixture.layout.insertViewIntoColumn(stub(0), 0, 0);
+    fixture.layout.arrange(kUsable);
+    const wlr_box box = fixture.layout.targetBox(stub(0));
+    CHECK_EQ(box.x, expected.x);
+    CHECK_EQ(box.y, expected.y);
+    CHECK_EQ(box.width, expected.width);
+    CHECK_EQ(box.height, expected.height);
+  }
 }
 
 int main() { return RUN_TESTS(); }

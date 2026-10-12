@@ -319,7 +319,7 @@ namespace umbriel {
         }
         state.server.refocus(&state.output);
       }
-      state.server.effects().updateSceneAudio(this, &state.output, state.bundle.get(), true);
+      state.server.effects().updateSceneInputs(this, &state.output, state.bundle.get(), true);
     }
     fx_scene_frame frame{};
     state.server.effects().fillScenePalette(frame, *state.bundle);
@@ -404,7 +404,7 @@ namespace umbriel {
     state.active = false;
     state.fallback = reason;
     state.lease.cancel(reason);
-    state.server.effects().clearSceneAudio(this);
+    state.server.effects().clearSceneInputs(this);
     if (state.tree) {
       wlr_scene_node_set_enabled(&state.tree->node, false);
       fx_scene_output_replace_range_for_test(state.output.sceneOutput(), nullptr, nullptr);

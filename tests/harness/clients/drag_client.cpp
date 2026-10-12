@@ -1,12 +1,14 @@
 // By default, maps a small layer surface and starts a Wayland data-device drag when its left mouse button is pressed.
-// Target mode maps an xdg toplevel that accepts the offered text and reports enter and drop events. The headless
-// harness drives the source press through pointer-client.
+// Target mode maps an xdg toplevel that accepts the offered text and reports enter and drop events. Tear-off mode maps
+// an xdg source, then requests an input activation token with the saved press serial and maps another toplevel after
+// the drag is cancelled over empty space. The headless harness drives the source press through pointer-client.
 
 #include <wayland-client.h>
 
 #define namespace namespace_
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #undef namespace
+#include "xdg-activation-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
 #include <algorithm>
@@ -16,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <print>
+#include <string>
 #include <string_view>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -50,12 +53,17 @@ namespace {
     wl_pointer* pointer = nullptr;
     wl_data_device_manager* dataDeviceManager = nullptr;
     wl_data_device* dataDevice = nullptr;
+    xdg_activation_v1* activation = nullptr;
+    xdg_activation_token_v1* activationRequest = nullptr;
     zwlr_layer_shell_v1* layerShell = nullptr;
     zwlr_layer_surface_v1* layerSurface = nullptr;
     xdg_wm_base* wmBase = nullptr;
     xdg_surface* xdgSurface = nullptr;
     xdg_toplevel* toplevel = nullptr;
+    xdg_surface* detachedXdgSurface = nullptr;
+    xdg_toplevel* detachedToplevel = nullptr;
     wl_surface* surface = nullptr;
+    wl_surface* detachedSurface = nullptr;
     wl_surface* iconSurface = nullptr;
     wl_surface* iconChildSurface = nullptr;
     wl_subsurface* iconChildSubsurface = nullptr;
@@ -63,11 +71,16 @@ namespace {
     std::vector<std::unique_ptr<DataOffer>> offers;
     DataOffer* activeOffer = nullptr;
     Buffer windowBuffer;
+    Buffer detachedBuffer;
     Buffer iconBuffer;
     Buffer iconChildBuffer;
+    std::string activationToken;
+    uint32_t dragSerial = 0;
     const char* title = "drag-target";
     bool targetMode = false;
+    bool tearOffMode = false;
     bool ready = false;
+    bool detachedMapped = false;
     bool dragStarted = false;
     bool dragFinished = false;
     bool waitForPointerRefresh = false;
@@ -75,6 +88,9 @@ namespace {
     bool complete = false;
     bool failed = false;
   };
+
+  void mapDetached(State& state);
+  void requestTearOffToken(State& state);
 
   Buffer createBuffer(State& state, int width, int height, uint32_t color) {
     Buffer buffer;
@@ -110,6 +126,11 @@ namespace {
     std::println("{}", result);
     std::fflush(stdout);
 
+    if (state.tearOffMode) {
+      requestTearOffToken(state);
+      mapDetached(state);
+      return;
+    }
     if (!state.waitForPointerRefresh) {
       state.complete = true;
     }
@@ -251,11 +272,42 @@ namespace {
     observePointerRefresh(*static_cast<State*>(data));
   }
 
+  void activationTokenDone(void* data, xdg_activation_token_v1* request, const char* token) {
+    auto& state = *static_cast<State*>(data);
+    state.activationToken = token != nullptr ? token : "";
+    xdg_activation_token_v1_destroy(request);
+    state.activationRequest = nullptr;
+    std::println("activation-token-ready");
+    std::fflush(stdout);
+    if (state.dragFinished) {
+      mapDetached(state);
+    }
+  }
+
+  constexpr xdg_activation_token_v1_listener kActivationTokenListener = {
+      .done = activationTokenDone,
+  };
+
+  void requestTearOffToken(State& state) {
+    if (!state.tearOffMode
+        || state.dragSerial == 0
+        || state.activationRequest != nullptr
+        || !state.activationToken.empty()) {
+      return;
+    }
+    state.activationRequest = xdg_activation_v1_get_activation_token(state.activation);
+    xdg_activation_token_v1_add_listener(state.activationRequest, &kActivationTokenListener, &state);
+    xdg_activation_token_v1_set_serial(state.activationRequest, state.dragSerial, state.seat);
+    xdg_activation_token_v1_set_surface(state.activationRequest, state.surface);
+    xdg_activation_token_v1_commit(state.activationRequest);
+  }
+
   void pointerButton(void* data, wl_pointer*, uint32_t serial, uint32_t, uint32_t button, uint32_t buttonState) {
     auto& state = *static_cast<State*>(data);
     if (button != kLeftButton || buttonState != WL_POINTER_BUTTON_STATE_PRESSED || state.dragStarted) {
       return;
     }
+    state.dragSerial = serial;
 
     state.source = wl_data_device_manager_create_data_source(state.dataDeviceManager);
     wl_data_source_add_listener(state.source, &kDataSourceListener, &state);
@@ -360,6 +412,17 @@ namespace {
   void xdgSurfaceConfigure(void* data, xdg_surface* xdgSurface, uint32_t serial) {
     auto& state = *static_cast<State*>(data);
     xdg_surface_ack_configure(xdgSurface, serial);
+    if (xdgSurface == state.detachedXdgSurface) {
+      wl_surface_attach(state.detachedSurface, state.detachedBuffer.resource, 0, 0);
+      wl_surface_damage_buffer(state.detachedSurface, 0, 0, kTargetWidth, kTargetHeight);
+      wl_surface_commit(state.detachedSurface);
+      if (!state.detachedMapped) {
+        state.detachedMapped = true;
+        std::println("tear-off-mapped");
+        std::fflush(stdout);
+      }
+      return;
+    }
     if (!state.ready) {
       state.ready = true;
       wl_surface_attach(state.surface, state.windowBuffer.resource, 0, 0);
@@ -389,6 +452,24 @@ namespace {
       .wm_capabilities = nullptr,
   };
 
+  void mapDetached(State& state) {
+    if (!state.tearOffMode
+        || !state.dragFinished
+        || state.activationToken.empty()
+        || state.detachedSurface != nullptr) {
+      return;
+    }
+    state.detachedSurface = wl_compositor_create_surface(state.compositor);
+    state.detachedXdgSurface = xdg_wm_base_get_xdg_surface(state.wmBase, state.detachedSurface);
+    xdg_surface_add_listener(state.detachedXdgSurface, &kXdgSurfaceListener, &state);
+    state.detachedToplevel = xdg_surface_get_toplevel(state.detachedXdgSurface);
+    xdg_toplevel_add_listener(state.detachedToplevel, &kToplevelListener, &state);
+    xdg_toplevel_set_title(state.detachedToplevel, "tear-off-window");
+    xdg_toplevel_set_app_id(state.detachedToplevel, "tear-off-window");
+    xdg_activation_v1_activate(state.activation, state.activationToken.c_str(), state.detachedSurface);
+    wl_surface_commit(state.detachedSurface);
+  }
+
   void registryGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
     auto& state = *static_cast<State*>(data);
     if (std::strcmp(interface, wl_compositor_interface.name) == 0) {
@@ -405,6 +486,9 @@ namespace {
       state.dataDeviceManager = static_cast<wl_data_device_manager*>(
           wl_registry_bind(registry, name, &wl_data_device_manager_interface, std::min(version, 3U))
       );
+    } else if (std::strcmp(interface, xdg_activation_v1_interface.name) == 0) {
+      state.activation =
+          static_cast<xdg_activation_v1*>(wl_registry_bind(registry, name, &xdg_activation_v1_interface, 1));
     } else if (std::strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
       state.layerShell = static_cast<zwlr_layer_shell_v1*>(
           wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, std::min(version, 4U))
@@ -437,14 +521,16 @@ namespace {
 int main(int argc, char* argv[]) {
   const bool targetMode = argc >= 2 && std::string_view(argv[1]) == "target";
   const bool cursorRefresh = argc == 2 && std::string_view(argv[1]) == "cursor-refresh";
-  if ((!targetMode && argc > 1 && !cursorRefresh) || (targetMode && argc > 3)) {
-    std::println(stderr, "usage: drag-client [cursor-refresh | target [title]]");
+  const bool tearOffMode = argc == 2 && std::string_view(argv[1]) == "tear-off";
+  if ((!targetMode && argc > 1 && !cursorRefresh && !tearOffMode) || (targetMode && argc > 3)) {
+    std::println(stderr, "usage: drag-client [cursor-refresh | tear-off | target [title]]");
     return EXIT_FAILURE;
   }
 
   State state;
   state.targetMode = targetMode;
-  state.title = targetMode && argc == 3 ? argv[2] : "drag-target";
+  state.tearOffMode = tearOffMode;
+  state.title = targetMode && argc == 3 ? argv[2] : (tearOffMode ? "tear-off-source" : "drag-target");
   state.waitForPointerRefresh = cursorRefresh;
   state.display = wl_display_connect(nullptr);
   if (state.display == nullptr) {
@@ -457,40 +543,49 @@ int main(int argc, char* argv[]) {
   wl_display_roundtrip(state.display);
   wl_display_roundtrip(state.display);
 
+  const bool targetGlobals = state.targetMode && state.wmBase != nullptr;
+  const bool sourceGlobals = !state.targetMode
+      && state.pointer != nullptr
+      && state.subcompositor != nullptr
+      && (state.tearOffMode ? state.wmBase != nullptr && state.activation != nullptr : state.layerShell != nullptr);
   if (state.compositor == nullptr
       || state.shm == nullptr
       || state.seat == nullptr
       || state.dataDeviceManager == nullptr
-      || (state.targetMode
-              ? state.wmBase == nullptr
-              : (state.pointer == nullptr || state.layerShell == nullptr || state.subcompositor == nullptr))) {
+      || (!targetGlobals && !sourceGlobals)) {
     std::println(stderr, "drag-client: compositor is missing a required Wayland global");
     return EXIT_FAILURE;
   }
 
   state.dataDevice = wl_data_device_manager_get_data_device(state.dataDeviceManager, state.seat);
   wl_data_device_add_listener(state.dataDevice, &kDataDeviceListener, &state);
+  const bool xdgSource = state.targetMode || state.tearOffMode;
   state.windowBuffer = createBuffer(
-      state, state.targetMode ? kTargetWidth : kSurfaceSize, state.targetMode ? kTargetHeight : kSurfaceSize,
+      state, xdgSource ? kTargetWidth : kSurfaceSize, xdgSource ? kTargetHeight : kSurfaceSize,
       state.targetMode ? 0xFF55AA77 : 0xFF4477CC
   );
+  if (state.tearOffMode) {
+    state.detachedBuffer = createBuffer(state, kTargetWidth, kTargetHeight, 0xFFAA5577);
+  }
   if (!state.targetMode) {
     state.iconBuffer = createBuffer(state, 24, 24, 0xFFFFAA22);
     state.iconChildBuffer = createBuffer(state, kIconChildSize, kIconChildSize, 0xFFCC44FF);
   }
   if (state.windowBuffer.resource == nullptr
+      || (state.tearOffMode && state.detachedBuffer.resource == nullptr)
       || (!state.targetMode && (state.iconBuffer.resource == nullptr || state.iconChildBuffer.resource == nullptr))) {
     std::println(stderr, "drag-client: failed to allocate shared-memory buffers");
     return EXIT_FAILURE;
   }
 
   state.surface = wl_compositor_create_surface(state.compositor);
-  if (state.targetMode) {
+  if (xdgSource) {
     state.xdgSurface = xdg_wm_base_get_xdg_surface(state.wmBase, state.surface);
     xdg_surface_add_listener(state.xdgSurface, &kXdgSurfaceListener, &state);
     state.toplevel = xdg_surface_get_toplevel(state.xdgSurface);
     xdg_toplevel_add_listener(state.toplevel, &kToplevelListener, &state);
     xdg_toplevel_set_title(state.toplevel, state.title);
+    xdg_toplevel_set_app_id(state.toplevel, state.title);
   } else {
     state.layerSurface = zwlr_layer_shell_v1_get_layer_surface(
         state.layerShell, state.surface, nullptr, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "umbriel-drag-regression"
@@ -512,6 +607,9 @@ int main(int argc, char* argv[]) {
   if (state.source != nullptr) {
     wl_data_source_destroy(state.source);
   }
+  if (state.activationRequest != nullptr) {
+    xdg_activation_token_v1_destroy(state.activationRequest);
+  }
   if (state.iconChildSubsurface != nullptr) {
     wl_subsurface_destroy(state.iconChildSubsurface);
   }
@@ -527,6 +625,15 @@ int main(int argc, char* argv[]) {
   if (state.layerSurface != nullptr) {
     zwlr_layer_surface_v1_destroy(state.layerSurface);
   }
+  if (state.detachedToplevel != nullptr) {
+    xdg_toplevel_destroy(state.detachedToplevel);
+  }
+  if (state.detachedXdgSurface != nullptr) {
+    xdg_surface_destroy(state.detachedXdgSurface);
+  }
+  if (state.detachedSurface != nullptr) {
+    wl_surface_destroy(state.detachedSurface);
+  }
   if (state.toplevel != nullptr) {
     xdg_toplevel_destroy(state.toplevel);
   }
@@ -540,7 +647,11 @@ int main(int argc, char* argv[]) {
   }
   destroyBuffer(state.iconChildBuffer);
   destroyBuffer(state.iconBuffer);
+  destroyBuffer(state.detachedBuffer);
   destroyBuffer(state.windowBuffer);
+  if (state.activation != nullptr) {
+    xdg_activation_v1_destroy(state.activation);
+  }
   wl_display_disconnect(state.display);
   return state.failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

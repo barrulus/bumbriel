@@ -359,14 +359,36 @@ UMBRIEL_TEST(parsesLayoutModeActions) {
   CHECK(parseAction("workspace-set-layout:toggle", bind));
   const auto* toggle = umbriel::payloadIf<umbriel::LayoutModeArg>(bind);
   CHECK(toggle != nullptr && !toggle->mode.has_value());
+  CHECK(toggle != nullptr && toggle->toggleSequence.empty());
+
+  CHECK(parseAction("workspace-set-layout:toggle:scrolling,master", bind));
+  const auto* twoMode = umbriel::payloadIf<umbriel::LayoutModeArg>(bind);
+  CHECK(twoMode != nullptr && !twoMode->mode.has_value());
+  CHECK(twoMode != nullptr && twoMode->toggleSequence.size() == 2);
+  CHECK(twoMode != nullptr && twoMode->toggleSequence[0] == umbriel::LayoutMode::Scrolling);
+  CHECK(twoMode != nullptr && twoMode->toggleSequence[1] == umbriel::LayoutMode::Master);
+
+  CHECK(parseAction("workspace-set-layout:toggle:master,scrolling,dwindle", bind));
+  const auto* threeMode = umbriel::payloadIf<umbriel::LayoutModeArg>(bind);
+  CHECK(threeMode != nullptr && threeMode->toggleSequence.size() == 3);
+  CHECK(threeMode != nullptr && threeMode->toggleSequence[0] == umbriel::LayoutMode::Master);
+  CHECK(threeMode != nullptr && threeMode->toggleSequence[1] == umbriel::LayoutMode::Scrolling);
+  CHECK(threeMode != nullptr && threeMode->toggleSequence[2] == umbriel::LayoutMode::Dwindle);
 }
 
 UMBRIEL_TEST(rejectsInvalidLayoutModeActions) {
   Keybind bind;
-  CHECK(!parseAction("workspace-set-layout:spiral", bind));    // not a known mode
-  CHECK(!parseAction("workspace-set-layout:", bind));          // empty arg
-  CHECK(!parseAction("workspace-set-layout", bind));           // requires an argument
-  CHECK(!parseAction("workspace-set-layout:Scrolling", bind)); // exact lowercase only
+  CHECK(!parseAction("workspace-set-layout:spiral", bind));                       // not a known mode
+  CHECK(!parseAction("workspace-set-layout:", bind));                             // empty arg
+  CHECK(!parseAction("workspace-set-layout", bind));                              // requires an argument
+  CHECK(!parseAction("workspace-set-layout:Scrolling", bind));                    // exact lowercase only
+  CHECK(!parseAction("workspace-set-layout:toggle:", bind));                      // toggle with empty sequence
+  CHECK(!parseAction("workspace-set-layout:toggle:scrolling", bind));             // single mode not enough
+  CHECK(!parseAction("workspace-set-layout:toggle:scrolling,master,", bind));     // trailing comma
+  CHECK(!parseAction("workspace-set-layout:toggle:,master", bind));               // leading comma
+  CHECK(!parseAction("workspace-set-layout:toggle:scrolling,spiral", bind));      // unknown in sequence
+  CHECK(!parseAction("workspace-set-layout:toggle:scrolling,scrolling", bind));   // repeated mode
+  CHECK(!parseAction("workspace-set-layout:toggle:master,dwindle,master", bind)); // repeated mode
 }
 
 UMBRIEL_TEST(parsesArgumentFreeNewActions) {
@@ -438,8 +460,13 @@ UMBRIEL_TEST(parsesArgumentFreeNewActions) {
   CHECK(bind.action == KeybindAction::WindowConsumeRight);
   CHECK(parseAction("window-consume-or-expel-right", bind));
   CHECK(bind.action == KeybindAction::WindowConsumeOrExpelRight);
+  CHECK(parseAction("window-consume-from-left", bind));
+  CHECK(bind.action == KeybindAction::WindowConsumeFromLeft);
+  CHECK(parseAction("window-consume-from-right", bind));
+  CHECK(bind.action == KeybindAction::WindowConsumeFromRight);
   CHECK(!parseAction("window-consume-or-expel", bind));
   CHECK(!parseAction("window-expel-right", bind));
+  CHECK(!parseAction("window-consume-from", bind));
 
   // Argument-free actions reject arguments.
   CHECK(!parseAction("workspace-next:1", bind));
@@ -455,6 +482,8 @@ UMBRIEL_TEST(parsesArgumentFreeNewActions) {
   CHECK(!parseAction("window-consume-or-expel-left:x", bind));
   CHECK(!parseAction("window-consume-right:x", bind));
   CHECK(!parseAction("window-consume-or-expel-right:x", bind));
+  CHECK(!parseAction("window-consume-from-left:x", bind));
+  CHECK(!parseAction("window-consume-from-right:x", bind));
 }
 
 UMBRIEL_TEST(parsesWorkspaceSelectors) {
@@ -881,6 +910,20 @@ UMBRIEL_TEST(defaultKeybindsAreUsable) {
   CHECK(overview != binds.end());
   CHECK(!overview->repeat);
 
+  // Pulling a neighbor in is the same gesture as consuming with Ctrl held, one column over.
+  const auto pullLeft = std::ranges::find_if(binds, [](const Keybind& bind) {
+    return bind.action == KeybindAction::WindowConsumeFromLeft;
+  });
+  CHECK(pullLeft != binds.end());
+  CHECK_EQ(pullLeft->modifiers, uint32_t{WLR_MODIFIER_CTRL});
+  CHECK_EQ(pullLeft->keysym, xkb_keysym_to_lower(XKB_KEY_comma));
+  const auto pullRight = std::ranges::find_if(binds, [](const Keybind& bind) {
+    return bind.action == KeybindAction::WindowConsumeFromRight;
+  });
+  CHECK(pullRight != binds.end());
+  CHECK_EQ(pullRight->modifiers, uint32_t{WLR_MODIFIER_CTRL});
+  CHECK_EQ(pullRight->keysym, xkb_keysym_to_lower(XKB_KEY_period));
+
   // Workspaces 1-9 are bound on both the number row and the keypad.
   const auto switches =
       std::ranges::count_if(binds, [](const Keybind& bind) { return bind.action == KeybindAction::WorkspaceSwitch; });
@@ -966,7 +1009,7 @@ UMBRIEL_TEST(everyAdvertisedActionParsesWithItsDeclaredArgument) {
     case ActionArgKind::FractionDelta:
       return "<delta>";
     case ActionArgKind::LayoutMode:
-      return "<scrolling|dwindle|master|toggle>";
+      return "<scrolling|dwindle|master|toggle[:mode1,mode2,...]>";
     case ActionArgKind::ColumnDisplay:
       return "<normal|tabbed>";
     case ActionArgKind::TabIndex:

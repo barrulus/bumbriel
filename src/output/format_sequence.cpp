@@ -25,7 +25,12 @@ namespace umbriel {
         std::string_view& hdrFail, std::string_view& sdr10Fail
     ) {
       const auto commitStaged = [&](FormatTier tier, uint32_t fmt, bool vrr) -> bool {
-        if (!ops.commit()) {
+        const FormatCommitResult commit = ops.commit();
+        if (commit == FormatCommitResult::Retry) {
+          result.retry = true;
+          return false;
+        }
+        if (commit == FormatCommitResult::Rejected) {
           return false;
         }
         result.committedTier = tier;
@@ -41,6 +46,9 @@ namespace umbriel {
                                     const std::function<bool(uint32_t, bool)>& stage) -> bool {
         if (commitStaged(tier, fmt, vrr)) {
           return true;
+        }
+        if (result.retry) {
+          return false;
         }
         return vrr && stage(fmt, false) && commitStaged(tier, fmt, false);
       };
@@ -63,6 +71,9 @@ namespace umbriel {
           }
           if (commitTenBit(FormatTier::Hdr, *accepted, vrr, ops.stageHdr)) {
             return true;
+          }
+          if (result.retry) {
+            return false;
           }
           hdrFail = "HDR commit rejected by backend";
           ops.clearImageDescription();
@@ -90,6 +101,9 @@ namespace umbriel {
           if (commitTenBit(FormatTier::Sdr10, *accepted, vrr, ops.stageSdr)) {
             return true;
           }
+          if (result.retry) {
+            return false;
+          }
           sdr10Fail = "10-bit SDR commit rejected by backend";
           return false;
         }
@@ -105,11 +119,23 @@ namespace umbriel {
           if (commitStaged(FormatTier::Sdr8, DRM_FORMAT_XRGB8888, vrr)) {
             return true;
           }
+          if (result.retry) {
+            return false;
+          }
         }
         return false;
       };
 
-      return tryHdrFormats() || trySdr10Formats() || trySdr8Formats();
+      if (tryHdrFormats()) {
+        return true;
+      }
+      if (result.retry) {
+        return false;
+      }
+      if (trySdr10Formats()) {
+        return true;
+      }
+      return !result.retry && trySdr8Formats();
     }
 
   } // namespace
@@ -121,7 +147,7 @@ namespace umbriel {
 
     result.committed = runSequenceForCurrentMode(params, ops, result, hdrFail, sdr10Fail);
 
-    if (!result.committed && params.configuredModeSpec != nullptr && params.preferredMode != nullptr) {
+    if (!result.committed && !result.retry && params.configuredModeSpec != nullptr && params.preferredMode != nullptr) {
       result.usedModeFallback = true;
       if (!params.modeFallbackAlreadyWarned) {
         result.modeFallbackWarnedNow = true;

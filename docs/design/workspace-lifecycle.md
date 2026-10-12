@@ -49,6 +49,11 @@ map. Explicit output, workspace, and scratchpad window rules are resolved
 instead when present. If the pointer-preferred workspace has changed, the
 captured workspace receives the new window without changing focus or switching
 the user back, including when the pointer moved to another output.
+One exception applies to a pointer gesture that creates another toplevel in the
+same Wayland client. If the pointer gesture ends on another output and the
+client redeems its activation token there, the new toplevel opens on the active
+workspace of the drop output. This lets browser tab tear-offs follow their drop
+without changing ordinary application launch placement.
 `focus_on_activate` controls the activation decision and does not select the
 recorded launch destination. Redeeming the token against an existing or
 remapping toplevel consumes it without relocation.
@@ -128,7 +133,10 @@ previous hover decision once. The next eligible pointer motion can therefore
 select a newly revealed view even when both the old and new pointer coordinates
 fall inside it. After that one refresh, hover returns to geometric
 border-crossing detection so scrolling animations cannot cascade focus through
-windows moving beneath the pointer.
+windows moving beneath the pointer. Explicit layout scrolling is the exception:
+the strip moves without invalidating hover, and a scroll gesture owns its focus
+choice through release. Focus follows again after the pointer crosses into
+another view.
 
 The hover decision compares against seat-global activation, not a workspace's
 remembered focus. A pinned window can retain seat focus while following the
@@ -167,17 +175,21 @@ focus is suspended while the drag owns pointer motion, and keyboard enters are
 suppressed until the drag finishes. When the initiating button release destroys
 the grab, Umbriel reruns pointer processing at the unchanged cursor position.
 
-An active data-device drag held near a scrolling workspace edge starts a
-delayed event-loop timer. Each tick resolves the output, active workspace, drag
-state, and scrolling range again before changing the strip offset. The timer
-stops at the range boundary, when the pointer leaves the edge, or when the drag,
-workspace, overview, or session state no longer permits scrolling.
+An active data-device drag or compositor window move held near a scrolling
+workspace edge starts a delayed event-loop timer. A window move qualifies once
+it has crossed the drag threshold and detached from the strip. Each tick
+resolves the output, active workspace, drag state, and scrolling range again
+before changing the strip offset. The timer stops at the range boundary, when
+the pointer leaves the edge, or when the drag, workspace, overview, or session
+state no longer permits scrolling.
 
 Layout movement can place a new drop target beneath a pointer that has not
 moved. The output's post-arrange scene refresh therefore sends pointer enter,
 motion, or clear through wlroots' notify APIs while the data-device grab is
 active. This updates the grab's drop focus instead of only changing base pointer
-focus. Drag-icon buffers are excluded from scene hit testing, including buffers
+focus. During a compositor window move it recomputes the drop target and insert
+hint instead; client pointer focus stays suspended.
+Drag-icon buffers are excluded from scene hit testing, including buffers
 created later for nested subsurfaces, so the icon cannot hide the client below
 it from this refresh.
 

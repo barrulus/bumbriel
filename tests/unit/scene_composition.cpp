@@ -199,10 +199,10 @@ UMBRIEL_TEST(sceneCompositionRetriesCompletedPairWithoutRelatching) {
   const std::array<umbriel::SceneComposition::Source, 2> sources{{{&sourceA, &sourceA}, {&sourceB, &sourceB}}};
   fx_scene_frame frame{};
   frame.progress = 0.25F;
-  frame.audio_levels[3] = 0.8F;
+  frame.audio[0] = 0.8F;
   CHECK(composition->render(frame, sources));
   CHECK_EQ(renders, 2U);
-  CHECK_EQ(rendered[0].audio_levels[3], rendered[1].audio_levels[3]);
+  CHECK_EQ(rendered[0].audio[0], rendered[1].audio[0]);
   CHECK_EQ(textures, 0U);
   const auto pending = composition->candidate();
   CHECK(pending.display != nullptr);
@@ -210,7 +210,7 @@ UMBRIEL_TEST(sceneCompositionRetriesCompletedPairWithoutRelatching) {
   CHECK(composition->committed().display == nullptr);
   composition->submitted(false);
   frame.progress = 0.75F;
-  frame.audio_levels[3] = 0;
+  frame.audio[0] = 0;
   CHECK(composition->render(frame, sources));
   CHECK_EQ(renders, 2U);
   CHECK_EQ(rendered[0].progress, 0.25F);
@@ -339,7 +339,7 @@ UMBRIEL_TEST(sceneCompositionPickingRetainsOnlySubmittedInputsAcrossRetry) {
   frame.scene_count = 1;
   frame.time = 12;
   frame.progress = 0.25F;
-  frame.audio_levels[3] = 0.8F;
+  frame.audio[0] = 0.8F;
   CHECK(!composition->pick(32, 24));
   CHECK_EQ(picks, 0U);
   CHECK(composition->render(frame, sources, draws));
@@ -352,7 +352,7 @@ UMBRIEL_TEST(sceneCompositionPickingRetainsOnlySubmittedInputsAcrossRetry) {
   matrix[6] = 0.75F;
   draws[0].item.token = 9;
   frame.time = 22;
-  frame.audio_levels[3] = 0.1F;
+  frame.audio[0] = 0.1F;
   auto hit = composition->pick(32, 24);
   CHECK(hit.has_value());
   CHECK_EQ(hit->ordinal, 0U);
@@ -360,7 +360,7 @@ UMBRIEL_TEST(sceneCompositionPickingRetainsOnlySubmittedInputsAcrossRetry) {
   CHECK_EQ(hit->v, 0.75F);
   CHECK_EQ(pickedFrame.role, 0);
   CHECK_EQ(pickedFrame.time, 12.0F);
-  CHECK_EQ(pickedFrame.audio_levels[3], 0.8F);
+  CHECK_EQ(pickedFrame.audio[0], 0.8F);
   CHECK_EQ(pickedItem.token, 7);
   CHECK_EQ(pickedMatrix[6], 0.125F);
   CHECK(pickedSource == &sourceA);

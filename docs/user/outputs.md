@@ -8,6 +8,7 @@ monitor identity:
 mode = "3840x2160@165"
 position = [0, 0]
 scale = 1.25
+focus_at_startup = true
 ```
 
 Run `umbriel outputs` inside a session to list names and available modes. The
@@ -39,6 +40,7 @@ and positions when the output becomes available again.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Turn the monitor on or off. |
+| `focus_at_startup` | bool | `false` | Move the mouse cursor to this monitor on startup. |
 | `mode` | string | preferred | Resolution and optional refresh rate, such as `"2560x1440@165"`. |
 | `position` | `[x, y]` | automatic | Top-left position in logical coordinates. |
 | `scale` | float | `1.0` | Output scale from 0.25 to 4.0. |
@@ -214,8 +216,27 @@ Some native Wayland Proton builds require `PROTON_ENABLE_WAYLAND=1` and
 the selected runtime's documentation and fully restart Steam after changing
 session environment values.
 
-Screenshots from normal screencopy clients receive an SDR view while HDR is
-active.
+On a native DRM output, Umbriel reads the display's CTA HDR static metadata
+from its EDID. The display primaries, desired minimum and maximum content
+luminance, and desired maximum frame-average luminance are included in the
+BT.2020 PQ output description. This gives the display a valid mastering range,
+MaxCLL, and MaxFALL for its own tone mapping. Umbriel leaves any value omitted
+by the EDID undefined instead of guessing a brightness that may be wrong for
+the panel. Nested and virtual outputs have no display EDID, so their luminance
+metadata remains undefined.
+
+Run `umbriel color` to inspect the metadata in the active output description.
+The JSON form reports `mastering_display_primaries`, `mastering_luminance`,
+`max_cll`, and `max_fall` for each output.
+
+Shared-memory screenshots from normal screencopy and image-copy clients receive
+an 8-bit SDR view while HDR is active. DMA-BUF capture may retain 10-bit
+storage while still containing SDR values. Export-DMA-BUF bypasses the SDR
+capture view and retains the output's native HDR representation.
+
+Gamma-control adjustments such as Night Light are suspended while HDR is
+active. Umbriel keeps the client's latest gamma table and restores it when the
+output returns to SDR.
 
 ### Bit depth
 
@@ -266,10 +287,13 @@ the client buffer format to exactly match what KMS accepts for the plane. Set
 
 #### Screencopy and capture
 
-Screencopy clients such as `grim` and Noctalia receive raw buffers in the
-output's active 10-bit render format (XR30 or XB30) when 10-bit SDR is active.
-Unlike HDR capture, the pixels are not converted to an 8-bit SDR format first.
-Tools that do not handle 10-bit formats may produce undesired output.
+Shared-memory captures through screencopy and image-copy use an 8-bit format
+even when the output render format is XR30 or XB30. This applies to both 10-bit
+SDR outputs and the SDR capture view produced while HDR is active, improving
+compatibility with clients whose shared-memory paths assume 8-bit pixels.
+DMA-BUF capture may retain the negotiated 10-bit storage format. During HDR,
+that buffer still contains Umbriel's SDR capture view. Export-DMA-BUF alone
+bypasses the conversion and exposes the displayed native representation.
 
 ## Virtual outputs
 
@@ -401,5 +425,5 @@ files = [
 
 Each output keeps its screen pool assignment while disabled. Disconnecting
 releases it; reconnecting starts from configuration. Inspect assignments with
-`umbriel effects --json`; `outputs --json` remains output-management data.
+`umbriel effects --json`.
 The cursor has one session-wide selection shared by all outputs.

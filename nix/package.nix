@@ -16,13 +16,12 @@
   pango,
   libGL,
   libdrm,
+  libdisplay-info,
   libgbm,
   libxcb,
   libxcb-wm,
   lcms2,
   jemalloc,
-  pipewire,
-  enableAudio ? false,
   tomlplusplus,
   nlohmann_json,
   xwayland,
@@ -59,6 +58,7 @@ stdenv.mkDerivation {
     libGL
     nlohmann_json
     libdrm
+    libdisplay-info
     libgbm
     libxcb
     libxcb-wm
@@ -66,14 +66,11 @@ stdenv.mkDerivation {
     jemalloc
     cairo
     pango
-  ] ++ lib.optional enableAudio pipewire;
+  ];
 
   mesonBuildType = "release";
 
-  mesonFlags = [
-    (lib.mesonEnable "tests" false)
-    (lib.mesonEnable "audio_helper" enableAudio)
-  ];
+  mesonFlags = [ (lib.mesonEnable "tests" false) ];
 
   postPatch = ''
     substituteInPlace meson.build \
@@ -86,7 +83,7 @@ stdenv.mkDerivation {
         --replace-fail 'Exec=start-umbriel' "Exec=$out/bin/start-umbriel"
     fi
     wrapProgram $out/bin/umbriel \
-      --prefix PATH : "${lib.optionalString enableAudio "$out/bin:"}${lib.makeBinPath [ xwayland ]}"
+      --prefix PATH : ${lib.makeBinPath [ xwayland ]} \
   '';
 
   passthru.providedSessions = [ "umbriel" ];

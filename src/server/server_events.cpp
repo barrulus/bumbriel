@@ -17,6 +17,7 @@
 #include "scene/effect_registry.h"
 #include "scene/hint_rect.h"
 #include "scene/quit_confirm.h"
+#include "server/allocator.h"
 #include "server/backend_manager.h"
 #include "server/ipc.h"
 #include "server/server.h"
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -64,6 +66,13 @@ namespace umbriel {
       }
       wlr_surface* root = wlr_surface_get_root_surface(surface);
       return viewForToplevel(server, wlr_xdg_toplevel_try_from_wlr_surface(root));
+    }
+
+    bool sameWaylandClient(const wlr_surface* first, const wlr_surface* second) {
+      if (first == nullptr || second == nullptr || first->resource == nullptr || second->resource == nullptr) {
+        return false;
+      }
+      return wl_resource_get_client(first->resource) == wl_resource_get_client(second->resource);
     }
 
     std::optional<std::string> processEnvironmentValue(pid_t pid, std::string_view name) {
@@ -752,6 +761,11 @@ namespace umbriel {
     if (effects.animation && m_scratchpadManager != nullptr) {
       m_scratchpadManager->applyConfig();
     }
+    // A maximized scratchpad window follows the gap, border, and struts it is sized with; no workspace arrange reaches
+    // it.
+    if ((effects.workspaceLayout || effects.viewChrome) && m_scratchpadManager != nullptr) {
+      m_scratchpadManager->refitMaximized();
+    }
     if (effects.layerEffects) {
       for (const auto& layer : m_layerSurfaces) {
         if (layer->mapped()) {
@@ -761,9 +775,8 @@ namespace umbriel {
     }
   }
 
-  void Server::handleConfigReload() {
+  void Server::handleConfigReload(const ConfigReloadResult& result) {
     cancelModifierTap();
-    const ConfigReloadResult result = reloadConfig();
     if (result.success) {
       if (result.change.drm) {
         kLog.warn("DRM configuration changed; restart Umbriel to apply it");
@@ -804,8 +817,7 @@ namespace umbriel {
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     for (const auto& view : self->m_registry.all()) {
-      // Hidden tabs need background callbacks, but live source owners pace
-      // callbacks only after their output successfully commits.
+      // A hidden tab is on the active workspace but, like a hidden workspace's windows, off the rendered scene.
       if (!view->mapped()
           || (view->onActiveWorkspace() && !view->tabHidden())
           || view->hasPresentationSourceOccurrence()) {
@@ -829,6 +841,9 @@ namespace umbriel {
     auto* self = static_cast<Server*>(data);
     for (const auto& view : self->m_registry.all()) {
       view->refreshStartupRuleEffects();
+    }
+    for (const auto& layer : self->m_layerSurfaces) {
+      layer->refreshStartupRuleEffects();
     }
     return 0;
   }
@@ -874,7 +889,7 @@ namespace umbriel {
       stop();
       return;
     }
-    wlr_allocator* newAllocator = wlr_allocator_autocreate(m_backend, newRenderer);
+    wlr_allocator* newAllocator = createAllocator(m_backend, newRenderer);
     if (newAllocator == nullptr) {
       kLog.error("could not recreate allocator after GPU reset, terminating");
       wlr_renderer_destroy(newRenderer);
@@ -894,6 +909,11 @@ namespace umbriel {
     wl_list_remove(&m_rendererLost.link);
     wl_signal_add(&newRenderer->events.lost, &m_rendererLost);
 
+    for (const auto& output : m_outputs) {
+      if (auto* group = output->workspaceGroup()) {
+        group->cancelReveal();
+      }
+    }
     m_renderer = newRenderer;
     m_allocator = newAllocator;
     effectRegistry().prepare(m_renderer);
@@ -1041,6 +1061,7 @@ namespace umbriel {
       return;
     }
     self->m_layerSurfaces.push_back(std::move(surface));
+    self->scheduleIpcLayersEvent();
   }
 
   void Server::onNewSessionLock(wl_listener* listener, void* data) {
@@ -1145,7 +1166,6 @@ namespace umbriel {
     watch->destroy.notify = onIdleInhibitorDestroy;
     wl_signal_add(&inhibitor->events.destroy, &watch->destroy);
     self->updateIdleInhibit();
-    kLog.debug("idle inhibitor added");
   }
 
   void Server::onIdleInhibitorDestroy(wl_listener* listener, void* /*data*/) {
@@ -1155,7 +1175,6 @@ namespace umbriel {
     wl_list_remove(&watch->destroy.link);
     delete watch;
     server->updateIdleInhibit();
-    kLog.debug("idle inhibitor removed");
   }
 
   void Server::onNewImageCopySession(wl_listener* listener, void* data) {
@@ -1164,18 +1183,10 @@ namespace umbriel {
     auto* session = static_cast<wlr_ext_image_copy_capture_session_v1*>(data);
     auto watch = std::make_unique<ImageCopySessionWatch>();
     watch->server = self;
-    watch->source = session->source;
     watch->session = session;
     watch->output = wlr_output_try_from_ext_image_capture_source_v1(session->source);
     watch->destroy.notify = onImageCopySessionDestroy;
     wl_signal_add(&session->events.destroy, &watch->destroy);
-    for (const auto& view : self->views()) {
-      if (view->m_captureSource == session->source) {
-        watch->isolated = true;
-        view->changeCaptureSessions(1);
-        break;
-      }
-    }
     self->m_imageCopySessions.push_back(std::move(watch));
   }
 
@@ -1184,20 +1195,10 @@ namespace umbriel {
     ImageCopySessionWatch* watch;
     watch = wl_container_of(listener, watch, destroy);
     Server* server = watch->server;
-    const bool isolated = watch->isolated;
-    for (const auto& view : server->views()) {
-      if (view->m_captureSource == watch->source) {
-        view->changeCaptureSessions(-1);
-        break;
-      }
-    }
     wl_list_remove(&watch->destroy.link);
     std::erase_if(server->m_imageCopySessions, [watch](const std::unique_ptr<ImageCopySessionWatch>& entry) {
       return entry.get() == watch;
     });
-    if (isolated) {
-      return;
-    }
     for (const auto& output : server->m_outputs) {
       output->scheduleEffectCaptureRelease();
     }
@@ -1371,6 +1372,7 @@ namespace umbriel {
     watch->createdAt = std::chrono::steady_clock::now();
     watch->compositorIssued = compositorIssued;
     watch->inputBacked = !compositorIssued && token->seat != nullptr && token->surface != nullptr;
+    watch->pointerBacked = watch->inputBacked && token->seat->pointer_state.grab_serial == token->serial;
     if (const char* tokenName = wlr_xdg_activation_token_v1_get_name(token)) {
       watch->tokenName = tokenName;
     }
@@ -1413,8 +1415,28 @@ namespace umbriel {
       return false;
     }
     watch->launchClaimed = true;
-    Workspace* workspace = watch->launchWorkspace->workspace;
-    WorkspaceGroup* group = workspace != nullptr ? workspace->group() : nullptr;
+    std::shared_ptr<WorkspaceLaunchAnchor> launchWorkspace = watch->launchWorkspace;
+    Workspace* workspace = launchWorkspace->workspace;
+    WorkspaceGroup* sourceGroup = workspace != nullptr ? workspace->group() : nullptr;
+    WorkspaceGroup* targetGroup = sourceGroup;
+    std::string launchOutputName = watch->launchOutputName;
+    std::string launchWorkspaceId = watch->launchWorkspaceId;
+    bool pointerDrop = false;
+    if (watch->pointerBacked && sameWaylandClient(token->surface, view.rootSurface())) {
+      Output* output = outputFromWlr(preferredOutput());
+      Workspace* pointerWorkspace =
+          output != nullptr && output->workspaceGroup() != nullptr ? output->workspaceGroup()->active() : nullptr;
+      if (pointerWorkspace != nullptr
+          && pointerWorkspace->group() != nullptr
+          && pointerWorkspace->group() != sourceGroup) {
+        launchWorkspace = pointerWorkspace->reserveForLaunch();
+        workspace = pointerWorkspace;
+        targetGroup = pointerWorkspace->group();
+        launchWorkspaceId = pointerWorkspace->id();
+        launchOutputName = output->wlr()->name != nullptr ? output->wlr()->name : "";
+        pointerDrop = true;
+      }
+    }
     const char* tokenName = wlr_xdg_activation_token_v1_get_name(token);
     uint32_t timeoutMsec = 0;
     if (token->activation != nullptr && token->activation->token_timeout_msec > 0) {
@@ -1426,15 +1448,18 @@ namespace umbriel {
     }
     const bool assigned = workspace != nullptr
         && tokenName != nullptr
-        && view.assignLaunchOrigin(tokenName, watch->launchWorkspace, timeoutMsec);
+        && view.assignLaunchOrigin(tokenName, std::move(launchWorkspace), timeoutMsec);
     watch->launchWorkspace.reset();
-    if (group != nullptr && !m_stopping) {
-      group->reconcileDynamic();
+    if (sourceGroup != nullptr && !m_stopping) {
+      sourceGroup->reconcileDynamic();
+    }
+    if (targetGroup != nullptr && targetGroup != sourceGroup && !m_stopping) {
+      targetGroup->reconcileDynamic();
     }
     kLog.debug(
-        "launch placement token='{}' output='{}' workspace='{}' target_app_id='{}' assigned={}",
-        tokenName != nullptr ? tokenName : "<unknown>", watch->launchOutputName, watch->launchWorkspaceId,
-        view.appId() != nullptr ? view.appId() : "", assigned
+        "launch placement token='{}' output='{}' workspace='{}' target_app_id='{}' pointer_drop={} assigned={}",
+        tokenName != nullptr ? tokenName : "<unknown>", launchOutputName, launchWorkspaceId,
+        view.appId() != nullptr ? view.appId() : "", pointerDrop, assigned
     );
     return assigned;
   }
@@ -1572,6 +1597,10 @@ namespace umbriel {
       if (inhibited) {
         break;
       }
+    }
+    if (inhibited != m_idleInhibited) {
+      m_idleInhibited = inhibited;
+      kLog.debug("idle {}", inhibited ? "inhibited" : "no longer inhibited");
     }
     wlr_idle_notifier_v1_set_inhibited(m_idleNotifier, inhibited);
   }
@@ -1854,6 +1883,8 @@ namespace umbriel {
   }
 
   void Server::scheduleIpcWorkspacesEvent() {
+    // Outputs report their active workspace and focus, which move with the workspace list.
+    scheduleIpcOutputsEvent();
     if (m_ipc == nullptr || m_ipcWorkspacesIdle != nullptr) {
       return;
     }
@@ -1869,6 +1900,48 @@ namespace umbriel {
     if (server->m_ipc != nullptr) {
       server->m_ipc->notifyWorkspacesChanged();
     }
+  }
+
+  void Server::scheduleIpcLayersEvent() {
+    if (m_ipc == nullptr || m_ipcLayersIdle != nullptr) {
+      return;
+    }
+    m_ipcLayersIdle = wl_event_loop_add_idle(wl_display_get_event_loop(m_display), onIpcLayersIdle, this);
+    if (m_ipcLayersIdle == nullptr) {
+      kLog.error("failed to register IPC layers idle source");
+    }
+  }
+
+  void Server::onIpcLayersIdle(void* data) {
+    auto* server = static_cast<Server*>(data);
+    server->m_ipcLayersIdle = nullptr;
+    if (server->m_ipc != nullptr) {
+      server->m_ipc->notifyLayersChanged();
+    }
+  }
+
+  void Server::scheduleIpcOutputsEvent() {
+    if (m_ipc == nullptr || m_ipcOutputsIdle != nullptr) {
+      return;
+    }
+    m_ipcOutputsIdle = wl_event_loop_add_idle(wl_display_get_event_loop(m_display), onIpcOutputsIdle, this);
+    if (m_ipcOutputsIdle == nullptr) {
+      kLog.error("failed to register IPC outputs idle source");
+    }
+  }
+
+  void Server::onIpcOutputsIdle(void* data) {
+    auto* server = static_cast<Server*>(data);
+    server->m_ipcOutputsIdle = nullptr;
+    if (server->m_ipc != nullptr) {
+      server->m_ipc->notifyOutputsChanged();
+    }
+  }
+
+  void Server::onLayerKeyboardFocusChange(wl_listener* listener, void* /*data*/) {
+    Server* self;
+    self = wl_container_of(listener, self, m_layerKeyboardFocusChange);
+    self->scheduleIpcLayersEvent();
   }
 
   void Server::addPointer(wlr_input_device* device) {
@@ -2917,7 +2990,7 @@ namespace umbriel {
     return true;
   }
 
-  void Server::notifyKeyboardEnter(wlr_surface* surface) {
+  void Server::notifyKeyboardEnter(wlr_surface* surface, KeyboardGrab grab) {
     wlr_seat* seat = m_seat->wlr();
     wlr_surface* previous = seat->keyboard_state.focused_surface;
     const bool leavesXwayland = m_xwayland != nullptr
@@ -2949,9 +3022,20 @@ namespace umbriel {
       }
     }
 
+    // An active grab's enter handler decides where focus goes; an xdg_popup grab ignores it entirely.
+    const auto enter =
+        [seat,
+         grab](wlr_surface* target, const uint32_t* keycodes, size_t count, const wlr_keyboard_modifiers* modifiers) {
+          if (grab == KeyboardGrab::Bypass) {
+            wlr_seat_keyboard_enter(seat, target, keycodes, count, modifiers);
+          } else {
+            wlr_seat_keyboard_notify_enter(seat, target, keycodes, count, modifiers);
+          }
+        };
+
     wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat);
     if (keyboard == nullptr) {
-      wlr_seat_keyboard_notify_enter(seat, surface, nullptr, 0, nullptr);
+      enter(surface, nullptr, 0, nullptr);
       if (leavesXwayland) {
         m_xwayland->scheduleFocusClear();
       }
@@ -2969,7 +3053,7 @@ namespace umbriel {
       }
     }
     if (consumed == nullptr || consumed->empty()) {
-      wlr_seat_keyboard_notify_enter(seat, surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+      enter(surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
       if (leavesXwayland) {
         m_xwayland->scheduleFocusClear();
       }
@@ -2982,7 +3066,7 @@ namespace umbriel {
         forwarded[count++] = keyboard->keycodes[i];
       }
     }
-    wlr_seat_keyboard_notify_enter(seat, surface, forwarded.data(), count, &keyboard->modifiers);
+    enter(surface, forwarded.data(), count, &keyboard->modifiers);
     if (leavesXwayland) {
       m_xwayland->scheduleFocusClear();
     }
@@ -3089,6 +3173,7 @@ namespace umbriel {
       return entry.get() == layerSurface;
     });
     arrangeLayers(output);
+    scheduleIpcLayersEvent();
   }
 
   void Server::onOutputManagerApply(wl_listener* listener, void* data) {
@@ -3122,6 +3207,8 @@ namespace umbriel {
   }
 
   void Server::updateOutputManagerConfig() {
+    // Every output state change that output management publishes also changes the IPC output listing.
+    scheduleIpcOutputsEvent();
     if (m_outputManager == nullptr || m_deferOutputManagerConfig) {
       return;
     }
@@ -3208,22 +3295,47 @@ namespace umbriel {
       wlr_output_state_set_enabled(&states[i].base, false);
     }
 
-    const auto buildSceneStates =
-        [this](wlr_output_swapchain_manager& manager, wlr_backend_output_state* pending, size_t pendingLen) {
-          for (size_t i = 0; i < pendingLen; ++i) {
-            Output* output = outputFromWlr(pending[i].output);
-            if (output == nullptr) {
-              return false;
-            }
-            wlr_scene_output_state_options options{};
-            options.swapchain = wlr_output_swapchain_manager_get_swapchain(&manager, pending[i].output);
-            if (!wlr_scene_output_build_state(output->sceneOutput(), &pending[i].base, &options)) {
-              kLog.error("failed to build output-management scene state for '{}'", pending[i].output->name);
-              return false;
-            }
+    struct SceneRectDestroy {
+      void operator()(wlr_scene_rect* rect) const {
+        if (rect != nullptr) {
+          wlr_scene_node_destroy(&rect->node);
+        }
+      }
+    };
+    std::vector<std::unique_ptr<wlr_scene_rect, SceneRectDestroy>> configuredFrameMasks;
+    const auto buildSceneStates = [this, &configuredFrameMasks](
+                                      wlr_output_swapchain_manager& manager, wlr_backend_output_state* pending,
+                                      size_t pendingLen
+                                  ) {
+      configuredFrameMasks.clear();
+      for (size_t i = 0; i < pendingLen; ++i) {
+        Output* output = outputFromWlr(pending[i].output);
+        if (output == nullptr) {
+          return false;
+        }
+        const bool enabled = (pending[i].base.committed & WLR_OUTPUT_STATE_ENABLED) != 0 ? pending[i].base.enabled
+                                                                                         : pending[i].output->enabled;
+        const bool unbound = wlr_output_layout_get(m_outputLayout, pending[i].output) == nullptr;
+        if (enabled && (m_sessionLocked || unbound)) {
+          wlr_scene_rect* mask = output->createConfiguredFrameMask(pending[i].base);
+          if (mask == nullptr) {
+            return false;
           }
-          return true;
-        };
+          configuredFrameMasks.emplace_back(mask);
+        }
+        // This frame is built without the reveal pair, so resume native slide first.
+        if (WorkspaceGroup* group = output->workspaceGroup()) {
+          group->abandonReveal();
+        }
+        wlr_scene_output_state_options options{};
+        options.swapchain = wlr_output_swapchain_manager_get_swapchain(&manager, pending[i].output);
+        if (!wlr_scene_output_build_state(output->sceneOutput(), &pending[i].base, &options)) {
+          kLog.error("failed to build output-management scene state for '{}'", pending[i].output->name);
+          return false;
+        }
+      }
+      return true;
+    };
 
     struct BackendSnapshot {
       wlr_output* output = nullptr;
@@ -3505,7 +3617,6 @@ namespace umbriel {
       }
       view->m_captureSourceDestroy.notify = View::onCaptureSourceDestroy;
       wl_signal_add(&view->m_captureSource->events.destroy, &view->m_captureSourceDestroy);
-      view->attachCaptureAudio();
     }
 
     wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, view->m_captureSource);

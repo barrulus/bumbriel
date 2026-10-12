@@ -20,6 +20,8 @@ struct wlr_ext_workspace_group_handle_v1;
 struct wlr_ext_workspace_handle_v1;
 struct wlr_ext_workspace_manager_v1;
 struct wlr_scene_tree;
+struct wlr_scene_node;
+struct fx_effect_shader;
 
 namespace umbriel {
 
@@ -129,6 +131,9 @@ namespace umbriel {
     // True when no tiled window other than `view` is in the layout: `view` is the only tiled window, or would be the
     // only one once it attaches. The opening path needs that second form, before the view is in the layout.
     [[nodiscard]] bool isOnlyTiledView(const View* view) const;
+    // True when `view` is the only window sharing this workspace: no other tile and no other float. A pinned or
+    // scratchpad window neither holds the workspace nor takes it.
+    [[nodiscard]] bool isOnlyVisibleView(const View* view) const;
     // Predict the first configure by applying the same insertion and full-width
     // transition that the mapped path will use on the authoritative layout.
     [[nodiscard]] Layout::InitialSize initialMaximizedSize(View* view, const wlr_box& usable) const;
@@ -169,6 +174,8 @@ namespace umbriel {
     bool moveFocusedColumnFirst();
     bool moveFocusedColumnLast();
     bool consumeFocused(int direction);
+    // Pulls the window the neighboring column shows into the focused window's column, leaving focus alone.
+    bool consumeFromFocused(int direction);
     bool expelFocused(int direction);
     bool moveFocusedVertical(int direction);
     // Moves the focused window, not its column, one step left or right: into the neighboring dwindle tile, along a
@@ -294,10 +301,13 @@ namespace umbriel {
     bool m_inSwitchTransition = false;
     bool m_arrangePending = false;
     bool m_arrangeAnimate = true;
-    // Remembers the last layout state, so alone-ness is only recomputed when it changed.
+    // Remembers the last state each occupancy question was answered in, so the answers are only recomputed when they
+    // changed.
     bool m_refreshingAloneRules = false;
     size_t m_lastAloneViewCount = 0;
     View* m_lastAloneSoleView = nullptr;
+    size_t m_lastOnlyWindowCount = 0;
+    View* m_lastOnlyWindowView = nullptr;
     uint64_t m_lastAloneGeneration = 0;
     int m_slideOffsetX = 0;
     int m_slideOffsetY = 0;
@@ -389,6 +399,12 @@ namespace umbriel {
     // per second, and starts the settle from that speed instead of from rest; callers that are not a gesture pass 0.
     void slideSettle(int delta, double velocity = 0);
     void slideFinish();
+    // Refresh the native pair bindings and shader inputs before output composition.
+    void refreshReveal();
+    [[nodiscard]] wlr_scene_node* revealRoot(bool incoming) const;
+    [[nodiscard]] bool revealActive() const { return m_slide.reveal != nullptr; }
+    void abandonReveal();
+    void cancelReveal();
     // Advances the workspace slide; returns true while it is still running.
     [[nodiscard]] AnimationPhase animationPhase() const override { return AnimationPhase::Workspaces; }
     bool tickAnimations(uint64_t nowMsec) override;
@@ -410,12 +426,19 @@ namespace umbriel {
     void reconcileDynamicNames(const std::vector<ResolvedWorkspace>& resolved);
     void refreshDynamicWorkspaceMetadata();
 
+    void beginReveal();
+    // The workspace a reveal at `progress` shows coming in; the previous one when progress is held at the base.
+    [[nodiscard]] Workspace* revealIncoming(double progress) const;
+
     struct Slide {
       Workspace* base = nullptr;
       Workspace* previous = nullptr;
       Workspace* next = nullptr;
       double extent = 0;
       double progress = 0;
+      fx_effect_shader* reveal = nullptr;
+      std::optional<EffectPreset> revealPreset;
+      AnimationTransition transition{};
     };
 
     Server* m_server = nullptr;

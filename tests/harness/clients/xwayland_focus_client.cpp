@@ -20,6 +20,8 @@ namespace {
     xcb_atom_t utf8String = XCB_ATOM_NONE;
     xcb_atom_t netWmName = XCB_ATOM_NONE;
     xcb_atom_t netActiveWindow = XCB_ATOM_NONE;
+    xcb_atom_t netWmState = XCB_ATOM_NONE;
+    xcb_atom_t netWmStateFullscreen = XCB_ATOM_NONE;
     xcb_atom_t wmProtocols = XCB_ATOM_NONE;
     xcb_atom_t wmDeleteWindow = XCB_ATOM_NONE;
   };
@@ -50,13 +52,34 @@ namespace {
     state.atoms.utf8String = internAtom(state.connection, "UTF8_STRING");
     state.atoms.netWmName = internAtom(state.connection, "_NET_WM_NAME");
     state.atoms.netActiveWindow = internAtom(state.connection, "_NET_ACTIVE_WINDOW");
+    state.atoms.netWmState = internAtom(state.connection, "_NET_WM_STATE");
+    state.atoms.netWmStateFullscreen = internAtom(state.connection, "_NET_WM_STATE_FULLSCREEN");
     state.atoms.wmProtocols = internAtom(state.connection, "WM_PROTOCOLS");
     state.atoms.wmDeleteWindow = internAtom(state.connection, "WM_DELETE_WINDOW");
     return state.atoms.utf8String != XCB_ATOM_NONE
         && state.atoms.netWmName != XCB_ATOM_NONE
         && state.atoms.netActiveWindow != XCB_ATOM_NONE
+        && state.atoms.netWmState != XCB_ATOM_NONE
+        && state.atoms.netWmStateFullscreen != XCB_ATOM_NONE
         && state.atoms.wmProtocols != XCB_ATOM_NONE
         && state.atoms.wmDeleteWindow != XCB_ATOM_NONE;
+  }
+
+  void requestFullscreen(State& state, bool fullscreen) {
+    xcb_client_message_event_t event{};
+    event.response_type = XCB_CLIENT_MESSAGE;
+    event.format = 32;
+    event.window = state.windows[0];
+    event.type = state.atoms.netWmState;
+    event.data.data32[0] = fullscreen ? 1 : 0;
+    event.data.data32[1] = state.atoms.netWmStateFullscreen;
+    event.data.data32[3] = 1;
+    xcb_send_event(
+        state.connection, false, state.screen->root,
+        XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY, reinterpret_cast<const char*>(&event)
+    );
+    xcb_flush(state.connection);
+    std::println("fullscreen-requested={}", fullscreen);
   }
 
   std::string windowName(const State& state, xcb_window_t window) {
@@ -110,6 +133,10 @@ namespace {
     constexpr std::string_view prefix = "state ";
     if (command.starts_with(prefix) && command.size() > prefix.size()) {
       reportState(state, command.substr(prefix.size()));
+    } else if (command == "fullscreen true") {
+      requestFullscreen(state, true);
+    } else if (command == "fullscreen false") {
+      requestFullscreen(state, false);
     } else if (command == "quit") {
       state.running = false;
     } else if (!command.empty()) {

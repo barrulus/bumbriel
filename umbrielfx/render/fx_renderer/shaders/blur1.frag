@@ -11,18 +11,16 @@ uniform float radius;
 uniform vec2 halfpixel;
 uniform vec4 sample_bounds;
 
-vec4 sample_texel(vec2 uv) {
-    return texture2D(tex, clamp(uv, sample_bounds.xy, sample_bounds.zw));
-}
+vec4 sample_texel(vec2 uv) { return texture2D(tex, clamp(uv, sample_bounds.xy, sample_bounds.zw)); }
 
 void main() {
-    vec2 uv = v_texcoord * 2.0;
+  vec2 uv = v_texcoord * 2.0;
 
-    vec4 sum = sample_texel(uv) * 4.0;
-    sum += sample_texel(uv - halfpixel.xy * radius);
-    sum += sample_texel(uv + halfpixel.xy * radius);
-    sum += sample_texel(uv + vec2(halfpixel.x, -halfpixel.y) * radius);
-    sum += sample_texel(uv - vec2(halfpixel.x, -halfpixel.y) * radius);
+  vec4 sum = sample_texel(uv) * 4.0;
+  sum += sample_texel(uv - halfpixel.xy * radius);
+  sum += sample_texel(uv + halfpixel.xy * radius);
+  sum += sample_texel(uv + vec2(halfpixel.x, -halfpixel.y) * radius);
+  sum += sample_texel(uv - vec2(halfpixel.x, -halfpixel.y) * radius);
 
-    gl_FragColor = sum / 8.0;
+  gl_FragColor = sum / 8.0;
 }

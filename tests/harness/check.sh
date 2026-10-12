@@ -172,9 +172,13 @@ export UMBRIEL_IDLE_INHIBIT_CLIENT="$CLIENT_DIR/idle-inhibit-client"
 export UMBRIEL_LOCK_CLIENT="$CLIENT_DIR/lock-client"
 export UMBRIEL_SUBSURFACE_CLIENT="$CLIENT_DIR/subsurface-client"
 export UMBRIEL_FRACTIONAL_CLIENT="$CLIENT_DIR/fractional-client"
+export UMBRIEL_SYNCOBJ_CLIENT="$CLIENT_DIR/syncobj-client"
 export UMBRIEL_SECURITY_CONTEXT_CLIENT="$CLIENT_DIR/security-context-client"
 export UMBRIEL_SEAT_LOG_CLIENT="$CLIENT_DIR/seat-log-client"
 export UMBRIEL_XWAYLAND_FOCUS_CLIENT="$CLIENT_DIR/xwayland-focus-client"
+export UMBRIEL_XWAYLAND_SELECTION_CLIENT="$CLIENT_DIR/xwayland-selection-client"
+export UMBRIEL_XWAYLAND_CURSOR_CLIENT="$CLIENT_DIR/xwayland-cursor-client"
+export UMBRIEL_WAYLAND_CURSOR_CLIENT="$CLIENT_DIR/wayland-cursor-client"
 export UMBRIEL_OUTPUT_MANAGEMENT_CLIENT="$CLIENT_DIR/output-management-client"
 export UMBRIEL_PIXEL_PROBE="$CLIENT_DIR/pixel-probe"
 export UMBRIEL_CAPTURE_CLIENT="$CLIENT_DIR/capture-client"
@@ -332,13 +336,21 @@ row() {
 # each of those would spawn processes outside the container. A check that needs
 # X11 opts in with `# harness: xwayland=true` in its header.
 write_default_config() {
-  local xwayland=$2
+  local xwayland=$2 cursor_theme=$3
   cat > "$1" << EOF
 [general]
 xwayland = $xwayland
 show_cheatsheet = false
 autostart = []
 EOF
+  if [[ -n $cursor_theme ]]; then
+    cat >> "$1" << EOF
+
+[input.cursor]
+theme = "$cursor_theme"
+size = 24
+EOF
+  fi
 }
 
 # A check that needs a second monitor declares it in its header and the harness boots that instance accordingly.
@@ -362,6 +374,76 @@ check_xwayland() {
   else
     echo false
   fi
+}
+
+check_xcursor_theme() {
+  if sed -n '2,12p' "$CHECKS_DIR/$1.sh" | grep -q '^# harness: xcursor-theme=true'; then
+    echo umbriel-harness
+  fi
+}
+
+# Writes a minimal Xcursor theme with distinct images for nominal sizes 24 and
+# 48. Checks that opt in can therefore assert scale selection without relying
+# on whichever cursor theme the host happens to provide.
+write_xcursor_theme() {
+  local root=$1 theme=$2
+  python3 - "$root" "$theme" <<'PY'
+import pathlib
+import struct
+import sys
+
+root = pathlib.Path(sys.argv[1])
+theme = sys.argv[2]
+target = root / theme / "cursors" / "default"
+target.parent.mkdir(parents=True)
+
+transparent = 0x00000000
+white = 0xFFFFFFFF
+dark = 0xFF202020
+scale_one = [
+    white, transparent, transparent,
+    white, dark, transparent,
+    white, white, white,
+]
+scale_two = [
+    white, white, transparent, transparent, transparent, transparent,
+    white, white, transparent, transparent, transparent, transparent,
+    white, white, dark, dark, transparent, transparent,
+    white, white, dark, dark, transparent, transparent,
+    white, white, white, white, white, white,
+    white, white, white, white, white, white,
+]
+images = [
+    (24, 3, 3, 1, 1, scale_one),
+    (48, 6, 6, 2, 2, scale_two),
+]
+
+image_type = 0xFFFD0002
+file_header_size = 16
+toc_size = 12 * len(images)
+position = file_header_size + toc_size
+tocs = []
+chunks = []
+for nominal_size, width, height, hotspot_x, hotspot_y, pixels in images:
+    chunk = struct.pack(
+        "<9I",
+        36,
+        image_type,
+        nominal_size,
+        1,
+        width,
+        height,
+        hotspot_x,
+        hotspot_y,
+        0,
+    ) + struct.pack(f"<{len(pixels)}I", *pixels)
+    tocs.append(struct.pack("<3I", image_type, nominal_size, position))
+    chunks.append(chunk)
+    position += len(chunk)
+
+header = struct.pack("<4I", 0x72756358, file_header_size, 0x00010000, len(images))
+target.write_bytes(header + b"".join(tocs) + b"".join(chunks))
+PY
 }
 
 start_keyboard() {
@@ -401,6 +483,7 @@ check_outputs() {
 start_instance() {
   local outputs=$1
   local xwayland=$2
+  local cursor_theme=$3
   # sockaddr_un caps paths at 108 bytes and the compositor appends
   # "/umbriel-wayland-0.sock" (23) to XDG_RUNTIME_DIR, so keep the root short. A
   # long path makes wl_display_add_socket fail and the boot abort.
@@ -408,7 +491,15 @@ start_instance() {
   local log=$RUNTIME_DIR/compositor.log
   local config=$RUNTIME_DIR/config.toml
   local socket=$RUNTIME_DIR/umbriel-wayland-0.sock
-  write_default_config "$config" "$xwayland"
+  if [[ -n $cursor_theme ]]; then
+    export XCURSOR_PATH="$RUNTIME_DIR/icons"
+    export XCURSOR_THEME=$cursor_theme
+    if ! write_xcursor_theme "$XCURSOR_PATH" "$cursor_theme"; then
+      BOOT_ERROR="could not create the harness Xcursor theme"
+      return 1
+    fi
+  fi
+  write_default_config "$config" "$xwayland" "$cursor_theme"
 
   # setsid puts the compositor in a session of its own, so anything it forks
   # (an autostart, a keybind `spawn:`) is reachable as one process group at
@@ -544,9 +635,9 @@ stop_instance() {
 # background job.
 # The body runs pointed at its own instance, not at the session that started the
 # suite. This is not a convenience: only IPC subcommands honour UMBRIEL_SOCKET,
-# while `umbriel outputs` and every helper client are Wayland clients that
-# resolve XDG_RUNTIME_DIR and WAYLAND_DISPLAY, so an inherited session
-# environment silently points them at the developer's live compositor.
+# while every helper client is a Wayland client that resolves XDG_RUNTIME_DIR
+# and WAYLAND_DISPLAY, so an inherited session environment silently points it
+# at the developer's live compositor.
 run_check_body() {
   local name=$1 output_file=$2
   local pgid_file=$RUNTIME_DIR/check.pgid
@@ -581,9 +672,15 @@ run_one() {
 
   local check_start
   check_start=$(now_us)
+  local cursor_theme
+  cursor_theme=$(check_xcursor_theme "$name")
+
+  if sed -n '2,12p' "$CHECKS_DIR/$name.sh" | grep -q '^# harness: wlr-debug=true'; then
+    export UMBRIEL_WLR_DEBUG=1
+  fi
 
   BOOT_ERROR=
-  if ! start_instance "$(check_outputs "$name")" "$(check_xwayland "$name")"; then
+  if ! start_instance "$(check_outputs "$name")" "$(check_xwayland "$name")" "$cursor_theme"; then
     publish "$prefix" 1 "$check_start" "$BOOT_ERROR"
     return 0
   fi

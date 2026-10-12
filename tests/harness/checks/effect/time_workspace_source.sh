@@ -76,7 +76,6 @@ def pixel():
 
 hidden = data('windows')[0]
 assert frame()['eligible'] == 0, ('hidden native time owner kept output awake', frame())
-assert data('effects')['audio_demanded_sources'] == 0
 probe('open ' + hidden['workspace'])
 wait(frame, lambda f: f['eligible'] == 1, 'source time owner never became eligible')
 wait(probe, lambda p: p['active'] and p['committed_revision'] > 0, 'source never committed')
@@ -94,7 +93,6 @@ elapsed = time.monotonic() - start
 for key in ('effect_frames', 'buffer_commits'):
     delta = after[key] - before[key]
     assert 2 <= delta <= math.ceil(elapsed * 8) + 2, ('source time cadence', key, delta, elapsed)
-assert data('effects')['audio_demanded_sources'] == 0
 run('clock-freeze')
 run('settle')
 wait(frame, lambda f: f['eligible'] == 0, 'frozen source remains eligible')

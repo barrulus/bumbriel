@@ -84,10 +84,12 @@ distribution-provided LTO and archive member pruning.
 - libudev, required for native `[drm]` GPU exclusion support
 - pixman 0.43 or newer
 - libdrm 2.4.129 or newer
+- libdisplay-info 0.3 or newer
 - Cairo and PangoCairo
 - tomlplusplus
 - nlohmann-json
 - xcb, xcb-icccm, and xcb-ewmh
+- xcb-render and xcb-xfixes when the `tests` feature is enabled
 - EGL, GLES2, and GBM
 - lcms2, optional; without it `umbrielfx` rejects client ICC profiles and keeps only its parametric color transforms
 - jemalloc on glibc, optional
