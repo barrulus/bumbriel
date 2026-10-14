@@ -86,6 +86,8 @@ radius = 3
 # and set cursor = "trail" in [effects].
 # For audio-reactive borders, include /usr/share/umbriel/effects/border/audio/effect.toml
 # and set border = "audio" in [effects].
+# Enable Noctalia's Umbriel audio provider in its shell settings, or supply an
+# external effect-audio v2 producer with 64 spectrum bands. Umbriel does not capture audio.
 # Pools accept matching presets defined/included separately. This one-member
 # example uses the bundled pulse preset; add other border names to choose.
 # [effects.pool.borders]

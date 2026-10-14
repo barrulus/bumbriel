@@ -37,7 +37,7 @@ Bundled presets:
 | `reveal` | animation | `[animation.windows_in] effect = "reveal"` (also `windows_out`) |
 | `squash` | animation | `[animation.windows_move] effect = "squash"` |
 | `pulse` | border | `[effects] border = "pulse"` |
-| `audio` | border | `[effects] border = "audio"`; brightness follows the external audio level. |
+| `audio` | border | `[effects] border = "audio"`; brightness follows the lowest external spectrum band. |
 | `scanlines` | window | `[effects] window = "scanlines"` |
 | `vignette` | screen | `[effects] screen = "vignette"` |
 | `glow` | cursor | `[effects] cursor = "glow"` |
@@ -339,9 +339,8 @@ Availability is 1 while snapshots are fresh, including healthy silence; all
 bands and availability are zero without a feed. Bands represent visual intensity,
 not calibrated loudness. The analyser chooses the audio source and smoothing.
 
-The v2 interface removes `umbriel_audio_level()`. Update existing shaders to
-sample a band or aggregate the spectrum according to the effect's needs. For
-example, `umbriel_audio_spectrum(0.0)` reacts to the lowest band.
+Shaders can sample a band or aggregate the spectrum according to the effect's
+needs. For example, `umbriel_audio_spectrum(0.0)` reacts to the lowest band.
 
 Audio works without `umbriel_time`; `animated` and `speed` only affect time.
 Changed input redraws visible consumers at `max_fps`. Identical input
