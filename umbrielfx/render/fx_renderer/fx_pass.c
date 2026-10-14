@@ -798,11 +798,15 @@ static void draw_animation_texture(
   struct fx_texture* texture = fx_get_texture(wlr_texture);
   glUseProgram(shader->program);
   fx_effect_shader_bind_parameters(shader, parameters);
-  struct fx_uniform audio_input = {.name = "umbriel_audio", .type = FX_UNIFORM_VEC2, .count = 1};
-  if (audio != NULL) {
-    memcpy(audio_input.floats, audio, 2 * sizeof(*audio));
-  }
-  fx_effect_shader_bind_uniform(shader, &audio_input);
+  static const float silent_audio[FX_AUDIO_VALUES] = {0};
+  const float* audio_input = audio != NULL ? audio : silent_audio;
+  fx_effect_shader_bind_uniform_data(
+      shader, "umbriel_audio_bands", FX_UNIFORM_VEC4, FX_AUDIO_BANDS / 4, audio_input,
+      FX_AUDIO_BANDS * sizeof(*audio_input)
+  );
+  fx_effect_shader_bind_uniform_data(
+      shader, "umbriel_audio_ready", FX_UNIFORM_FLOAT, 1, &audio_input[FX_AUDIO_BANDS], sizeof(*audio_input)
+  );
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture->tex);
   const GLint filter =

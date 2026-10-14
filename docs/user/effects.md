@@ -291,7 +291,7 @@ Every kind sees:
 | `umbriel_time` | Seconds on the animation clock, times the border's `speed`. Held as a single-precision float that is never wrapped, so fine time-based motion loses precision after long uptimes. `sin` and `cos` reduce their argument to one revolution, so they stay correct at large angles. |
 | `umbriel_palette_count` | `4` for palette presets, `0` otherwise. |
 | `umbriel_palette_at(float t)` | The palette color at `t`, blended between neighboring colors from the wrapping sequence `accent_primary`, `accent_secondary`, `warning`, `error`. Transparent black when there is no palette. |
-| `umbriel_audio_level()` | The external audio level from 0 to 1, or 0 without a feed. See [Audio input](#audio-input). |
+| `umbriel_audio_spectrum(position)` | Interpolated spectrum intensity from 0 to 1, or 0 without a feed. See [Audio input](#audio-input). |
 | `umbriel_audio_available()` | `1` while measurements are fresh, otherwise `0`. See [Audio input](#audio-input). |
 
 Animations add `umbriel_progress`, `umbriel_clamped_progress`,
@@ -330,15 +330,22 @@ starting point for longer tails.
 
 ### Audio input
 
-Every effect kind can read `umbriel_audio_level()` and
+Every effect kind can read `umbriel_audio_spectrum(position)` and
 `umbriel_audio_available()`. An [external analyser](ipc.md#audio-input) supplies
-one shared level from 0 to 1. Availability is 1 while measurements are fresh;
-both values are zero without a feed. Levels represent visual intensity, not
-calibrated loudness. The analyser chooses the audio source and smoothing.
+64 bands from 0 to 1. Position is clamped to `[0,1]` and linearly interpolates
+between entries at `position * 63`, from the lowest to the highest band.
+It is a normalized low-to-high coordinate, with no promised Hz centres or edges.
+Availability is 1 while snapshots are fresh, including healthy silence; all
+bands and availability are zero without a feed. Bands represent visual intensity,
+not calibrated loudness. The analyser chooses the audio source and smoothing.
+
+The v2 interface removes `umbriel_audio_level()`. Update existing shaders to
+sample a band or aggregate the spectrum according to the effect's needs. For
+example, `umbriel_audio_spectrum(0.0)` reacts to the lowest band.
 
 Audio works without `umbriel_time`; `animated` and `speed` only affect time.
 Changed input redraws visible consumers at `max_fps`. Identical input
-does not request frames. Each output holds its value between eligible frames,
+does not request frames. Each output holds its snapshot between eligible frames,
 and all passes of a composition use that value. Closing copies retain their
 copied input. Existing `in_capture` behavior applies.
 

@@ -5,6 +5,7 @@
 #include "output/frame_schedule.h"
 #include "output/hdr_metadata.h"
 #include "output/hdr_transition.h"
+#include "scene/effect_audio.h"
 #include "scene/effect_selection.h"
 
 #include <array>
@@ -244,7 +245,7 @@ namespace umbriel {
     bool m_effectFrameDue = false;
     bool m_effectFrameArmed = false;
     EffectSlot m_screenEffectSlot;
-    std::array<float, 2> m_effectAudio{}; // level and availability latched at the last effect frame
+    EffectAudio m_effectAudio{}; // bands and availability latched at the last effect frame
     uint64_t m_effectFrames = 0;
     float m_effectSeconds = 0.0F;
     bool m_outputEffectsTimed = false; // a visible screen or cursor instance here reads umbriel_time

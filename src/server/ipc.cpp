@@ -30,7 +30,7 @@ namespace umbriel {
     // A subscriber that stops reading must not grow the compositor's heap without bound.
     constexpr size_t kMaxOutboundBacklog = 256 * 1024;
     constexpr int kConnectionTimeoutMs = 1000;
-    constexpr size_t kMaxAudioRequestSize = 256;
+    constexpr size_t kMaxAudioRequestSize = 4096;
     constexpr int kAudioFreshnessMs = 250;
     // Long enough for any configured animation to finish; a compositor that never settles still answers.
     constexpr int kFrameWaitTimeoutMs = 30000;
@@ -487,9 +487,9 @@ namespace umbriel {
   std::optional<std::string> Ipc::handleRequest(Connection& connection, std::string_view line) {
     auto req = nlohmann::json::parse(line, nullptr, false);
     if (&connection == m_audio || (req.is_object() && req.contains("cmd") && req["cmd"] == "effect-audio")) {
-      const auto level = IpcCommands::parseAudioLevel(req);
+      const auto audio = IpcCommands::parseAudioSpectrum(req);
       const char* error = nullptr;
-      if (!level) {
+      if (!audio) {
         error = R"({"err":"malformed audio request"})";
       } else if (line.size() + 1 > kMaxAudioRequestSize) {
         error = R"({"err":"audio request too long"})";
@@ -511,7 +511,7 @@ namespace umbriel {
         return R"({"err":"audio producer already connected"})";
       }
       m_audio = &connection;
-      m_server->effects().setAudio({*level, 1.0F});
+      m_server->effects().setAudio(*audio);
       if (wl_event_source_timer_update(connection.deadline, kAudioFreshnessMs) < 0) {
         dropAudioOwner();
         return R"({"err":"audio feed could not start"})";

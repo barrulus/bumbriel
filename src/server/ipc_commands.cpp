@@ -31,23 +31,33 @@ extern "C" {
 
 namespace umbriel {
 
-  std::optional<float> IpcCommands::parseAudioLevel(const nlohmann::json& request) {
+  std::optional<EffectAudio> IpcCommands::parseAudioSpectrum(const nlohmann::json& request) {
     if (!request.is_object()
         || request.size() != 3
         || !request.contains("cmd")
         || request["cmd"] != "effect-audio"
         || !request.contains("version")
         || !request["version"].is_number_integer()
-        || request["version"] != 1
-        || !request.contains("level")
-        || !request["level"].is_number()) {
+        || request["version"] != 2
+        || !request.contains("bands")
+        || !request["bands"].is_array()
+        || request["bands"].size() != FX_AUDIO_BANDS) {
       return std::nullopt;
     }
-    const double level = request["level"].get<double>();
-    if (!(level >= 0.0 && level <= 1.0)) {
-      return std::nullopt;
+    EffectAudio audio{};
+    for (size_t i = 0; i < FX_AUDIO_BANDS; ++i) {
+      const auto& band = request["bands"][i];
+      if (!band.is_number()) {
+        return std::nullopt;
+      }
+      const double value = band.get<double>();
+      if (!(value >= 0.0 && value <= 1.0)) {
+        return std::nullopt;
+      }
+      audio[i] = static_cast<float>(value);
     }
-    return static_cast<float>(level);
+    audio[FX_AUDIO_BANDS] = 1.0F;
+    return audio;
   }
 
   namespace {

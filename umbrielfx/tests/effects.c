@@ -2242,6 +2242,52 @@ static bool test_in_place_shape(struct fixture* fixture) {
   return ok;
 }
 
+// Exercise dynamic sampling of every entry, component/vec4 boundaries, interpolation and clamps.
+static bool test_audio_spectrum(struct fixture* fixture) {
+  struct wlr_scene* scene = wlr_scene_create();
+  struct wlr_scene_output* output = wlr_scene_output_create(scene, fixture->output);
+  const float white[4] = {1, 1, 1, 1};
+  wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, white);
+  struct fx_effect_shader* shader = fx_effect_shader_create(
+      fixture->renderer, FX_EFFECT_SCREEN,
+      "vec4 screen(vec2 uv) {"
+      "  float index = floor(uv.x * 16.0) + floor(uv.y * 16.0) * 16.0 - 1.0;"
+      "  return vec4(umbriel_audio_spectrum(index / 63.0),"
+      "              umbriel_audio_spectrum((index + 0.5) / 63.0), umbriel_audio_available(), 1.0); }",
+      "audio-spectrum"
+  );
+  bool ok = check(shader != NULL, "dynamic spectrum helper compiles");
+  wlr_scene_output_set_screen_effect(output, shader, NULL);
+  float audio[FX_AUDIO_VALUES] = {[FX_AUDIO_BANDS] = 1};
+  for (unsigned i = 0; i < FX_AUDIO_BANDS; ++i) {
+    audio[i] = (float)(i % 7) / 6.0f;
+  }
+  wlr_scene_output_set_effect_audio(output, audio);
+  struct wlr_buffer* buffer = render_transformed(fixture, output, 1, WL_OUTPUT_TRANSFORM_NORMAL);
+  ok &= check(buffer != NULL, "spectrum draws");
+  if (buffer != NULL) {
+    for (int i = 0; i < FX_AUDIO_BANDS + 2; ++i) {
+      int low = i == 0 ? 0 : i - 1;
+      if (low >= FX_AUDIO_BANDS)
+        low = FX_AUDIO_BANDS - 1;
+      int high = i < FX_AUDIO_BANDS ? i : FX_AUDIO_BANDS - 1;
+      float interpolated = i == 0 ? audio[0] : (audio[low] + audio[high]) * 0.5f;
+      uint8_t pixel[4];
+      ok &= fixture_read_pixel(fixture, buffer, i % TEST_WIDTH, i / TEST_WIDTH, pixel)
+          && check(
+                abs(pixel[2] - (int)lroundf(audio[low] * 255.0f)) < 3
+                    && abs(pixel[1] - (int)lroundf(interpolated * 255.0f)) < 3
+                    && pixel[0] > 250,
+                "all bands interpolate and clamp in order"
+          );
+    }
+    wlr_buffer_unlock(buffer);
+  }
+  wlr_scene_node_destroy(&scene->tree.node);
+  fx_effect_shader_unref(shader);
+  return ok;
+}
+
 static bool test_audio_inputs(struct fixture* fixture) {
   struct wlr_output* second = wlr_headless_add_output(fixture->backend, TEST_WIDTH, TEST_HEIGHT);
   if (!check(second != NULL, "second audio output")) {
@@ -2262,11 +2308,11 @@ static bool test_audio_inputs(struct fixture* fixture) {
   wlr_scene_node_set_position(&copy->node, 8, 0);
   struct fx_effect_shader* shader = fx_effect_shader_create(
       fixture->renderer, FX_EFFECT_WINDOW,
-      "vec4 window(vec2 uv) { return vec4(umbriel_audio_level(), umbriel_audio_available(), 0.0, 1.0); }", "audio"
+      "vec4 window(vec2 uv) { return vec4(umbriel_audio_spectrum(0.0), umbriel_audio_available(), 0.0, 1.0); }", "audio"
   );
   bool ok = check(shader != NULL, "audio helpers compile");
   wlr_scene_node_set_animation(&live->node, FX_SLOT_WINDOW, shader, NULL);
-  const float levels[2][2] = {{0.25f, 1}, {0.75f, 1}};
+  const float levels[2][FX_AUDIO_VALUES] = {{0.25f, [FX_AUDIO_BANDS] = 1}, {0.75f, [FX_AUDIO_BANDS] = 1}};
   for (unsigned i = 0; i < 2; ++i) {
     wlr_scene_output_set_effect_audio(outputs[i], levels[i]);
   }
@@ -2285,7 +2331,7 @@ static bool test_audio_inputs(struct fixture* fixture) {
     }
   }
   wlr_scene_node_copy_animations_for_snapshot(&copy->node, &live->node);
-  const float changed[2] = {1, 1};
+  const float changed[FX_AUDIO_VALUES] = {1, [FX_AUDIO_BANDS] = 1};
   wlr_scene_output_set_effect_audio(outputs[0], changed);
   struct wlr_buffer* buffer = render_transformed(fixture, outputs[0], 1, WL_OUTPUT_TRANSFORM_NORMAL);
   ok &= check(buffer != NULL, "audio snapshot draws");
@@ -2297,7 +2343,7 @@ static bool test_audio_inputs(struct fixture* fixture) {
         && check(abs(pixel[2] - 64) < 3 && pixel[1] > 250, "snapshot retains its copied audio");
     wlr_buffer_unlock(buffer);
   }
-  wlr_scene_output_set_effect_audio(outputs[0], (float[2]){0, 0});
+  wlr_scene_output_set_effect_audio(outputs[0], (float[FX_AUDIO_VALUES]){0});
   buffer = render_transformed(fixture, outputs[0], 1, WL_OUTPUT_TRANSFORM_NORMAL);
   ok &= check(buffer != NULL, "unavailable audio draws");
   if (buffer != NULL) {
@@ -2319,7 +2365,7 @@ static bool test_audio_inputs(struct fixture* fixture) {
   ok &= check(!wlr_scene_output_audio_active(outputs[1]), "a reader outside the output does not");
   struct fx_effect_shader* reader = fx_effect_shader_create(
       fixture->renderer, FX_EFFECT_CURSOR,
-      "vec4 cursor(vec2 uv) { return vec4(umbriel_audio_level(), 0.0, 0.0, 1.0); }", "audio-cursor"
+      "vec4 cursor(vec2 uv) { return vec4(umbriel_audio_spectrum(0.0), 0.0, 0.0, 1.0); }", "audio-cursor"
   );
   wlr_scene_output_set_cursor_effect(outputs[1], reader, NULL, 2);
   wlr_scene_output_set_effect_pointer(outputs[1], 12, 12, false);
@@ -2670,6 +2716,8 @@ int main(int argc, char* argv[]) {
     ok = test_capture_composition(&fixture);
   } else if (strcmp(argv[1], "in-place-shape") == 0) {
     ok = test_in_place_shape(&fixture);
+  } else if (strcmp(argv[1], "audio-spectrum") == 0) {
+    ok = test_audio_spectrum(&fixture);
   } else if (strcmp(argv[1], "output-effects") == 0) {
     ok = test_output_effects(&fixture);
     ok &= test_audio_inputs(&fixture);

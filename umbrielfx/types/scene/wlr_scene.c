@@ -138,7 +138,7 @@ struct scene_animation {
   struct fx_effect_shader* shaders[FX_ANIMATION_SLOTS];
   struct fx_animation_parameters parameters[FX_ANIMATION_SLOTS];
   struct fx_animation_history histories[FX_ANIMATION_SLOTS];
-  float audio[FX_ANIMATION_SLOTS][2];
+  float audio[FX_ANIMATION_SLOTS][FX_AUDIO_VALUES];
   bool audio_frozen[FX_ANIMATION_SLOTS];
   // Opaque identity shared by roots whose native backdrop belongs together.
   const void* isolation_group;
@@ -813,7 +813,7 @@ struct render_data {
   // Physical translation into a capture, applied after output scaling/rotation.
   int capture_x, capture_y;
   bool full_capture;
-  float audio[2];
+  float audio[FX_AUDIO_VALUES];
 
   struct wlr_scene_output* output;
 
@@ -4213,7 +4213,7 @@ struct scene_output_effects {
   struct wl_listener destroy;
   bool in_capture;
   bool capture_was_pending;
-  float audio[2];
+  float audio[FX_AUDIO_VALUES];
   struct fx_effect_shader* screen;
   struct fx_animation_parameters screen_parameters;
   struct fx_animation_history screen_history;
@@ -4298,14 +4298,16 @@ static struct scene_output_effects* scene_output_effects_get(struct wlr_scene_ou
   return effects;
 }
 
+static bool effect_reads_audio(struct fx_effect_shader* shader) {
+  return fx_effect_shader_reads(shader, "umbriel_audio_bands") || fx_effect_shader_reads(shader, "umbriel_audio_ready");
+}
+
 bool wlr_scene_output_audio_active(struct wlr_scene_output* output) {
   if (!output->output->enabled) {
     return false;
   }
   struct scene_output_effects* out = scene_output_effects_get(output, false);
-  if (out != NULL
-      && (fx_effect_shader_reads(out->screen, "umbriel_audio")
-          || (out->pointer_visible && fx_effect_shader_reads(out->cursor, "umbriel_audio")))) {
+  if (out != NULL && (effect_reads_audio(out->screen) || (out->pointer_visible && effect_reads_audio(out->cursor)))) {
     return true;
   }
   struct scene_effects* effects = scene_effects_get(output->scene, false);
@@ -4318,7 +4320,7 @@ bool wlr_scene_output_audio_active(struct wlr_scene_output* output) {
   wl_list_for_each(animation, &effects->animations, link) {
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
       if (!animation->audio_frozen[slot]
-          && fx_effect_shader_reads(animation->shaders[slot], "umbriel_audio")
+          && effect_reads_audio(animation->shaders[slot])
           && wlr_scene_node_visible_in_box(animation->node, &box)) {
         return true;
       }
@@ -4327,8 +4329,8 @@ bool wlr_scene_output_audio_active(struct wlr_scene_output* output) {
   return false;
 }
 
-void wlr_scene_output_set_effect_audio(struct wlr_scene_output* output, const float audio[2]) {
-  struct scene_output_effects* effects = scene_output_effects_get(output, audio[1] != 0);
+void wlr_scene_output_set_effect_audio(struct wlr_scene_output* output, const float audio[FX_AUDIO_VALUES]) {
+  struct scene_output_effects* effects = scene_output_effects_get(output, audio[FX_AUDIO_BANDS] != 0);
   if (effects == NULL || memcmp(effects->audio, audio, sizeof(effects->audio)) == 0) {
     return;
   }

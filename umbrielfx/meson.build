@@ -290,6 +290,7 @@ if build_tests
     'capture-composition',
     'in-place-shape',
     'output-effects',
+    'audio-spectrum',
   ]
     test('effects-' + case_name, umbrielfx_effects_test, args: case_name, suite: 'umbrielfx')
   endforeach

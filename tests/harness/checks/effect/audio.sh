@@ -2,7 +2,7 @@
 # harness: outputs=2
 set -euo pipefail
 cat > "$UMBRIEL_RUNTIME_DIR/audio.glsl" <<'GLSL'
-vec4 screen(vec2 uv) { return vec4(umbriel_audio_level(), umbriel_audio_available(), 0.0, 1.0); }
+vec4 screen(vec2 uv) { return vec4(umbriel_audio_spectrum(0.0), umbriel_audio_available(), 0.0, 1.0); }
 GLSL
 cat >> "$UMBRIEL_CONFIG" <<'TOML'
 [animation]
@@ -47,7 +47,7 @@ def connect():
 
 
 def send(sock, level):
-    sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 1, 'level': level}) + '\n').encode())
+    sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 2, 'bands': [level] * 64}) + '\n').encode())
     reply = b''
     while not reply.endswith(b'\n'):
         chunk = sock.recv(256)
@@ -162,17 +162,17 @@ assert producer.sock.recv(1) == b'', 'invalid producer stayed connected'
 producer.sock.close()
 pixel((0, 0, 0))
 
-# The 256-byte limit counts the newline; requests arrive one per write; the owner sends only effect-audio.
-line = b'{"cmd":"effect-audio","version":1,"level":0.5}'
+# The 4096-byte limit counts the newline; requests arrive one per write; the owner sends only effect-audio.
+line = json.dumps({'cmd': 'effect-audio', 'version': 2, 'bands': [0.5] * 64}).encode()
 pad = lambda size: line + b' ' * (size - len(line) - 1) + b'\n'
-for data, what in ((pad(257), 'an oversized request'), (line + b'\n' + line + b'\n', 'two requests in one write')):
+for data, what in ((pad(4097), 'an oversized request'), (line + b'\n' + line + b'\n', 'two requests in one write')):
     probe = connect()
     probe.sendall(data)
     assert b'err' in probe.recv(256), f'{what} got through'
     probe.close()
 owner = connect()
-owner.sendall(pad(256))
-assert b'ok' in owner.recv(256), 'a 256-byte request was refused'
+owner.sendall(pad(4096))
+assert b'ok' in owner.recv(256), 'a 4096-byte request was refused'
 owner.sendall(b'{"cmd":"workspaces"}\n')
 assert b'err' in owner.recv(256), 'the producer ran another command'
 owner.close()

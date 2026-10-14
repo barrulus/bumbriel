@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <umbrielfx/render/audio.h>
 #include <wlr/util/box.h>
 
 struct wlr_output_state;
@@ -224,7 +225,7 @@ void wlr_scene_output_set_cursor_effect(
 );
 // Audio values latch per output. Updating them damages visible consumers.
 bool wlr_scene_output_audio_active(struct wlr_scene_output* output);
-void wlr_scene_output_set_effect_audio(struct wlr_scene_output* output, const float audio[2]);
+void wlr_scene_output_set_effect_audio(struct wlr_scene_output* output, const float audio[FX_AUDIO_VALUES]);
 // Advance the cursor motion clock before pointer updates and composition. Uses
 // the compositor animation clock in milliseconds; frozen clocks freeze tails.
 // History holds eight positions for 300 ms, or 64 for 2000 ms when the shader

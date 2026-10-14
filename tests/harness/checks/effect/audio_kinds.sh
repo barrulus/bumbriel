@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Border, window, cursor, and animation presets read the external audio level and availability like the screen preset
-# in effect/audio: each kind's pixels follow the level a producer sends and report the feed as available.
+# Border, window, cursor, and animation presets read the external spectrum and availability like the screen preset
+# in effect/audio: each kind's pixels follow the spectrum a producer sends and report the feed as available.
 set -euo pipefail
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/effect-audio-kinds.png"
 readonly LEVEL="$UMBRIEL_RUNTIME_DIR/audio-level"
 readonly BASE="$UMBRIEL_RUNTIME_DIR/effect-audio-kinds-base.toml"
 cp "$UMBRIEL_CONFIG" "$BASE"
 
-# Red is the level and green the availability, so a lit green channel also proves the feed reached the shader.
+# Red is the lowest band and green the availability, so a lit green channel also proves the feed reached the shader.
 for kind in border window cursor animation; do
   cat > "$UMBRIEL_RUNTIME_DIR/$kind.glsl" <<GLSL
-vec4 $kind(vec2 uv) { return vec4(umbriel_audio_level(), umbriel_audio_available(), 0.0, 1.0); }
+vec4 $kind(vec2 uv) { return vec4(umbriel_audio_spectrum(0.0), umbriel_audio_available(), 0.0, 1.0); }
 GLSL
 done
 
@@ -26,7 +26,7 @@ sock.connect(os.environ['UMBRIEL_SOCKET'])
 while True:
     with open(os.environ['AUDIO_LEVEL_FILE']) as level:
         value = float(level.read())
-    sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 1, 'level': value}) + '\n').encode())
+    sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 2, 'bands': [value] * 64}) + '\n').encode())
     if b'"ok":true' not in sock.recv(256):
         raise SystemExit('producer refused')
     time.sleep(0.02)
