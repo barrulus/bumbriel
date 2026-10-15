@@ -292,7 +292,7 @@ Every kind sees:
 | `umbriel_palette_count` | `4` for palette presets, `0` otherwise. |
 | `umbriel_palette_at(float t)` | The palette color at `t`, blended between neighboring colors from the wrapping sequence `accent_primary`, `accent_secondary`, `warning`, `error`. Transparent black when there is no palette. |
 | `umbriel_audio_spectrum(position)` | Interpolated spectrum intensity from 0 to 1, or 0 without a feed. See [Audio input](#audio-input). |
-| `umbriel_audio_available()` | `1` while measurements are fresh, otherwise `0`. See [Audio input](#audio-input). |
+| `umbriel_audio_available()` | `1` while the feed has fresh snapshots, otherwise `0`. See [Audio input](#audio-input). |
 
 Animations add `umbriel_progress`, `umbriel_clamped_progress`,
 `umbriel_linear_progress`, `umbriel_direction`, and `umbriel_random_seed`
@@ -335,9 +335,10 @@ Every effect kind can read `umbriel_audio_spectrum(position)` and
 64 bands from 0 to 1. Position is clamped to `[0,1]` and linearly interpolates
 between entries at `position * 63`, from the lowest to the highest band.
 It is a normalized low-to-high coordinate, with no promised Hz centres or edges.
-Availability is 1 while snapshots are fresh, including healthy silence; all
-bands and availability are zero without a feed. Bands represent visual intensity,
-not calibrated loudness. The analyser chooses the audio source and smoothing.
+Availability tracks receipt of fresh snapshots, including all-zero input from
+silence or idle capture. All bands and availability are zero without a feed.
+Bands represent visual intensity, not calibrated loudness. The analyser chooses
+the audio source and smoothing.
 
 Shaders can sample a band or aggregate the spectrum according to the effect's
 needs. For example, `umbriel_audio_spectrum(0.0)` reacts to the lowest band.

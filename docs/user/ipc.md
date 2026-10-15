@@ -227,12 +227,15 @@ that connection owns it. Audio connections accept only `effect-audio` requests.
 
 Wait for `{"ok":true}` before sending another snapshot. Send at most 60 per
 second and replace unsent snapshots with the latest values. An acknowledgment
-means accepted, not displayed. Healthy silence means zero bands with availability
-still true. An analyser may send a heartbeat every 100 ms for unchanged input,
-but must independently establish capture health: never perpetuate stale nonzero
-bands after capture fails. Stop the feed if capture is unavailable. Gain,
-smoothing, and source selection belong to the analyser. Umbriel does not start
-or supervise it or capture audio.
+means accepted, not displayed.
+
+Send the analyser's current values on changes and a heartbeat every 100 ms while
+unchanged. Values should decay or clear to zero when capture stops, and old values
+must be cleared when switching sources. Zero-valued snapshots keep the feed
+available, so an idle analyser can keep the connection open.
+
+Availability reports feed freshness. Gain, smoothing, and source selection belong
+to the analyser. Umbriel does not start or supervise it or capture audio.
 
 Disconnect, malformed or oversized input, or 250 ms without a snapshot closes
 the feed and clears all bands and availability. Lock and inactive sessions also
