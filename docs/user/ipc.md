@@ -217,7 +217,7 @@ For example, a silent snapshot is:
 
 `version` must be integer `2`; `bands` must contain exactly 64 finite numbers
 from 0 to 1, ordered low to high. This is a normalized spectrum coordinate,
-not a promise of exact frequency centres or edges. Noctalia's existing 64-band
+not a promise of exact frequency centers or edges. Noctalia's existing 64-band
 subscriber output passes through unchanged. Only version 2 is accepted, with
 exactly the `cmd`, `version`, and `bands` fields.
 

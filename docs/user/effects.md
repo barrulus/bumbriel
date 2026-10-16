@@ -334,7 +334,7 @@ Every effect kind can read `umbriel_audio_spectrum(position)` and
 `umbriel_audio_available()`. An [external analyser](ipc.md#audio-input) supplies
 64 bands from 0 to 1. Position is clamped to `[0,1]` and linearly interpolates
 between entries at `position * 63`, from the lowest to the highest band.
-It is a normalized low-to-high coordinate, with no promised Hz centres or edges.
+It is a normalized low-to-high coordinate, with no promised Hz centers or edges.
 Availability tracks receipt of fresh snapshots, including all-zero input from
 silence or idle capture. All bands and availability are zero without a feed.
 Bands represent visual intensity, not calibrated loudness. The analyser chooses
