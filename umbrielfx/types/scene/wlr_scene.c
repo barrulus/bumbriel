@@ -138,8 +138,6 @@ struct scene_animation {
   struct fx_effect_shader* shaders[FX_ANIMATION_SLOTS];
   struct fx_animation_parameters parameters[FX_ANIMATION_SLOTS];
   struct fx_animation_history histories[FX_ANIMATION_SLOTS];
-  float audio[FX_ANIMATION_SLOTS][FX_AUDIO_VALUES];
-  bool audio_frozen[FX_ANIMATION_SLOTS];
   // Opaque identity shared by roots whose native backdrop belongs together.
   const void* isolation_group;
   unsigned isolation_slot;
@@ -1714,8 +1712,6 @@ void wlr_scene_node_set_animation(
     return;
   }
   if (previous != shader || restarted) {
-    // Frozen audio belongs to the shader it was copied with; a new or restarted shader reads live audio.
-    animation->audio_frozen[slot] = false;
     fx_animation_history_reset(&animation->histories[slot]);
   }
   const int previous_expand = animation_expand(animation);
@@ -1819,8 +1815,6 @@ void wlr_scene_node_copy_animations_for_snapshot(struct wlr_scene_node* destinat
       struct scene_animation* copy = scene_animation_get(destination);
       if (copy != NULL) {
         copy->parameters[destination_slot] = frozen;
-        memcpy(copy->audio[destination_slot], animation->audio[slot], sizeof(animation->audio[slot]));
-        copy->audio_frozen[destination_slot] = true;
         fx_animation_history_move(&copy->histories[destination_slot], &animation->histories[slot]);
       }
     }
@@ -3706,14 +3700,6 @@ static bool in_place_shape(struct wlr_scene_node* node, int lx, int ly, float co
   return true;
 }
 
-static const float*
-latch_animation_audio(struct scene_animation* animation, unsigned slot, const struct render_data* data) {
-  if (!animation->audio_frozen[slot]) {
-    memcpy(animation->audio[slot], data->audio, sizeof(data->audio));
-  }
-  return animation->audio[slot];
-}
-
 // Runs the node's in-place slots over what its subtree has drawn into the
 // current target, within its corner box when it has one. Nothing runs when
 // `clip` misses that rectangle, so feedback history carries over.
@@ -3771,7 +3757,7 @@ static void render_in_place_slots(
     const struct fx_effect_composite composite = {
         .shader = shader,
         .parameters = &animation->parameters[slot],
-        .audio = latch_animation_audio(animation, slot, data),
+        .audio = data->audio,
         .box = shape_box,
         .logical_box = shape_logical,
         .transform = data->transform,
@@ -3995,7 +3981,7 @@ static void render_animated_range(
         const struct fx_effect_composite composite = {
             .shader = animation->shaders[slot],
             .parameters = &animation->parameters[slot],
-            .audio = latch_animation_audio(animation, slot, data),
+            .audio = data->audio,
             .box = box,
             .logical_box = logical_box,
             .transform = data->transform,
@@ -4319,9 +4305,7 @@ bool wlr_scene_output_audio_active(struct wlr_scene_output* output) {
   struct scene_animation* animation;
   wl_list_for_each(animation, &effects->animations, link) {
     for (unsigned slot = 0; slot < FX_ANIMATION_SLOTS; slot++) {
-      if (!animation->audio_frozen[slot]
-          && effect_reads_audio(animation->shaders[slot])
-          && wlr_scene_node_visible_in_box(animation->node, &box)) {
+      if (effect_reads_audio(animation->shaders[slot]) && wlr_scene_node_visible_in_box(animation->node, &box)) {
         return true;
       }
     }

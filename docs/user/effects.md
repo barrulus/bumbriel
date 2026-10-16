@@ -334,6 +334,7 @@ Every effect kind can read `umbriel_audio_spectrum(position)` and
 `umbriel_audio_available()`. An [external analyser](ipc.md#audio-input) supplies
 64 bands from 0 to 1. Position is clamped to `[0,1]` and linearly interpolates
 between entries at `position * 63`, from the lowest to the highest band.
+Band values are quantized to 8-bit intensity before interpolation.
 It is a normalized low-to-high coordinate, with no promised Hz centers or edges.
 Availability tracks receipt of fresh snapshots, including all-zero input from
 silence or idle capture. All bands and availability are zero without a feed.
@@ -346,8 +347,8 @@ needs. For example, `umbriel_audio_spectrum(0.0)` reacts to the lowest band.
 Audio works without `umbriel_time`; `animated` and `speed` only affect time.
 Changed input redraws visible consumers at `max_fps`. Identical input
 does not request frames. Each output holds its snapshot between eligible frames,
-and all passes of a composition use that value. Closing copies retain their
-copied input. Existing `in_capture` behavior applies.
+and all passes of a composition, including closing copies, use that value.
+Existing `in_capture` behavior applies.
 
 Include `border/audio/effect.toml` from the installed effect directory and select
 `border = "audio"` for a simple example. It remains dim without a feed.

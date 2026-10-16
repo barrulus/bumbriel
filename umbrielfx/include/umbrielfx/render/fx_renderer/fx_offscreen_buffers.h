@@ -31,6 +31,10 @@ struct fx_offscreen_buffers {
   // Allocator of the output the buffers belong to
   struct wlr_allocator* allocator;
 
+  // Nearest-filtered spectrum, allocated only for an audio-reading shader.
+  unsigned audio_texture;
+  uint8_t audio_bands[FX_AUDIO_BANDS];
+
   // Linear-light composition target shared by the output swapchain
   struct fx_framebuffer* blend_buffer;
   bool blend_valid;

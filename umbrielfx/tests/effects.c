@@ -2242,7 +2242,7 @@ static bool test_in_place_shape(struct fixture* fixture) {
   return ok;
 }
 
-// Exercise dynamic sampling of every entry, component/vec4 boundaries, interpolation and clamps.
+// Exercise dynamic sampling of every entry, interpolation and clamps.
 static bool test_audio_spectrum(struct fixture* fixture) {
   struct wlr_scene* scene = wlr_scene_create();
   struct wlr_scene_output* output = wlr_scene_output_create(scene, fixture->output);
@@ -2340,7 +2340,7 @@ static bool test_audio_inputs(struct fixture* fixture) {
     ok &= fixture_read_pixel(fixture, buffer, 4, 4, pixel)
         && check(pixel[2] > 250 && pixel[1] > 250, "live input changes");
     ok &= fixture_read_pixel(fixture, buffer, 12, 4, pixel)
-        && check(abs(pixel[2] - 64) < 3 && pixel[1] > 250, "snapshot retains its copied audio");
+        && check(pixel[2] > 250 && pixel[1] > 250, "closing copy uses the output audio");
     wlr_buffer_unlock(buffer);
   }
   wlr_scene_output_set_effect_audio(outputs[0], (float[FX_AUDIO_VALUES]){0});
@@ -2350,6 +2350,8 @@ static bool test_audio_inputs(struct fixture* fixture) {
     uint8_t pixel[4];
     ok &= fixture_read_pixel(fixture, buffer, 4, 4, pixel)
         && check(pixel[2] < 3 && pixel[1] < 3, "GPU input clears after availability loss");
+    ok &= fixture_read_pixel(fixture, buffer, 12, 4, pixel)
+        && check(pixel[2] < 3 && pixel[1] < 3, "closing copy clears after availability loss");
     wlr_buffer_unlock(buffer);
   }
   struct wlr_output_state power;
@@ -2359,7 +2361,9 @@ static bool test_audio_inputs(struct fixture* fixture) {
   // Only a visible reader on an enabled output asks for audio frames.
   ok &= check(wlr_scene_output_audio_active(outputs[1]), "a visible reader requests audio frames");
   wlr_scene_node_set_enabled(&live->node, false);
-  ok &= check(!wlr_scene_output_audio_active(outputs[1]), "a hidden reader and a snapshot copy do not");
+  ok &= check(wlr_scene_output_audio_active(outputs[1]), "a visible closing copy requests audio frames");
+  wlr_scene_node_set_enabled(&copy->node, false);
+  ok &= check(!wlr_scene_output_audio_active(outputs[1]), "hidden readers do not request audio frames");
   wlr_scene_node_set_enabled(&live->node, true);
   wlr_scene_node_set_position(&live->node, 10 * TEST_WIDTH, 0);
   ok &= check(!wlr_scene_output_audio_active(outputs[1]), "a reader outside the output does not");

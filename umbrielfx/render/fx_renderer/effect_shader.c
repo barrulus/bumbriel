@@ -8,6 +8,8 @@
 #include <string.h>
 #include <wlr/util/log.h>
 
+_Static_assert(FX_AUDIO_BANDS == 64, "audio shader coordinates require 64 bands");
+
 // Shared by every kind. Its names are the shared preamble contract.
 static const char kPreamble[] =
     "precision highp float;\n"
@@ -25,21 +27,11 @@ static const char kPreamble[] =
     "uniform vec2 umbriel_size;\n"
     "uniform float umbriel_scale;\n"
     "uniform float umbriel_time;\n"
-    // Pack four bands per vector; GLES2 uniform arrays need constant-expression indices.
-    "uniform vec4 umbriel_audio_bands[16];\n"
+    "uniform sampler2D umbriel_audio_bands;\n"
     "uniform float umbriel_audio_ready;\n"
     "float umbriel_audio_available() { return umbriel_audio_ready; }\n"
     "float umbriel_audio_entry(float index) {\n"
-    "  vec4 bands = vec4(0.0);\n"
-    "  float group = floor(index * 0.25);\n"
-    "  for (int i = 0; i < 16; i++) {\n"
-    "    if (float(i) == group) bands = umbriel_audio_bands[i];\n"
-    "  }\n"
-    "  float component = mod(index, 4.0);\n"
-    "  if (component < 1.0) return bands.x;\n"
-    "  if (component < 2.0) return bands.y;\n"
-    "  if (component < 3.0) return bands.z;\n"
-    "  return bands.w;\n"
+    "  return texture2D(umbriel_audio_bands, vec2((index + 0.5) / 64.0, 0.5)).r;\n"
     "}\n"
     "float umbriel_audio_spectrum(float position) {\n"
     "  float index = clamp(position, 0.0, 1.0) * 63.0;\n"
@@ -428,6 +420,7 @@ struct fx_effect_shader* fx_effect_shader_create(
   shader->position = glGetAttribLocation(shader->program, "pos");
   shader->tex = glGetUniformLocation(shader->program, "umbriel_texture");
   shader->sample_matrix = glGetUniformLocation(shader->program, "umbriel_sample_matrix");
+  shader->audio_tex = glGetUniformLocation(shader->program, "umbriel_audio_bands");
   shader->incoming_tex = glGetUniformLocation(shader->program, "umbriel_incoming_texture");
   shader->previous_tex = glGetUniformLocation(shader->program, "umbriel_previous_texture");
   shader->previous_sample_matrix = glGetUniformLocation(shader->program, "umbriel_previous_sample_matrix");

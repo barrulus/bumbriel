@@ -2,7 +2,7 @@
 # harness: outputs=2
 set -euo pipefail
 cat > "$UMBRIEL_RUNTIME_DIR/audio.glsl" <<'GLSL'
-vec4 screen(vec2 uv) { return vec4(umbriel_audio_spectrum(0.0), umbriel_audio_available(), 0.0, 1.0); }
+vec4 screen(vec2 uv) { return vec4(umbriel_audio_spectrum(1.0), umbriel_audio_available(), 0.0, 1.0); }
 GLSL
 cat >> "$UMBRIEL_CONFIG" <<'TOML'
 [animation]
@@ -47,7 +47,7 @@ def connect():
 
 
 def send(sock, level):
-    sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 2, 'bands': [level] * 64}) + '\n').encode())
+    sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 2, 'bands': [level * i / 63 for i in range(64)]}) + '\n').encode())
     reply = b''
     while not reply.endswith(b'\n'):
         chunk = sock.recv(256)
