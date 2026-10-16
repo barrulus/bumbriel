@@ -156,7 +156,7 @@ pixel((0, 0, 0))
 producer = Producer(1)
 pixel((255, 255, 0))
 producer.finish(close=False)
-producer.sock.sendall(b'{"cmd":"effect-audio","version":1,"level":false}\n')
+producer.sock.sendall((json.dumps({'cmd': 'effect-audio', 'version': 2, 'bands': [0.5] * 63 + [False]}) + '\n').encode())
 assert b'err' in producer.sock.recv(256)
 assert producer.sock.recv(1) == b'', 'invalid producer stayed connected'
 producer.sock.close()
