@@ -1,8 +1,5 @@
-#ifdef GL_FRAGMENT_PRECISION_HIGH
+// Unpremultiplying small FP16 alpha values requires highp's exponent range.
 precision highp float;
-#else
-precision mediump float;
-#endif
 
 varying vec2 v_texcoord;
 uniform sampler2D tex;

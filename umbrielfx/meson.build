@@ -281,6 +281,7 @@ if build_tests
     'border-geometry',
     'border-geometry-tree',
     'border-light',
+    'border-light-hdr-low-alpha',
     'border-light-lifecycle',
     'border-light-motion',
     'visible-in-box',
