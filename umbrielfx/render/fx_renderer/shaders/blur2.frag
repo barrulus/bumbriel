@@ -1,3 +1,4 @@
+#version 100
 #define EFFECTS % d
 #define COMPOSITE % d
 #define CORNERS % d
