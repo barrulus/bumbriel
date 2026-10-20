@@ -1,4 +1,6 @@
 #version 100
+// Explicit: some drivers leave GL_FRAGMENT_PRECISION_HIGH undefined in an
+// unversioned shader, and the noise hash below needs highp.
 #define EFFECTS % d
 #define COMPOSITE % d
 #define CORNERS % d
