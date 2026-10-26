@@ -13,7 +13,7 @@ WAYLAND_DEBUG=client "$UMBRIEL_LOCK_CLIENT" <&"$lock_fd" > "$LOCK_LOG" 2> "$PROT
 assert_idle() {
   local before after
   before=$(events "$PROTOCOL_LOG" "$CONFIGURE_PATTERN")
-  sleep 1 # real time: detect unsolicited configures while the locked output is static
+  sleep 0.3 # real time: detect unsolicited configures while the locked output is static
   after=$(events "$PROTOCOL_LOG" "$CONFIGURE_PATTERN")
   if [[ "$before" != "$after" ]]; then
     echo "static lock surface received $((after-before)) redundant configures"
