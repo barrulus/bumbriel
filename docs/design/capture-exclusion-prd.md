@@ -6,7 +6,7 @@ Status: implementation contract for issue [#289](https://github.com/noctalia-dev
 
 A user sharing a desktop needs selected windows to remain visible and usable locally while being completely absent from screenshots and recordings. A black rectangle still obscures shared work. Exclusion must instead reveal the scene underneath, including its ongoing updates.
 
-This applies to floating windows above tiled content in scrolling, dwindle, and master layouts. Layout mode must not determine whether a floating window can be protected. A protected tiled window keeps its allocation: the capture shows the background or eligible content behind that allocation, and other tiles do not reflow.
+All four workspace layouts are in scope: scrolling, dwindle, master, and floating. This includes floating windows above tiled content in the three tiling layouts and overlapping windows in the floating layout. Layout mode must not determine whether a window can be protected. A protected tiled window keeps its allocation: the capture shows the background or eligible content behind that allocation, and other tiles do not reflow.
 
 ## User behaviour
 
@@ -39,24 +39,25 @@ The current dependency manages Xwayland directly through wlroots. Xwayland-satel
 
 ## Acceptance matrix
 
-| Scenario                                                         | Required result                                                                                 |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Protected float over two updating tiles, each tiling layout      | Local float unchanged; capture shows both live tiles, without protected pixels or black masking |
-| Move, resize, fullscreen, output move, floating/tiled transition | Effective protection follows the window; layout geometry is unchanged by protection toggles     |
-| Fully covered client visible only in capture                     | Fresh frames continue; buffer release and presentation accounting remain correct                |
-| Protection enabled during two window capture sessions            | Both stop; pending copies before submission fail; new requests are valid stopped sessions       |
-| Protection removed                                               | A fresh window session works; old handles cannot restart                                        |
-| Protected tile                                                   | Allocation retained; neighbouring tiles do not reflow                                           |
-| Popup, transient, X11 related surface, decoration, shadow        | Pixels follow effective owner protection                                                        |
-| Close, overview, workspace switch, effect feedback               | No retained protected image appears after protection takes effect                               |
-| Lock, inactive workspace, clipping, multiple outputs             | Capture never reveals content excluded by ordinary scene visibility                             |
-| SHM and DMA-BUF; screencopy and image-copy; portal recorder      | Equivalent pixel protection, including scale, transform, and HDR transitions                    |
-| Allocation failure, renderer recovery, policy reload             | No fallback to unprotected capture; valid protocol lifecycle and usable local display           |
+| Scenario                                                         | Required result                                                                                                             |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Protected float over two updating tiles, each tiling layout      | Local float unchanged; capture shows both live tiles, without protected pixels or black masking                             |
+| Protected float over two updating floats in floating layout      | Local windows unchanged; capture reveals live underlying windows; protection survives switching to a tiling layout and back |
+| Move, resize, fullscreen, output move, floating/tiled transition | Effective protection follows the window; layout geometry is unchanged by protection toggles                                 |
+| Fully covered client visible only in capture                     | Fresh frames continue; buffer release and presentation accounting remain correct                                            |
+| Protection enabled during two window capture sessions            | Both stop; pending copies before submission fail; new requests are valid stopped sessions                                   |
+| Protection removed                                               | A fresh window session works; old handles cannot restart                                                                    |
+| Protected tile                                                   | Allocation retained; neighbouring tiles do not reflow                                                                       |
+| Popup, transient, X11 related surface, decoration, shadow        | Pixels follow effective owner protection                                                                                    |
+| Close, overview, workspace switch, effect feedback               | No retained protected image appears after protection takes effect                                                           |
+| Lock, inactive workspace, clipping, multiple outputs             | Capture never reveals content excluded by ordinary scene visibility                                                         |
+| SHM and DMA-BUF; screencopy and image-copy; portal recorder      | Equivalent pixel protection, including scale, transform, and HDR transitions                                                |
+| Allocation failure, renderer recovery, policy reload             | No fallback to unprotected capture; valid protocol lifecycle and usable local display                                       |
 
 ## Delivery steps
 
 1. **Bounded investigation:** establish raw-export compatibility and owned source refusal/revocation against the pinned wlroots. Completed; see the investigation.
-2. **Harness-only prototype:** independent ordinary-scene capture draw list, owned source destruction, simultaneous session revocation, and protected floating/tiled checks in scrolling, dwindle, and master. Independently observe local and capture pixels. Keep unsupported effects and lifecycle paths outside the public API.
+2. **Harness-only prototype:** independent ordinary-scene capture draw list, owned source destruction, simultaneous session revocation, and protected-window checks in scrolling, dwindle, master, and floating, including transitions between the floating and tiling layouts. Independently observe local and capture pixels. Keep unsupported effects and lifecycle paths outside the public API.
 3. **Complete ownership and policy:** add effective rules, inherited protection and retained-resource ownership; guard synchronous `is_cast_target` rule reevaluation and enforce the copy-submission boundary during deferred teardown. Cover lock, output changes, X11, overview, and animations.
 4. **Complete composition and failure handling:** integrate blur/effects/history, capture-only scheduling, buffer synchronization, colour/scale/transforms, all transports, and local-display continuity on capture failure.
 5. **Release validation:** adversarial lifecycle and failure tests, real portal/recorder checks, and performance measurements on representative workloads. Confirm compatibility documentation before exposing `block_capture`.
