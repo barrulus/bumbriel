@@ -111,3 +111,34 @@ for layout in scrolling floating; do
   assert_hidden
 done
 echo 'floating layout exclusion, covered client updates, movement, unchanged geometry, and layout transitions verified'
+
+# Keep one other window protected while toggling the magenta window, so both
+# frames use capture-role screen feedback. Old magenta history must be discarded.
+cat > "$UMBRIEL_RUNTIME_DIR/remember.glsl" <<'GLSL'
+vec4 screen(vec2 uv) { return max(umbriel_sample(uv), umbriel_sample_previous(uv)); }
+GLSL
+cat >> "$UMBRIEL_CONFIG" <<'CONFIG'
+[effects]
+screen = "remember"
+in_capture = true
+[effects.preset.remember]
+kind = "screen"
+shader = "remember.glsl"
+[[window_rule]]
+match.title = "^left$"
+block_capture = true
+CONFIG
+# Only change the first block_capture field (the protected window), leaving the
+# second owner protected so feedback remains in the same composition role.
+sed -i '0,/block_capture = true/s//block_capture = false/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+"$UMBRIEL" settle > /dev/null
+grim "$IMAGE"
+(( $("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1') > 1000 ))
+sed -i '0,/block_capture = false/s//block_capture = true/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+assert_hidden
+sed -i 's/^in_capture = true$/in_capture = false/' "$UMBRIEL_CONFIG"
+"$UMBRIEL" msg config-reload > /dev/null
+assert_hidden
+echo 'capture screen-feedback invalidation and both effects policies verified'

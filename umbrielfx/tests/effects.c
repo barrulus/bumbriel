@@ -1921,6 +1921,17 @@ static bool test_capture_exclusion(struct fixture* fixture) {
             ),
         "failed capture refuses pixel reads"
     );
+    struct wlr_buffer* target = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, TEST_WIDTH, TEST_HEIGHT);
+    struct wlr_render_pass* copy =
+        target != NULL ? wlr_renderer_begin_buffer_pass(fixture->renderer, target, NULL) : NULL;
+    ok &= check(copy != NULL && denied != NULL, "create DMA-BUF copy attempt");
+    if (copy != NULL) {
+      if (denied != NULL) {
+        wlr_render_pass_add_texture(copy, &(struct wlr_render_texture_options){.texture = denied});
+      }
+      ok &= check(!wlr_render_pass_submit(copy), "failed capture refuses GPU copies");
+    }
+    wlr_buffer_drop(target);
     wlr_texture_destroy(denied);
   }
   wlr_output_state_finish(&state);
@@ -1964,7 +1975,14 @@ static bool test_capture_exclusion(struct fixture* fixture) {
       umbrielfx_scene_node_capture_excluded(&retained->node), "retained copy remains protected after owner death"
   );
   ok &= check(umbrielfx_scene_has_capture_exclusion(scene), "retained protection keeps capture composition active");
+  struct wlr_scene* other = wlr_scene_create();
+  wlr_scene_node_reparent(&retained->node, &other->tree);
+  ok &= check(
+      umbrielfx_scene_has_capture_exclusion(other) && !umbrielfx_scene_has_capture_exclusion(scene),
+      "reparenting transfers retained protection between scenes"
+  );
   wlr_scene_node_destroy(&scene->tree.node);
+  wlr_scene_node_destroy(&other->tree.node);
   wlr_swapchain_destroy(swapchain);
   return ok;
 }

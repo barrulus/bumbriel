@@ -5326,7 +5326,7 @@ bool umbrielfx_scene_has_capture_exclusion(struct wlr_scene* scene) {
 static void capture_policy_invalidate(struct wlr_scene* scene) {
   struct wlr_scene_output* output;
   wl_list_for_each(output, &scene->outputs, link) {
-    if (wlr_renderer_is_fx(output->output->renderer)) {
+    if (output->output->renderer != NULL && wlr_renderer_is_fx(output->output->renderer)) {
       struct fx_renderer* renderer = fx_get_renderer(output->output->renderer);
       struct fx_framebuffer* buffer;
       wl_list_for_each(buffer, &renderer->buffers, link) {
@@ -5556,7 +5556,9 @@ static bool render_capture_exclusion(struct render_data* data, const struct wlr_
   struct render_list_entry* entries = list.entries.data;
   const int count = list.entries.size / sizeof(*entries);
   struct fx_gles_render_pass* pass = fx_get_render_pass(data->render_pass);
-  if (!list.failed && !fx_render_pass_init_offscreen_buffers(data->render_pass, data->output->output)) {
+  if (!list.failed
+      && pass->fx_offscreen_buffers == NULL
+      && !fx_render_pass_init_offscreen_buffers(data->render_pass, data->output->output)) {
     list.failed = true;
   }
   if (!list.failed) {
@@ -6656,9 +6658,6 @@ static bool scene_output_build_state(
     pixman_region32_fini(&full_damage);
   }
   fx_pass->output_buffer->capture_sdr = options->capture_sdr && fx_pass->has_color_transform;
-  fx_pass->output_buffer->capture_policy_owner = scene_output;
-  fx_pass->output_buffer->capture_protected =
-      capture_exclusion || umbrielfx_scene_has_capture_exclusion(scene_output->scene);
   bool should_compensate_blur = false;
   if (pixman_region32_not_empty(&render_data.damage)) {
     // Blur artifact prevention
@@ -6890,6 +6889,10 @@ static bool scene_output_build_state(
 
   struct fx_framebuffer* output_buffer = fx_pass->output_buffer;
   const bool submitted = wlr_render_pass_submit(render_pass);
+  // Internal effect copies must read the in-progress composition. Publish the
+  // capture guard after submission, before committing it to protocol consumers.
+  output_buffer->capture_policy_owner = scene_output;
+  output_buffer->capture_protected = capture_exclusion || umbrielfx_scene_has_capture_exclusion(scene_output->scene);
   if (capture_failed) {
     fx_framebuffer_release_effect_capture(output_buffer);
   }
