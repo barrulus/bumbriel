@@ -121,9 +121,9 @@ namespace umbriel {
       std::string& m_error;
     };
 
-    std::optional<KeybindPayload> workspacePayload(Fields& fields) {
+    std::optional<WorkspaceArg> workspacePayload(Fields& fields) {
       WorkspaceArg workspace;
-      if (!fields.only({"workspace", "output"}) || !fields.string("output", false, workspace.output)) {
+      if (!fields.string("output", false, workspace.output)) {
         return std::nullopt;
       }
       const nlohmann::json* selector = fields.raw("workspace");
@@ -260,8 +260,22 @@ namespace umbriel {
         }
         return arg;
       }
-      case ActionArgKind::Workspace:
-        return workspacePayload(fields);
+      case ActionArgKind::Workspace: {
+        auto workspace = fields.only({"workspace", "output"}) ? workspacePayload(fields) : std::nullopt;
+        return workspace ? std::make_optional<KeybindPayload>(std::move(*workspace)) : std::nullopt;
+      }
+      case ActionArgKind::WorkspaceMoveToOutput: {
+        WorkspaceMoveToOutputArg arg;
+        if (!fields.only({"destination", "workspace", "output"})
+            || !fields.string("destination", true, arg.destination)) {
+          return std::nullopt;
+        }
+        if (!fields.has("workspace") && !fields.has("output")) {
+          return arg;
+        }
+        arg.workspace = workspacePayload(fields);
+        return arg.workspace ? std::make_optional<KeybindPayload>(std::move(arg)) : std::nullopt;
+      }
       case ActionArgKind::WindowEffectSet:
       case ActionArgKind::WindowEffectCycle:
       case ActionArgKind::ScreenEffectSet:
@@ -387,6 +401,15 @@ namespace umbriel {
       }
     }
 
+    void putWorkspace(nlohmann::json& request, const WorkspaceArg& workspace) {
+      if (const auto* index = std::get_if<WorkspaceIndex>(&workspace.reference)) {
+        request["workspace"] = index->value;
+      } else {
+        request["workspace"] = std::get<WorkspaceName>(workspace.reference).value;
+      }
+      putIfSet(request, "output", workspace.output);
+    }
+
   } // namespace
 
   std::optional<Keybind> actionFromRequest(const nlohmann::json& request, std::string& error) {
@@ -432,12 +455,12 @@ namespace umbriel {
           } else if constexpr (std::is_same_v<Arg, FractionArg>) {
             request[spec->argKind == ActionArgKind::FractionDelta ? "delta" : "fraction"] = arg.fraction;
           } else if constexpr (std::is_same_v<Arg, WorkspaceArg>) {
-            if (const auto* index = std::get_if<WorkspaceIndex>(&arg.reference)) {
-              request["workspace"] = index->value;
-            } else {
-              request["workspace"] = std::get<WorkspaceName>(arg.reference).value;
+            putWorkspace(request, arg);
+          } else if constexpr (std::is_same_v<Arg, WorkspaceMoveToOutputArg>) {
+            request["destination"] = arg.destination;
+            if (arg.workspace) {
+              putWorkspace(request, *arg.workspace);
             }
-            putIfSet(request, "output", arg.output);
           } else if constexpr (std::is_same_v<Arg, OutputArg>) {
             putIfSet(request, "output", arg.output);
           } else if constexpr (std::is_same_v<Arg, ScratchpadArg>) {

@@ -2,7 +2,7 @@
 # harness: outputs=2
 # min_workspaces is a per-output floor on the dynamic workspace count. The configured output holds its floor while
 # every workspace is empty, grows and prunes around it, and leaves the other output's inventory alone. At the runtime
-# limit, moving a workspace onto the output reuses an empty workspace instead of merging with an occupied one.
+# limit, a workspace transfer is rejected without changing either output.
 set -euo pipefail
 
 readonly BASELINE="$(< "$UMBRIEL_CONFIG")"
@@ -112,17 +112,13 @@ if [[ $source_workspace != HEADLESS-2:* ]]; then
   exit 1
 fi
 "$UMBRIEL" msg window-focus-warp "$source_id" > /dev/null
-"$UMBRIEL" msg workspace-move-to-output-left > /dev/null
-expect_names HEADLESS-1 "$(seq -s ' ' 64)" "workspace transfer respects the limit"
-transferred=$("$UMBRIEL" windows --json)
-limit_workspace=$(jq -r '.[] | select(.title == "workspace-limit-view") | .workspace' <<< "$transferred")
-source_workspace=$(jq -r '.[] | select(.title == "workspace-limit-source") | .workspace' <<< "$transferred")
-if [[ $limit_workspace != HEADLESS-1:* || $source_workspace != HEADLESS-1:* ]]; then
-  echo "workspace transfer did not move both windows onto HEADLESS-1: $transferred"
+if "$UMBRIEL" msg workspace-move-to-output-left > /dev/null 2>&1; then
+  echo "workspace transfer exceeded the output limit"
   exit 1
 fi
-if [[ $limit_workspace == "$source_workspace" ]]; then
-  echo "workspace transfer merged both windows into occupied workspace $limit_workspace"
+expect_names HEADLESS-1 "$(seq -s ' ' 64)" "workspace transfer respects the limit"
+if [[ $("$UMBRIEL" windows --json | jq -r --arg id "$source_id" '.[] | select(.id == $id) | .workspace') != "$source_workspace" ]]; then
+  echo "rejected transfer moved its source window"
   exit 1
 fi
 

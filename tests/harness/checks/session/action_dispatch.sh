@@ -51,6 +51,7 @@ for action in \
 done
 for action in \
   output-focus-next output-focus-previous \
+  workspace-move-to-output-next workspace-move-to-output-previous \
   window-move-to-output-next window-move-to-output-previous \
   workspace-swap-active-output-next workspace-swap-active-output-previous; do
   rejects_with "$action" "no other output"

@@ -2348,6 +2348,8 @@ namespace umbriel {
 
     std::unique_ptr<Card> moved = std::move(*it);
     source->cards.erase(it);
+    // A hidden card may skip shadow layout; release its source-output shadow before changing owners.
+    destroyCardShadow(*moved);
     moved->owner = target;
     wlr_scene_node_reparent(&moved->tree->node, target->tree);
     target->cards.push_back(std::move(moved));

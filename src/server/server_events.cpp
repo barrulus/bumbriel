@@ -2831,6 +2831,8 @@ namespace umbriel {
             .workspaceNamed = workspace->named(),
             .configGeneration = configStore().generation(),
             .layoutModeOverride = workspace->layoutModeOverride(),
+            .transferredLayout =
+                workspace->transferred() ? std::make_optional(workspace->layoutConfig()) : std::nullopt,
         });
       }
       const wlr_box outputBox = output->layoutBox();
@@ -3209,6 +3211,8 @@ namespace umbriel {
         refugeHold = workspace->reserveForLaunch();
         targetGroup = workspace->group();
         target = targetGroup->output();
+      } else if (groupHome.workspaceOrigin && groupHome.workspaceOrigin->transferredLayout) {
+        workspace = targetGroup->restoreTransferredWorkspace(*groupHome.workspaceOrigin);
       } else if (groupHome.workspaceNamed) {
         workspace = targetGroup->workspaceNamed(groupHome.workspaceName);
       } else {

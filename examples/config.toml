@@ -214,6 +214,10 @@ numlock_toggle = true
 "Mod+O" = { action = "overview-toggle", repeat = false }
 
 # Workspaces
+# Move the whole workspace, retaining its name, layout, and windows.
+# "Mod+Ctrl+Page_Down" = "workspace-move-to-output-next"
+# "Mod+Ctrl+Page_Up" = "workspace-move-to-output-previous"
+# "Mod+Ctrl+W" = "workspace-move-to-output current WEB --output DP-1"
 "Mod+1" = "workspace-switch 1"
 "Mod+2" = "workspace-switch 2"
 "Mod+3" = "workspace-switch 3"

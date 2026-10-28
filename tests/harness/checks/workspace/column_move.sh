@@ -52,10 +52,11 @@ wait_for_workspace() {
 }
 
 wait_for_output() {
-  local title=$1 output=$2 actual=
+  local title=$1 output=$2 actual= workspace=
   for _ in $(seq 50); do
-    actual=$(field_of "$title" workspace)
-    [[ $actual == "$output":* ]] && return 0
+    workspace=$(field_of "$title" workspace)
+    actual=$("$UMBRIEL" workspaces --json | jq -r --arg id "$workspace" ' .[] | select(.id == $id) | .output')
+    [[ $actual == "$output" ]] && return 0
     sleep 0.1
   done
   echo "expected '$title' on $output, got $actual"
@@ -272,7 +273,7 @@ accepts column-move-to-output-right
 wait_for_workspace transfer-d "$right_one_id"
 assert_transfer_groups
 
-# Whole-workspace output moves rebuild all columns on the requested output.
+# Whole-workspace output moves preserve all columns on the requested output.
 accepts workspace-move-to-output-left
 wait_for_output transfer-d HEADLESS-1
 transferred_workspace=$(field_of transfer-d workspace)
@@ -328,8 +329,6 @@ master_state() {
     | sort_by(.title) | map({title, y, w, h, tabbed, tab_index, tab_hidden, active})'
 }
 master_before=$(master_state)
-accepts workspace-switch RIGHT_ONE --output HEADLESS-2
-accepts workspace-set-layout master
 accepts workspace-switch RIGHT_TWO --output HEADLESS-2
 accepts workspace-set-layout master
 accepts workspace-switch TWO --output HEADLESS-1
@@ -343,9 +342,7 @@ if [[ $(master_state) != "$master_before" ]]; then
   echo "whole-workspace output transfer changed master areas, tabs, bar reserve, or selection: $(master_state)"
   exit 1
 fi
-# The reverse transfer also exercises master-to-scrolling group conversion.
-accepts workspace-switch TWO --output HEADLESS-1
-accepts workspace-set-layout scrolling
+# The reverse transfer preserves the master layout on a scrolling output.
 accepts workspace-switch THREE --output HEADLESS-1
 accepts workspace-set-layout scrolling
 accepts window-focus-warp "$bottom_id"

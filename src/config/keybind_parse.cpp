@@ -185,18 +185,17 @@ namespace umbriel {
 
     // Exactly one of a positional selector or `--name`, plus an optional `--output`. All-digit positional selectors
     // are 1-based positions; `--name` forces a name, including one made only of digits.
-    std::optional<WorkspaceArg> parseWorkspaceWords(std::span<const std::string> words) {
-      const auto split = splitActionWords(words, kFlagOutput | kFlagName);
-      if (!split || split->positional.size() + (split->name ? 1U : 0U) != 1) {
+    std::optional<WorkspaceArg> parseWorkspaceSelector(const ActionWords& split) {
+      if (split.positional.size() + (split.name ? 1U : 0U) != 1) {
         return std::nullopt;
       }
       WorkspaceArg workspace;
-      workspace.output = std::string(split->output.value_or(std::string_view{}));
-      if (split->name) {
-        workspace.reference = WorkspaceName{std::string(*split->name)};
+      workspace.output = std::string(split.output.value_or(std::string_view{}));
+      if (split.name) {
+        workspace.reference = WorkspaceName{std::string(*split.name)};
         return workspace;
       }
-      const std::string_view selector = split->positional.front();
+      const std::string_view selector = split.positional.front();
       if (std::ranges::all_of(selector, [](char value) { return value >= '0' && value <= '9'; })) {
         size_t index = 0;
         const auto [end, error] = std::from_chars(selector.data(), selector.data() + selector.size(), index);
@@ -623,13 +622,20 @@ namespace umbriel {
          KeybindAction::WindowToggleScratchpad, ActionArgKind::OptionalScratchpad},
         {"workspace-focus-last", "", "Focus the previously active workspace", KeybindAction::WorkspaceFocusLast},
         {"workspace-move-down", "", "Move the focused workspace down the list", KeybindAction::WorkspaceMoveDown},
-        {"workspace-move-to-output-down", "", "Move every workspace window to the output below",
+        {"workspace-move-to-output", "<destination> [<workspace>] [--output <output>]",
+         "Move the active or selected workspace to an output", KeybindAction::WorkspaceMoveToOutput,
+         ActionArgKind::WorkspaceMoveToOutput},
+        {"workspace-move-to-output-down", "", "Move the workspace to the output below",
          KeybindAction::WorkspaceMoveToOutputDown},
-        {"workspace-move-to-output-left", "", "Move every workspace window to the output left",
+        {"workspace-move-to-output-left", "", "Move the workspace to the output left",
          KeybindAction::WorkspaceMoveToOutputLeft},
-        {"workspace-move-to-output-right", "", "Move every workspace window to the output right",
+        {"workspace-move-to-output-next", "", "Move the workspace to the next output",
+         KeybindAction::WorkspaceMoveToOutputNext},
+        {"workspace-move-to-output-previous", "", "Move the workspace to the previous output",
+         KeybindAction::WorkspaceMoveToOutputPrevious},
+        {"workspace-move-to-output-right", "", "Move the workspace to the output right",
          KeybindAction::WorkspaceMoveToOutputRight},
-        {"workspace-move-to-output-up", "", "Move every workspace window to the output above",
+        {"workspace-move-to-output-up", "", "Move the workspace to the output above",
          KeybindAction::WorkspaceMoveToOutputUp},
         {"workspace-move-up", "", "Move the focused workspace up the list", KeybindAction::WorkspaceMoveUp},
         {"workspace-next", "", "Switch to the next workspace on this output", KeybindAction::WorkspaceNext},
@@ -891,11 +897,25 @@ namespace umbriel {
         return FractionArg{.fraction = *delta};
       }
       case ActionArgKind::Workspace: {
-        auto workspace = parseWorkspaceWords(words);
+        const auto split = splitActionWords(words, kFlagOutput | kFlagName);
+        auto workspace = split ? parseWorkspaceSelector(*split) : std::nullopt;
         if (!workspace) {
           return std::nullopt;
         }
         return std::move(*workspace);
+      }
+      case ActionArgKind::WorkspaceMoveToOutput: {
+        auto split = splitActionWords(words, kFlagOutput | kFlagName);
+        if (!split || split->positional.empty()) {
+          return std::nullopt;
+        }
+        WorkspaceMoveToOutputArg arg{.destination = std::string(split->positional.front()), .workspace = std::nullopt};
+        split->positional.erase(split->positional.begin());
+        if (split->positional.empty() && !split->name && !split->output) {
+          return arg;
+        }
+        arg.workspace = parseWorkspaceSelector(*split);
+        return arg.workspace ? std::make_optional<KeybindPayload>(std::move(arg)) : std::nullopt;
       }
       case ActionArgKind::WindowEffectSet:
       case ActionArgKind::WindowEffectCycle:

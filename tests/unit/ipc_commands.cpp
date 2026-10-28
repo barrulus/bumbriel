@@ -361,6 +361,10 @@ namespace {
       return {" 0.5"};
     case ActionArgKind::FractionDelta:
       return {" -0.25"};
+    case ActionArgKind::WorkspaceMoveToOutput:
+      return {
+          " DP-2", " current 3 --output DP-1", " --output DP-1 current --name 2", " 'Vendor Model Serial' 'My web'"
+      };
     case ActionArgKind::Workspace:
       return {" 3", " --name 2 --output DP-1", " web"};
     case ActionArgKind::WindowEffectSet:
@@ -480,6 +484,32 @@ UMBRIEL_TEST(actionRequestsRejectMalformedFieldsWithTheReason) {
       std::println(stderr, "{} -> {}", request, error);
     }
     CHECK(error.contains(reason));
+  }
+}
+
+UMBRIEL_TEST(workspaceOutputRequestRequiresAnUnambiguousSource) {
+  std::string error;
+  const auto request = nlohmann::json{
+      {"cmd", "action"},
+      {"action", "workspace-move-to-output"},
+      {"destination", "current"},
+      {"workspace", "3"},
+      {"output", "DP-1"}
+  };
+  const auto bind = umbriel::actionFromRequest(request, error);
+  CHECK(bind.has_value());
+  CHECK(umbriel::actionRequest(*bind) == request);
+  for (const auto& invalid :
+       {nlohmann::json{{"destination", 2}}, nlohmann::json{{"destination", ""}},
+        nlohmann::json{{"destination", "current"}, {"output", "DP-1"}},
+        nlohmann::json{{"destination", "current"}, {"workspace", 0}},
+        nlohmann::json{{"destination", "current"}, {"workspace", true}},
+        nlohmann::json{{"destination", "current"}, {"workspace", ""}},
+        nlohmann::json{{"destination", "current"}, {"window", "id"}}}) {
+    auto bad = invalid;
+    bad["cmd"] = "action";
+    bad["action"] = "workspace-move-to-output";
+    CHECK(!umbriel::actionFromRequest(bad, error));
   }
 }
 

@@ -78,11 +78,8 @@ namespace umbriel {
     }
 
     // Positions stay on the selected output; names follow a displaced workspace's original output when qualified.
-    std::expected<Workspace*, std::string> resolveWorkspaceSelector(Server& server, const Keybind& bind) {
-      const auto* selector = payloadIf<WorkspaceArg>(bind);
-      if (selector == nullptr) {
-        return std::unexpected(std::string("action carries no workspace selector"));
-      }
+    std::expected<Workspace*, std::string> resolveWorkspaceSelector(Server& server, const WorkspaceArg& arg) {
+      const auto* selector = &arg;
       Output* preferred = server.outputFromWlr(server.preferredOutput());
       WorkspaceGroup* group = preferred != nullptr ? preferred->workspaceGroup() : nullptr;
       if (const auto* name = std::get_if<WorkspaceName>(&selector->reference)) {
@@ -583,6 +580,32 @@ namespace umbriel {
       return true;
     }
 
+    std::expected<Output*, std::string> resolveOutputSelector(Server& server, const std::string& requested) {
+      Output* target = nullptr;
+      OutputNameMatch targetMatch = OutputNameMatch::None;
+      for (const auto& output : server.outputs()) {
+        const OutputNameMatch match = outputNameMatch(output->identity(), requested);
+        if (match == OutputNameMatch::None) {
+          continue;
+        }
+        if (match == OutputNameMatch::Connector) {
+          target = output.get();
+          targetMatch = match;
+          break;
+        }
+        if (target != nullptr && targetMatch == OutputNameMatch::Descriptor) {
+          return std::unexpected("output descriptor is ambiguous: " + requested);
+        }
+        target = output.get();
+        targetMatch = match;
+      }
+      if (target == nullptr) {
+        return std::unexpected("unknown output: " + requested);
+      }
+
+      return target;
+    }
+
     enum class OutputEnableAction {
       Disable,
       Enable,
@@ -596,27 +619,11 @@ namespace umbriel {
         return reject(error, "output name is required");
       }
 
-      Output* target = nullptr;
-      OutputNameMatch targetMatch = OutputNameMatch::None;
-      for (const auto& output : server.outputs()) {
-        const OutputNameMatch match = outputNameMatch(output->identity(), arg->output);
-        if (match == OutputNameMatch::None) {
-          continue;
-        }
-        if (match == OutputNameMatch::Connector) {
-          target = output.get();
-          targetMatch = match;
-          break;
-        }
-        if (target != nullptr && targetMatch == OutputNameMatch::Descriptor) {
-          return reject(error, "output descriptor is ambiguous: " + arg->output);
-        }
-        target = output.get();
-        targetMatch = match;
+      const auto resolved = resolveOutputSelector(server, arg->output);
+      if (!resolved) {
+        return reject(error, resolved.error());
       }
-      if (target == nullptr) {
-        return reject(error, "unknown output: " + arg->output);
-      }
+      Output* target = *resolved;
 
       bool enabled = Action == OutputEnableAction::Enable;
       if constexpr (Action == OutputEnableAction::Toggle) {
@@ -1554,7 +1561,11 @@ namespace umbriel {
 
     // Workspaces
     bool actionWorkspace(Server& server, const Keybind& bind, std::string* error) {
-      const std::expected<Workspace*, std::string> target = resolveWorkspaceSelector(server, bind);
+      const auto* selector = payloadIf<WorkspaceArg>(bind);
+      if (selector == nullptr) {
+        return reject(error, "action carries no workspace selector");
+      }
+      const std::expected<Workspace*, std::string> target = resolveWorkspaceSelector(server, *selector);
       if (!target.has_value()) {
         return reject(error, target.error());
       }
@@ -1780,72 +1791,59 @@ namespace umbriel {
       return true;
     }
 
+    bool moveWorkspaceToOutput(Server& server, Workspace* workspace, Output& target, std::string* error) {
+      WorkspaceGroup* destination = target.workspaceGroup();
+      if (workspace == nullptr || destination == nullptr) {
+        return reject(error, "output has no workspace");
+      }
+      if (workspace->group() == destination) {
+        return true;
+      }
+      if (!workspace->group()->transferTo(*workspace, *destination, error)) {
+        return false;
+      }
+      if (View* focused = workspace->focusedView()) {
+        server.focusView(focused, FocusReason::Directional);
+      } else {
+        server.refocusExplicit(&target);
+      }
+      warpToOutputCenter(server, target);
+      return true;
+    }
+
+    bool actionWorkspaceMoveToNamedOutput(Server& server, const Keybind& bind, std::string* error) {
+      const auto* arg = payloadIf<WorkspaceMoveToOutputArg>(bind);
+      if (arg == nullptr) {
+        return reject(error, "action carries no workspace transfer target");
+      }
+      const auto target = arg->destination == "current"
+          ? std::expected<Output*, std::string>(server.outputFromWlr(server.preferredOutput()))
+          : resolveOutputSelector(server, arg->destination);
+      if (!target) {
+        return reject(error, target.error());
+      }
+      if (*target == nullptr || !(*target)->desktopEnabled() || !(*target)->wlr()->enabled) {
+        return reject(error, "output is not available: " + arg->destination);
+      }
+      const auto workspace = arg->workspace ? resolveWorkspaceSelector(server, *arg->workspace)
+                                            : std::expected<Workspace*, std::string>(activeWorkspace(server));
+      return workspace ? moveWorkspaceToOutput(server, *workspace, **target, error) : reject(error, workspace.error());
+    }
+
     template <wlr_direction D>
     bool actionWorkspaceMoveToOutput(Server& server, const Keybind& /*bind*/, std::string* error) {
       std::string message;
       Output* target = adjacentOutput(server, D, &message);
-      if (target == nullptr) {
-        return reject(error, std::move(message));
-      }
-      Workspace* source = activeWorkspace(server);
-      if (source == nullptr || !source->hasViews()) {
-        return reject(error, "workspace is empty");
-      }
-      WorkspaceGroup* targetGroup = target->workspaceGroup();
-      if (targetGroup == nullptr) {
-        return reject(error, "output has no workspace");
-      }
-      Workspace* destination = targetGroup->transferDestination();
-      if (destination == nullptr) {
-        return reject(
-            error, targetGroup->dynamic() ? "output workspace limit reached" : "output has no empty fixed workspace"
-        );
-      }
-      View* focused = source->focusedView();
+      return target != nullptr ? moveWorkspaceToOutput(server, activeWorkspace(server), *target, error)
+                               : reject(error, std::move(message));
+    }
 
-      // Snapshot the source contents first: every setWorkspace below triggers reconcileDynamic on both groups, and
-      // iterating the live layout while it rebuilds would be use-after-free.
-      const bool sameLayout = source->layout().mode() == destination->layout().mode();
-      const LayoutCapture tiles = sameLayout ? source->layout().captureState() : LayoutCapture{};
-      const std::vector<Column> columns = sameLayout ? std::vector<Column>{} : source->layout().columns();
-      std::vector<View*> floats;
-      for (View* view : source->allViews()) {
-        if (view->floating() && !view->pinned()) {
-          floats.push_back(view);
-        }
-      }
-
-      if (sameLayout) {
-        // Restore into the empty destination before moving any members, so a
-        // rejected snapshot leaves the source intact.
-        if (tiles.snapshot == nullptr || !destination->layout().restoreState(*tiles.snapshot, tiles.members)) {
-          return reject(error, "failed to restore workspace layout");
-        }
-        for (const LayoutMember& member : tiles.members) {
-          if (member.view != nullptr) {
-            member.view->moveToWorkspace(destination, /*attachToLayout=*/false);
-          }
-        }
-      } else {
-        for (const Column& column : columns) {
-          rebuildTransferredColumn(*destination, column, static_cast<int>(destination->layout().columns().size()));
-        }
-      }
-      for (View* view : floats) {
-        view->rememberFloatingPosition();
-        view->moveToWorkspace(destination);
-        view->restoreFloatingPosition();
-      }
-
-      destination->markArrange();
-      targetGroup->activate(destination);
-      if (focused != nullptr && focused->workspace() == destination) {
-        server.focusView(focused, FocusReason::Directional);
-      } else {
-        server.refocusExplicit(target);
-      }
-      warpToOutputCenter(server, *target);
-      return true;
+    template <int Step>
+    bool actionWorkspaceMoveToOutputCycle(Server& server, const Keybind& /*bind*/, std::string* error) {
+      std::string message;
+      Output* target = cycledOutput(server, Step, &message);
+      return target != nullptr ? moveWorkspaceToOutput(server, activeWorkspace(server), *target, error)
+                               : reject(error, std::move(message));
     }
 
     bool swapActiveWorkspaceWindows(Server& server, Output* sourceOutput, Output* targetOutput, std::string* error) {
@@ -2307,10 +2305,13 @@ namespace umbriel {
         &actionColumnMoveToOutput<WLR_DIRECTION_RIGHT>,
         &actionColumnMoveToOutput<WLR_DIRECTION_UP>,
         &actionColumnMoveToOutput<WLR_DIRECTION_DOWN>,
+        &actionWorkspaceMoveToNamedOutput,
         &actionWorkspaceMoveToOutput<WLR_DIRECTION_LEFT>,
         &actionWorkspaceMoveToOutput<WLR_DIRECTION_RIGHT>,
         &actionWorkspaceMoveToOutput<WLR_DIRECTION_UP>,
         &actionWorkspaceMoveToOutput<WLR_DIRECTION_DOWN>,
+        &actionWorkspaceMoveToOutputCycle<1>,
+        &actionWorkspaceMoveToOutputCycle<-1>,
         &actionWorkspaceSwapActiveOutput<WLR_DIRECTION_LEFT>,
         &actionWorkspaceSwapActiveOutput<WLR_DIRECTION_RIGHT>,
         &actionWorkspaceSwapActiveOutput<WLR_DIRECTION_UP>,

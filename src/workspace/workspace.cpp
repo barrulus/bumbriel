@@ -130,17 +130,28 @@ namespace umbriel {
     // counts as company.
     bool sharesWorkspace(const View* view) { return view != nullptr && view->mapped() && !view->pinned(); }
 
+    bool displacedLayoutCurrent(const DisplacedWorkspace& origin) {
+      return origin.transferredLayout ? origin.configGeneration >= configStore().workspaceLayoutGeneration()
+                                      : origin.configGeneration == configStore().generation();
+    }
+
     ResolvedLayoutConfig displacedWorkspaceLayout(const DisplacedWorkspace& origin) {
+      if (origin.transferredLayout && displacedLayoutCurrent(origin)) {
+        return *origin.transferredLayout;
+      }
       ResolvedLayoutConfig layout = origin.workspaceNamed
           ? resolveWorkspaceLayout(config(), origin.identity(), origin.workspaceName, origin.workspaceIndex)
           : resolveUnnamedWorkspaceLayout(config(), origin.identity(), origin.workspaceIndex);
-      if (origin.configGeneration == configStore().generation() && origin.layoutModeOverride) {
+      if (displacedLayoutCurrent(origin) && origin.layoutModeOverride) {
         layout.mode = *origin.layoutModeOverride;
       }
       return layout;
     }
 
-    ResolvedLayoutConfig workspaceLayout(const Workspace& workspace, size_t index) {
+    ResolvedLayoutConfig workspaceLayout(const Workspace& workspace, size_t index, bool preserveTransfer = true) {
+      if (preserveTransfer && workspace.transferred()) {
+        return workspace.layoutConfig();
+      }
       if (const auto& origin = workspace.displacedWorkspace()) {
         return displacedWorkspaceLayout(*origin);
       }
@@ -211,6 +222,43 @@ namespace umbriel {
     m_launchAnchor->workspace = nullptr;
     m_launchAnchor = std::make_shared<WorkspaceLaunchAnchor>();
     m_launchAnchor->workspace = this;
+  }
+
+  void Workspace::transferTo(WorkspaceGroup& group) {
+    endSwitchTransition();
+    endLayoutMotion();
+    discardCloseSnapshots();
+    for (View* view : m_views) {
+      view->cancelPositionAnimation();
+      view->rememberFloatingPosition();
+      view->clearDisplaced();
+    }
+    m_displacedWorkspace.reset();
+    m_transferred = true;
+    m_group = &group;
+    wlr_ext_workspace_handle_v1_set_group(m_handle, group.handle());
+    wlr_scene_node_reparent(&m_tree->node, group.output()->viewRoot());
+    wlr_scene_node_reparent(&m_fullscreenTree->node, group.output()->fullscreenRoot());
+    for (View* view : m_views) {
+      if (view->pinned()) {
+        view->restorePinnedSceneParent();
+      }
+      view->restoreFloatingPosition();
+    }
+    // Attached dialogs share their placement root's workspace without being layout members.
+    for (const auto& view : group.server()->registry().all()) {
+      if (view->workspace() != this) {
+        continue;
+      }
+      view->notifyOutputScale();
+      if (view->mapped()) {
+        view->enterForeignOutput(group.output());
+        view->syncMinimizeEligibility();
+      }
+    }
+    group.server()->scheduleIpcWindowsEvent();
+    group.server()->scheduleIpcWorkspacesEvent();
+    markArrange(false);
   }
 
   ScrollingLayout* Workspace::scrollingLayout() {
@@ -2575,7 +2623,17 @@ namespace umbriel {
   }
   std::string WorkspaceGroup::nextWorkspaceId() {
     const std::string_view connector = m_output->identity().connector;
-    return std::format("{}:{}", connector.empty() ? "output" : connector, m_nextHandleSerial++);
+    for (;;) {
+      std::string id = std::format("{}:{}", connector.empty() ? "output" : connector, m_nextHandleSerial++);
+      const bool exists = std::ranges::any_of(m_server->outputs(), [&id](const auto& output) {
+        const WorkspaceGroup* group = output->workspaceGroup();
+        return group != nullptr
+            && std::ranges::any_of(group->m_workspaces, [&id](const auto& workspace) { return workspace->id() == id; });
+      });
+      if (!exists) {
+        return id;
+      }
+    }
   }
 
   std::unique_ptr<Workspace> WorkspaceGroup::createConfiguredWorkspace(ResolvedWorkspace workspace, size_t index) {
@@ -2705,7 +2763,7 @@ namespace umbriel {
     std::vector<std::string> desired;
     desired.reserve(resolved.size());
     for (const ResolvedWorkspace& workspace : resolved) {
-      if (workspace.named) {
+      if (workspace.named && std::ranges::find(m_transferredNames, workspace.name) == m_transferredNames.end()) {
         desired.push_back(workspace.name);
       }
     }
@@ -2714,6 +2772,10 @@ namespace umbriel {
     claimed.reserve(desired.size());
     for (const auto& workspace : m_workspaces) {
       if (workspace->displacedWorkspace() || !workspace->named()) {
+        continue;
+      }
+      if (workspace->transferred()) {
+        claimed.push_back(workspace->name());
         continue;
       }
       const bool wanted = std::ranges::find(desired, workspace->name()) != desired.end();
@@ -2782,6 +2844,10 @@ namespace umbriel {
 
   void WorkspaceGroup::reconcileInventory() {
     slideFinish();
+    m_transferredNames.clear();
+    for (const auto& workspace : m_workspaces) {
+      workspace->m_transferred = false;
+    }
     const OutputIdentity identity = m_output->identity();
     auto resolvedSet = resolveWorkspacesForOutput(config(), identity);
     m_dynamic = resolvedSet.dynamic;
@@ -2919,7 +2985,7 @@ namespace umbriel {
       // A config reload reasserts the configured mode, dropping any runtime
       // workspace-set-layout override.
       workspace->clearLayoutModeOverride();
-      ResolvedLayoutConfig layout = workspaceLayout(*workspace, workspace->index());
+      ResolvedLayoutConfig layout = workspaceLayout(*workspace, workspace->index(), false);
       if (workspace->layoutConfig() != layout) {
         workspace->applyLayoutConfig(std::move(layout));
       } else {
@@ -3483,14 +3549,117 @@ namespace umbriel {
     return insertDynamicWorkspace(m_workspaces.size());
   }
 
-  Workspace* WorkspaceGroup::transferDestination() {
-    if (m_dynamic) {
-      return createWorkspace(nullptr);
+  bool WorkspaceGroup::transferTo(Workspace& source, WorkspaceGroup& destination, std::string* error) {
+    const auto reject = [error](const char* message) {
+      if (error != nullptr) {
+        *error = message;
+      }
+      return false;
+    };
+    if (source.group() != this) {
+      return reject("no workspace to transfer");
     }
-    const auto empty = std::ranges::find_if(m_workspaces.rbegin(), m_workspaces.rend(), [](const auto& workspace) {
-      return !workspace->displacedWorkspace() && !workspace->hasViews();
-    });
-    return empty != m_workspaces.rend() ? empty->get() : nullptr;
+    if (&destination == this) {
+      return true;
+    }
+    if (destination.m_workspaces.size() >= kMaxWorkspaces) {
+      return reject("output workspace limit reached");
+    }
+    Workspace* workspace = &source;
+    if (workspace->named() && std::ranges::any_of(destination.m_workspaces, [workspace](const auto& candidate) {
+          return candidate->named() && candidate->name() == workspace->name();
+        })) {
+      return reject("output already has a workspace with that name");
+    }
+
+    slideFinish();
+    destination.slideFinish();
+    const size_t sourceIndex = workspace->index();
+    const size_t destinationIndex = destination.m_active != nullptr ? destination.m_active->index() + 1 : 0;
+    if (workspace->named()) {
+      if (std::ranges::find(m_transferredNames, workspace->name()) == m_transferredNames.end()) {
+        m_transferredNames.push_back(workspace->name());
+      }
+      std::erase(destination.m_transferredNames, workspace->name());
+    }
+    workspace->setActive(false);
+    auto moving = std::move(m_workspaces[sourceIndex]);
+    m_workspaces.erase(m_workspaces.begin() + static_cast<std::ptrdiff_t>(sourceIndex));
+    // Every output retains a workspace, including a fixed inventory whose last member leaves.
+    if (m_workspaces.empty()) {
+      appendDynamicWorkspace();
+    }
+    if (m_active == workspace) {
+      m_active = m_workspaces[sourceIndex > 0 ? sourceIndex - 1 : 0].get();
+    }
+    if (m_previous == workspace || m_previous == m_active) {
+      m_previous = nullptr;
+    }
+    m_active->setActive(true);
+
+    workspace->transferTo(destination);
+    destination.m_workspaces.insert(
+        destination.m_workspaces.begin() + static_cast<std::ptrdiff_t>(destinationIndex), std::move(moving)
+    );
+    if (destination.m_active != nullptr) {
+      destination.m_previous = destination.m_active;
+      destination.m_active->setActive(false);
+    }
+    destination.m_active = workspace;
+    workspace->setActive(true);
+    refreshWorkspaceMetadata();
+    destination.refreshWorkspaceMetadata();
+    reconcileDynamic();
+    destination.reconcileDynamic();
+    for (WorkspaceGroup* group : {this, &destination}) {
+      group->m_output->updateVrr();
+      group->m_output->updateHdr();
+      wlr_output_schedule_frame(group->m_output->wlr());
+    }
+    if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
+      overview->onWorkspaceInventoryChanged(this);
+      overview->onWorkspaceInventoryChanged(&destination);
+      for (View* view : workspace->allViews()) {
+        overview->onViewWorkspaceChanged(view);
+      }
+    }
+    m_server->cursor()->clearConstraint();
+    m_server->scheduleDisplacedViewRestore();
+    return true;
+  }
+
+  Workspace* WorkspaceGroup::restoreTransferredWorkspace(const DisplacedWorkspace& origin) {
+    if (!origin.transferredLayout || m_output == nullptr || m_output->wlr() == nullptr) {
+      return nullptr;
+    }
+    Workspace* existing =
+        origin.workspaceNamed ? workspaceNamed(origin.workspaceName) : workspaceAt(origin.workspaceIndex);
+    if (existing != nullptr
+        && !existing->displacedWorkspace()
+        && (origin.workspaceNamed || (existing->transferred() && !existing->named()))) {
+      return existing;
+    }
+    if (m_workspaces.size() >= kMaxWorkspaces) {
+      return nullptr;
+    }
+    slideFinish();
+    const size_t index = std::min(origin.workspaceIndex, m_workspaces.size());
+    auto workspace = createConfiguredWorkspace(
+        {origin.workspaceNamed ? origin.workspaceName : std::to_string(index + 1), origin.workspaceNamed,
+         displacedWorkspaceLayout(origin)},
+        index
+    );
+    workspace->m_transferred = true;
+    if (displacedLayoutCurrent(origin)) {
+      workspace->m_layoutModeOverride = origin.layoutModeOverride;
+    }
+    Workspace* result = workspace.get();
+    m_workspaces.insert(m_workspaces.begin() + static_cast<std::ptrdiff_t>(index), std::move(workspace));
+    refreshWorkspaceMetadata();
+    if (Overview* overview = m_server->overview(); overview != nullptr && overview->active()) {
+      overview->onWorkspaceInventoryChanged(this);
+    }
+    return result;
   }
 
   Workspace* WorkspaceGroup::displacedDestination(std::shared_ptr<const DisplacedWorkspace> origin) {
@@ -3518,7 +3687,7 @@ namespace umbriel {
         index
     );
     workspace->m_displacedWorkspace = std::move(origin);
-    if (workspace->m_displacedWorkspace->configGeneration == configStore().generation()) {
+    if (displacedLayoutCurrent(*workspace->m_displacedWorkspace)) {
       workspace->m_layoutModeOverride = workspace->m_displacedWorkspace->layoutModeOverride;
     }
     Workspace* result = workspace.get();

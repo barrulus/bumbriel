@@ -61,6 +61,8 @@ Umbriel tries an unadvertised resolution as a custom mode. If it cannot apply th
 - An integer for a fixed number of anonymous workspaces
 - A string array for a fixed ordered list of names
 
+[Workspace transfers](workspaces.md#moving-a-workspace-between-outputs) can grow or shrink a fixed inventory for the current session. Changing workspace inventory configuration reapplies the configured inventory.
+
 `min_workspaces` sets a floor for a dynamic output:
 
 ```toml
