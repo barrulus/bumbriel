@@ -293,6 +293,15 @@ static void source_destroy(struct scene_node_source* source) {
   free(source);
 }
 
+void umbrielfx_scene_capture_source_destroy(struct wlr_ext_image_capture_source_v1* base) {
+  if (base == NULL) {
+    return;
+  }
+  assert(base->impl == &source_impl);
+  struct scene_node_source* source = wl_container_of(base, source, base);
+  source_destroy(source);
+}
+
 static void source_handle_node_destroy(struct wl_listener* listener, void* data) {
   struct scene_node_source* source = wl_container_of(listener, source, node_destroy);
   source_destroy(source);

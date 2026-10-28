@@ -13,6 +13,7 @@
 #include "umbrielfx/render/pass.h"
 #include "umbrielfx/types/fx/blur_data.h"
 #include "umbrielfx/types/fx/clipped_region.h"
+#include "umbrielfx/types/scene_capture.h"
 #include "util/array.h"
 #include "util/env.h"
 #include "util/matrix.h"
@@ -165,7 +166,15 @@ bool wlr_scene_node_add_update_listener(struct wlr_scene_node* node, struct wl_l
   return true;
 }
 
+static void scene_output_damage_whole(struct wlr_scene_output* scene_output);
+
 static void scene_node_note_update(struct wlr_scene_node* node) {
+  struct wlr_scene_output* output;
+  wl_list_for_each(output, &scene_node_get_root(node)->outputs, link) {
+    if (output->capture_exclusion_active_for_test) {
+      scene_output_damage_whole(output);
+    }
+  }
   struct wlr_scene_node* changed = node;
   for (; node != NULL; node = node->parent != NULL ? &node->parent->node : NULL) {
     struct scene_node_update_observer* observer = scene_node_update_observer_get(node);
@@ -944,6 +953,7 @@ struct render_data {
   bool effect_capture;
   // An earlier composition this frame emitted output_sample.
   bool sampled_earlier;
+  bool capture_exclusion;
   // Replay native lower layers for blur without sampling or advancing feedback.
   const void* backdrop_group;
   const void* workspace_group;
@@ -2823,7 +2833,8 @@ void wlr_scene_buffer_set_transform(struct wlr_scene_buffer* scene_buffer, enum 
 }
 
 void wlr_scene_buffer_send_frame_done(struct wlr_scene_buffer* scene_buffer, struct wlr_scene_frame_done_event* event) {
-  if (!pixman_region32_empty(&scene_buffer->node.visible)) {
+  if (!pixman_region32_empty(&scene_buffer->node.visible)
+      || umbrielfx_scene_buffer_captured_for_test(scene_buffer, event->output)) {
     wl_signal_emit_mutable(&scene_buffer->events.frame_done, event);
   }
 }
@@ -3255,6 +3266,8 @@ struct render_list_entry {
   struct wlr_scene_node* node;
   bool highlight_transparent_region;
   int x, y;
+  // Separate capture visibility; NULL uses the display's cached region.
+  pixman_region32_t* capture_visible;
 };
 
 static float
@@ -3298,7 +3311,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
 
   pixman_region32_t render_region;
   pixman_region32_init(&render_region);
-  pixman_region32_copy(&render_region, &node->visible);
+  pixman_region32_copy(&render_region, entry->capture_visible != NULL ? entry->capture_visible : &node->visible);
   pixman_region32_translate(&render_region, -data->logical.x, -data->logical.y);
   logical_to_buffer_coords(&render_region, data, true);
   pixman_region32_intersect(&render_region, &render_region, &data->damage);
@@ -3640,6 +3653,10 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     // TODO: Use the base wlr_render_pass_add_texture as a fast-path in the future
     fx_render_pass_add_texture(fx_pass, &tex_options);
 
+    if (data->capture_exclusion && data->effect_capture) {
+      scene_buffer->capture_outputs_for_test |= UINT64_C(1) << data->output->index;
+    }
+
     struct wlr_scene_output_sample_event sample_event = {
         .output = data->output,
         .direct_scanout = false,
@@ -3647,7 +3664,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
         .release_point = data->output->in_point,
     };
     if (!data->shadow_capture
-        && !data->sampled_earlier
+        && (!data->sampled_earlier || (data->capture_exclusion && umbrielfx_scene_node_capture_excluded_for_test(node)))
         && data->backdrop_group == NULL
         && !workspace_repeated(entry->node, data)) {
       wl_signal_emit_mutable(&scene_buffer->events.output_sample, &sample_event);
@@ -5246,6 +5263,136 @@ struct render_list_constructor_data {
   int effect_expand;
 };
 
+struct capture_exclusion {
+  struct wlr_addon addon;
+};
+
+static void capture_exclusion_destroy(struct wlr_addon* addon) {
+  struct capture_exclusion* exclusion = wl_container_of(addon, exclusion, addon);
+  wlr_addon_finish(addon);
+  free(exclusion);
+}
+
+static const struct wlr_addon_interface capture_exclusion_impl = {
+    .name = "capture_exclusion",
+    .destroy = capture_exclusion_destroy,
+};
+
+bool umbrielfx_scene_node_set_capture_excluded_for_test(struct wlr_scene_node* node, bool excluded) {
+  struct wlr_addon* addon = wlr_addon_find(&node->addons, &capture_exclusion_impl, &capture_exclusion_impl);
+  if ((addon != NULL) == excluded) {
+    return true;
+  }
+  if (excluded) {
+    struct capture_exclusion* exclusion = calloc(1, sizeof(*exclusion));
+    if (exclusion == NULL) {
+      return false;
+    }
+    wlr_addon_init(&exclusion->addon, &node->addons, &capture_exclusion_impl, &capture_exclusion_impl);
+  } else {
+    capture_exclusion_destroy(addon);
+  }
+  struct wlr_scene_output* output;
+  wl_list_for_each(output, &scene_node_get_root(node)->outputs, link) {
+    scene_reset_capture_histories(output->scene, output->output);
+    output_effects_release_capture(output);
+    scene_output_damage_whole(output);
+  }
+  return true;
+}
+
+bool umbrielfx_scene_node_capture_excluded_for_test(struct wlr_scene_node* node) {
+  for (; node != NULL; node = node->parent != NULL ? &node->parent->node : NULL) {
+    if (wlr_addon_find(&node->addons, &capture_exclusion_impl, &capture_exclusion_impl) != NULL) {
+      return true;
+    }
+  }
+  return false;
+}
+
+struct capture_list {
+  struct wl_array entries;
+  struct wlr_box box;
+  bool failed;
+};
+
+bool umbrielfx_scene_buffer_captured_for_test(struct wlr_scene_buffer* buffer, struct wlr_scene_output* output) {
+  return output->capture_exclusion_active_for_test
+      && (buffer->capture_outputs_for_test & (UINT64_C(1) << output->index)) != 0;
+}
+
+static void reset_capture_outputs_for_test(struct wlr_scene_node* node, struct wlr_scene_output* output) {
+  if (node->type == WLR_SCENE_NODE_BUFFER) {
+    wlr_scene_buffer_from_node(node)->capture_outputs_for_test &= ~(UINT64_C(1) << output->index);
+  } else if (node->type == WLR_SCENE_NODE_TREE) {
+    struct wlr_scene_node* child;
+    wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+      reset_capture_outputs_for_test(child, output);
+    }
+  }
+}
+
+// Prototype: draw every eligible node in stacking order. This deliberately
+// trades capture overdraw for visibility independent of display occlusion.
+static bool
+capture_list_iterator(struct wlr_scene_node* node, int lx, int ly, const pixman_region32_t* clip, void* data) {
+  struct capture_list* list = data;
+  if (scene_node_invisible(node) || umbrielfx_scene_node_capture_excluded_for_test(node)) {
+    return false;
+  }
+  if (node->type == WLR_SCENE_NODE_BLUR || node->type == WLR_SCENE_NODE_OPTIMIZED_BLUR) {
+    list->failed = true;
+    return true;
+  }
+  pixman_region32_t* visible = calloc(1, sizeof(*visible));
+  if (visible == NULL) {
+    list->failed = true;
+    return true;
+  }
+  int width, height;
+  scene_node_get_size(node, &width, &height);
+  pixman_region32_init_rect(visible, lx, ly, width, height);
+  bool ok =
+      pixman_region32_intersect_rect(visible, visible, list->box.x, list->box.y, list->box.width, list->box.height);
+  if (clip != NULL) {
+    ok = pixman_region32_intersect(visible, visible, clip) && ok;
+  }
+  if (!ok || pixman_region32_empty(visible)) {
+    pixman_region32_fini(visible);
+    free(visible);
+    list->failed |= !ok;
+    return !ok;
+  }
+  struct render_list_entry* entry = wl_array_add(&list->entries, sizeof(*entry));
+  if (entry == NULL) {
+    pixman_region32_fini(visible);
+    free(visible);
+    list->failed = true;
+    return true;
+  }
+  *entry = (struct render_list_entry){.node = node, .x = lx, .y = ly, .capture_visible = visible};
+  return false;
+}
+
+static bool render_capture_exclusion(struct render_data* data) {
+  struct capture_list list = {.box = data->logical};
+  wl_array_init(&list.entries);
+  scene_nodes_in_box(&data->output->scene->tree.node, &list.box, capture_list_iterator, &list);
+  struct render_list_entry* entries = list.entries.data;
+  const int count = list.entries.size / sizeof(*entries);
+  if (!list.failed) {
+    for (int i = count - 1; i >= 0; --i) {
+      scene_entry_render(&entries[i], data);
+    }
+  }
+  for (int i = 0; i < count; ++i) {
+    pixman_region32_fini(entries[i].capture_visible);
+    free(entries[i].capture_visible);
+  }
+  wl_array_release(&list.entries);
+  return !list.failed;
+}
+
 static bool scene_buffer_matches_background(struct wlr_scene_buffer* scene_buffer, const float background[static 4]) {
   if (!scene_buffer->is_single_pixel_buffer
       || scene_buffer->transfer_function != 0
@@ -5950,6 +6097,10 @@ static bool scene_output_build_state(
   if (!options) {
     options = &default_options;
   }
+  scene_output->capture_exclusion_active_for_test = options->capture_exclusion_for_test;
+  if (options->capture_exclusion_for_test) {
+    reset_capture_outputs_for_test(&scene_output->scene->tree.node, scene_output);
+  }
   struct wlr_scene_timer* timer = options->timer;
   struct timespec start_time;
   if (timer) {
@@ -6067,7 +6218,8 @@ static bool scene_output_build_state(
 
   // Looked up only with scene effects, output slots, or a pending capture; otherwise
   // there is nothing to draw, save, or release.
-  const bool capture_pending = options->effect_capture_pending;
+  const bool capture_exclusion = options->capture_exclusion_for_test;
+  const bool capture_pending = options->effect_capture_pending || capture_exclusion;
   struct scene_output_effects* output_effects =
       effects != NULL || capture_pending || scene_output->output_effects_configured
       ? scene_output_effects_get(scene_output, false)
@@ -6110,10 +6262,25 @@ static bool scene_output_build_state(
     fx_renderer_clear_animation_buffers(output);
   }
 
-  bool unfiltered_pass = capture_pending && in_place_visible && (output_effects == NULL || !output_effects->in_capture);
+  // Do not silently accept unsupported composition in the harness prototype.
+  if (capture_exclusion
+      && (transient_effects
+          || persistent_effects
+          || bounded_effects
+          || output_effects_active(output_effects)
+          || options->workspace_from != NULL
+          || options->workspace_to != NULL)) {
+    return false;
+  }
+  render_data.capture_exclusion = capture_exclusion;
+  bool unfiltered_pass = capture_exclusion
+      || (capture_pending && in_place_visible && (output_effects == NULL || !output_effects->in_capture));
   if (unfiltered_pass && output_effects == NULL) {
     output_effects = scene_output_effects_get(scene_output, true);
     unfiltered_pass = output_effects != NULL;
+    if (capture_exclusion && !unfiltered_pass) {
+      return false;
+    }
   }
   if (output_effects != NULL) {
     if (output_effects->capture_was_pending && !capture_pending) {
@@ -6182,7 +6349,7 @@ static bool scene_output_build_state(
   // The policy comes first: an output with scanout turned off reports that, whatever else is on screen.
   if (!scene_output->scene->direct_scanout || !scene_output->direct_scanout_enabled) {
     scanout_status = WLR_SCENE_DIRECT_SCANOUT_DISABLED;
-  } else if (options->capture_sdr) {
+  } else if (options->capture_sdr || options->capture_exclusion_for_test) {
     scanout_status = WLR_SCENE_DIRECT_SCANOUT_CAPTURE;
   } else if (
       options->color_transform != NULL
@@ -6417,7 +6584,7 @@ static bool scene_output_build_state(
   // Cull areas of the background that are occluded by opaque regions of
   // scene nodes above. Those scene nodes will just render atop having us
   // never see the background.
-  if (scene_output->scene->calculate_visibility) {
+  if (scene_output->scene->calculate_visibility && !capture_exclusion) {
     for (int i = list_len - 1; i >= 0; i--) {
       struct render_list_entry* entry = &list_data[i];
 
@@ -6450,21 +6617,27 @@ static bool scene_output_build_state(
   render_background(render_pass, scene_output->scene, buffer, &background, WLR_RENDER_BLEND_MODE_NONE);
   pixman_region32_fini(&background);
 
-  // The unfiltered composition, when it runs, emits output_sample; a display
-  // composition drawn after it does not.
+  // The capture composition samples eligible buffers. The display then adds
+  // sampling notifications for protected buffers omitted from capture.
   bool cursors_drawn = false;
+  bool capture_failed = false;
   if (unfiltered_pass) {
     struct render_data clean = render_data;
     clean.effect_capture = true;
-    render_workspace_scene(options, &clean);
+    if (capture_exclusion) {
+      capture_failed = !render_capture_exclusion(&clean);
+    } else {
+      render_workspace_scene(options, &clean);
+    }
     wlr_output_add_software_cursors_to_render_pass(output, render_pass, &render_data.damage);
-    if (fx_render_pass_save_effect_capture(fx_pass)) {
+    if (!capture_failed && fx_render_pass_save_effect_capture(fx_pass)) {
       fx_pass->output_buffer->effect_capture_owner = scene_output;
       // Start the display composition from the background again.
       render_background(render_pass, scene_output->scene, buffer, &render_data.damage, WLR_RENDER_BLEND_MODE_NONE);
       render_data.sampled_earlier = true;
       render_workspace_scene(options, &render_data);
     } else {
+      capture_failed |= capture_exclusion;
       // Without its capture the frame is shown unfiltered.
       cursors_drawn = true;
     }
@@ -6527,7 +6700,8 @@ static bool scene_output_build_state(
 
   pixman_region32_fini(&render_data.damage);
 
-  if (!wlr_render_pass_submit(render_pass)) {
+  const bool submitted = wlr_render_pass_submit(render_pass);
+  if (!submitted || capture_failed) {
     wlr_buffer_unlock(buffer);
 
     // if we failed to render the buffer, it will have undefined contents

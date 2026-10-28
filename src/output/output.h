@@ -227,10 +227,9 @@ namespace umbriel {
     void armEffectFrame(uint64_t nowMsec);
     // Render locks other than this output's animation lock.
     [[nodiscard]] int externalRenderLocks() const;
-    // The screencopy and image-copy share of `externalLocks`: export-dmabuf frames do not count.
-    [[nodiscard]] int captureRenderLocks(int externalLocks) const;
     // A capture holding `captureLocks` must see frames without in-place effects.
     [[nodiscard]] bool effectCapturePending(int captureLocks) const;
+    [[nodiscard]] bool captureExclusionPendingForTest(int captureLocks) const;
     void disarmEffectFrame();
     wlr_output_layout_output* addToLayout();
     void arrangeLayer(wlr_scene_tree* tree, const wlr_box* fullArea, wlr_box* usableArea, bool exclusive);

@@ -47,6 +47,7 @@ namespace {
     bool started = false;
     // Separate from `started`: session's done event arrive after startCapture() set it.
     bool announced = false;
+    bool stopped = false;
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t bufferWidth = 0;
@@ -169,6 +170,9 @@ namespace {
     std::fflush(stdout);
     ext_image_copy_capture_frame_v1_destroy(frame);
     target.frame = nullptr;
+    if (reason == EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_STOPPED) {
+      target.stopped = true;
+    }
     requestFrame(target);
   }
   constexpr ext_image_copy_capture_frame_v1_listener kFrameListener = {
@@ -220,7 +224,7 @@ namespace {
   }
 
   void requestFrame(Target& target) {
-    if (target.session == nullptr || target.buffer == nullptr || target.frame != nullptr) {
+    if (target.stopped || target.session == nullptr || target.buffer == nullptr || target.frame != nullptr) {
       return;
     }
     target.damage = 0;
@@ -258,7 +262,9 @@ namespace {
     requestFrame(target);
   }
   void sessionStopped(void* data, ext_image_copy_capture_session_v1*) {
-    printTarget(*static_cast<Target*>(data), "session-stopped");
+    auto& target = *static_cast<Target*>(data);
+    target.stopped = true;
+    printTarget(target, "session-stopped");
   }
   constexpr ext_image_copy_capture_session_v1_listener kSessionListener = {
       .buffer_size = sessionBufferSize,

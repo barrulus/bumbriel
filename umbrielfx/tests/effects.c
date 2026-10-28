@@ -5,6 +5,7 @@
 #include "render_fixture.h"
 #include "umbrielfx/render/effect.h"
 #include "umbrielfx/render/pass.h"
+#include "umbrielfx/types/scene_capture.h"
 
 #include <stdarg.h>
 #include <wlr/util/log.h>
@@ -1786,6 +1787,142 @@ static bool test_damage_expansion(struct fixture* fixture) {
   return ok;
 }
 
+static struct wlr_buffer* capture_test_buffer(struct fixture* fixture, const float color[4]) {
+  struct wlr_buffer* buffer = create_output_buffer(fixture, DRM_FORMAT_ARGB8888, TEST_WIDTH, TEST_HEIGHT);
+  if (buffer == NULL) {
+    return NULL;
+  }
+  struct wlr_render_pass* pass = wlr_renderer_begin_buffer_pass(fixture->renderer, buffer, NULL);
+  if (pass == NULL) {
+    wlr_buffer_drop(buffer);
+    return NULL;
+  }
+  wlr_render_pass_add_rect(
+      pass,
+      &(struct wlr_render_rect_options){
+          .box = {0, 0, TEST_WIDTH, TEST_HEIGHT},
+          .color = {color[0], color[1], color[2], color[3]},
+          .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+      }
+  );
+  if (!wlr_render_pass_submit(pass)) {
+    wlr_buffer_drop(buffer);
+    return NULL;
+  }
+  return buffer;
+}
+
+struct capture_test_samples {
+  struct wl_listener listener;
+  unsigned count;
+};
+
+static void capture_test_sample(struct wl_listener* listener, void* data) {
+  (void)data;
+  struct capture_test_samples* samples = wl_container_of(listener, samples, listener);
+  samples->count++;
+}
+
+// Independently observe local/captured pixels and sampling of buffers used only
+// by one composition. A fully covered buffer must retain its display visibility.
+static bool test_capture_exclusion(struct fixture* fixture) {
+  struct wlr_scene* scene = wlr_scene_create();
+  wlr_scene_set_blur_data(scene, 0, 0, 0, 1, 1, 1);
+  struct wlr_scene_output* output = wlr_scene_output_create(scene, fixture->output);
+  struct wlr_swapchain* swapchain = create_swapchain(fixture);
+  const float blue[4] = {0, 0, 1, 1}, green[4] = {0, 1, 0, 1}, red[4] = {1, 0, 0, 1};
+  struct wlr_scene_tree* desktop = wlr_scene_tree_create(&scene->tree);
+  struct wlr_scene_tree* content = wlr_scene_tree_create(desktop);
+  struct wlr_buffer* underneath_buffer = capture_test_buffer(fixture, blue);
+  struct wlr_scene_buffer* underneath = wlr_scene_buffer_create(content, underneath_buffer);
+  wlr_buffer_drop(underneath_buffer);
+  struct wlr_scene_tree* protected = wlr_scene_tree_create(desktop);
+  struct wlr_buffer* top_buffer = capture_test_buffer(fixture, red);
+  struct wlr_scene_buffer* top = wlr_scene_buffer_create(protected, top_buffer);
+  wlr_buffer_drop(top_buffer);
+  pixman_region32_t opaque;
+  pixman_region32_init_rect(&opaque, 0, 0, TEST_WIDTH, TEST_HEIGHT);
+  wlr_scene_buffer_set_opaque_region(top, &opaque);
+  pixman_region32_fini(&opaque);
+  struct capture_test_samples lower_samples = {.listener.notify = capture_test_sample};
+  struct capture_test_samples top_samples = {.listener.notify = capture_test_sample};
+  wl_signal_add(&underneath->events.output_sample, &lower_samples.listener);
+  wl_signal_add(&top->events.output_sample, &top_samples.listener);
+  bool ok = check(umbrielfx_scene_node_set_capture_excluded_for_test(&protected->node, true), "tag subtree");
+  struct wlr_scene_output_state_options options = {.swapchain = swapchain, .capture_exclusion_for_test = true};
+  for (int frame = 0; frame < 3; ++frame) {
+    if (frame == 1) {
+      // This node is completely occluded on the display, but must still damage capture.
+      struct wlr_buffer* updated = capture_test_buffer(fixture, green);
+      wlr_scene_buffer_set_buffer(underneath, updated);
+      wlr_buffer_drop(updated);
+    } else if (frame == 2) {
+      // Exclusion must not bypass a disabled desktop ancestor (e.g. the lock scene).
+      wlr_scene_node_set_enabled(&desktop->node, false);
+    }
+    struct wlr_output_state state;
+    wlr_output_state_init(&state);
+    bool built = wlr_scene_output_build_state(output, &state, &options) && state.buffer != NULL;
+    ok &= check(built, "build excluded frame");
+    if (built) {
+      uint8_t display[4], capture[4];
+      ok &= fixture_read_display_pixel(fixture, state.buffer, 8, 8, display);
+      ok &= fixture_read_pixel(fixture, state.buffer, 8, 8, capture);
+      if (frame < 2) {
+        ok &= check(display[2] > 250 && display[1] < 5 && display[0] < 5, "local display retains protected red");
+        ok &= check(capture[2] < 5 && capture[frame == 0 ? 0 : 1] > 250, "capture reveals updating covered content");
+        ok &= check(pixman_region32_empty(&underneath->node.visible), "display visibility stays occluded");
+        ok &= check(lower_samples.count == (unsigned)frame + 1, "capture-only buffer sampled once per frame");
+        ok &= check(top_samples.count == (unsigned)frame + 1, "display-only protected buffer sampled once per frame");
+      } else {
+        ok &= check(capture[0] < 5 && capture[1] < 5 && capture[2] < 5, "disabled desktop stays hidden in capture");
+      }
+    }
+    wlr_output_state_finish(&state);
+  }
+  wlr_scene_node_set_enabled(&desktop->node, true);
+  wlr_scene_tree_set_clip(content, &(struct wlr_box){0, 0, 8, TEST_HEIGHT});
+  struct wlr_output_state clipped;
+  wlr_output_state_init(&clipped);
+  bool clipped_built = wlr_scene_output_build_state(output, &clipped, &options) && clipped.buffer != NULL;
+  ok &= check(clipped_built, "build ancestor-clipped capture");
+  if (clipped_built) {
+    uint8_t inside[4], outside[4];
+    ok &= fixture_read_pixel(fixture, clipped.buffer, 4, 8, inside)
+        && fixture_read_pixel(fixture, clipped.buffer, 12, 8, outside)
+        && check(
+              inside[1] > 250 && outside[1] < 5 && outside[2] < 5 && outside[0] < 5,
+              "capture respects the underlying subtree clip"
+        );
+  }
+  wlr_output_state_finish(&clipped);
+  fx_renderer_fail_effect_capture_for_test(fixture->renderer, true);
+  struct wlr_output_state state;
+  wlr_output_state_init(&state);
+  ok &= check(
+      !wlr_scene_output_build_state(output, &state, &options) && state.buffer == NULL,
+      "capture allocation failure never exposes a display buffer"
+  );
+  wlr_output_state_finish(&state);
+  fx_renderer_fail_effect_capture_for_test(fixture->renderer, false);
+  ok &= check(umbrielfx_scene_node_set_capture_excluded_for_test(&protected->node, false), "remove exclusion");
+  options.capture_exclusion_for_test = false;
+  wlr_output_state_init(&state);
+  const bool restored = wlr_scene_output_build_state(output, &state, &options) && state.buffer != NULL;
+  ok &= check(restored, "restore ordinary composition");
+  if (restored) {
+    uint8_t capture[4];
+    ok &= fixture_read_pixel(fixture, state.buffer, 8, 8, capture)
+        && check(capture[2] > 250 && capture[1] < 5, "no stale excluded image after unprotecting");
+  }
+  wlr_output_state_finish(&state);
+  wl_list_remove(&lower_samples.listener.link);
+  wl_list_remove(&top_samples.listener.link);
+  wlr_scene_node_destroy(&scene->tree.node);
+  wlr_swapchain_destroy(swapchain);
+  return ok;
+}
+
 // With in_capture off and a capture pending, a dmabuf import of the rendered
 // buffer sees the unfiltered composition while the display keeps the effect.
 static bool test_capture_policy(struct fixture* fixture) {
@@ -2880,6 +3017,8 @@ int main(int argc, char* argv[]) {
     ok = test_capture_feedback(&fixture);
   } else if (strcmp(argv[1], "in-place-feedback") == 0) {
     ok = test_in_place_feedback(&fixture);
+  } else if (strcmp(argv[1], "capture-exclusion") == 0) {
+    ok = test_capture_exclusion(&fixture);
   } else if (strcmp(argv[1], "capture-composition") == 0) {
     ok = test_capture_composition(&fixture);
   } else if (strcmp(argv[1], "in-place-shape") == 0) {

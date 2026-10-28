@@ -62,14 +62,14 @@ screen_effect = "off"
 
 `[effects]`:
 
-| Key          | Default | Description                                                                                                                                                                                                         |
-| ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `border`     | `""`    | Border preset or pool for the focused window.                                                                                                                                                                       |
-| `window`     | `""`    | Window preset or pool applied to every window.                                                                                                                                                                      |
-| `screen`     | `""`    | Screen preset or pool applied to every output.                                                                                                                                                                      |
-| `cursor`     | `""`    | Cursor preset or pool, shared across outputs.                                                                                                                                                                       |
-| `max_fps`    | `0`     | Cap, 0 to 240, for frames drawn only because an effect animates. `0` follows each output's refresh rate.                                                                                                            |
-| `in_capture` | `false` | Include window, screen, and cursor effects in screencopy and image-copy captures. Border effects always appear, and an export-dmabuf capture always sees the same frame as the display, regardless of this setting. |
+| Key          | Default | Description                                                                                                                                                                                 |
+| ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `border`     | `""`    | Border preset or pool for the focused window.                                                                                                                                               |
+| `window`     | `""`    | Window preset or pool applied to every window.                                                                                                                                              |
+| `screen`     | `""`    | Screen preset or pool applied to every output.                                                                                                                                              |
+| `cursor`     | `""`    | Cursor preset or pool, shared across outputs.                                                                                                                                               |
+| `max_fps`    | `0`     | Cap, 0 to 240, for frames drawn only because an effect animates. `0` follows each output's refresh rate.                                                                                    |
+| `in_capture` | `false` | Include window, screen, and cursor effects in screencopy and image-copy captures. Border effects always appear. Raw export-DMA-BUF is not advertised; use screencopy or image-copy clients. |
 
 Where each kind draws:
 

@@ -347,6 +347,8 @@ struct wlr_scene_buffer {
   struct wlr_color_luminances luminances;
   // Windows-scRGB uses absolute light on PQ outputs, independent of SDR white.
   bool absolute_luminance;
+  // Outputs sampling this buffer in the harness-only capture composition.
+  uint64_t capture_outputs_for_test;
 };
 
 /** A viewport for an output in the scene-graph */
@@ -417,6 +419,7 @@ struct wlr_scene_output {
     bool hdr_white_point_active;
     bool hdr_white_point_cursor_locked;
     struct wl_listener output_destroy;
+    bool capture_exclusion_active_for_test;
   } WLR_PRIVATE;
 };
 
@@ -1157,6 +1160,9 @@ struct wlr_scene_output_state_options {
    * frame for it.
    */
   bool effect_capture_pending;
+
+  // Harness-only prototype. Requires an ordinary scene without blur or shader animations.
+  bool capture_exclusion_for_test;
 
   // Failed animation capture/composition must reject the whole output state.
   bool require_animation_success;

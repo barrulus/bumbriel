@@ -313,6 +313,7 @@ if build_tests
     'workspace-reveal',
     'in-place-feedback',
     'capture-composition',
+    'capture-exclusion',
     'in-place-shape',
     'output-effects',
     'audio-spectrum',

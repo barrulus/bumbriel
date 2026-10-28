@@ -30,6 +30,7 @@
 // FULLSCREEN_ON_STDIN makes `f` request fullscreen and `u` request windowed state.
 // REPAINT_ON_STDIN makes R/G/B request a frame callback, then commit a fresh red/green/blue buffer.
 // FILL_COLOR=<ARGB> paints the buffer that colour (default 0xFF5577AA), so screenshots can tell windows apart.
+// OPAQUE_BUFFER uses XRGB so the compositor can cull completely covered clients.
 // RESIZE_FILL_COLOR=<ARGB> maps at the first configured size, then redraws at every later configured size in that
 // colour, the way a real client follows its tile.
 // LOG_SUSPENDED binds xdg-shell at version 6 and prints "suspended" and "resumed" whenever the toplevel's suspended
@@ -309,7 +310,8 @@ namespace {
     std::fill_n(static_cast<uint32_t*>(buffer.pixels), buffer.size / sizeof(uint32_t), state.fillColor);
 
     wl_shm_pool* pool = wl_shm_create_pool(state.shm, fd, static_cast<int>(buffer.size));
-    buffer.resource = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+    const uint32_t format = std::getenv("OPAQUE_BUFFER") != nullptr ? WL_SHM_FORMAT_XRGB8888 : WL_SHM_FORMAT_ARGB8888;
+    buffer.resource = wl_shm_pool_create_buffer(pool, 0, width, height, stride, format);
     wl_shm_pool_destroy(pool);
     close(fd);
     return buffer;

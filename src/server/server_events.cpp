@@ -4218,20 +4218,28 @@ namespace umbriel {
     auto* request = static_cast<wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request*>(data);
 
     if (request->toplevel_handle == nullptr || request->toplevel_handle->data == nullptr) {
+      wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, nullptr);
       return;
     }
     auto* view = static_cast<View*>(request->toplevel_handle->data);
+
+    if (view->captureExcludedForTest()) {
+      wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, nullptr);
+      return;
+    }
 
     // Reuse a cached capture source when one already exists for this view.
     if (view->m_captureSource == nullptr) {
       wlr_scene_tree* captureTree = view->captureTree();
       if (captureTree == nullptr) {
+        wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, nullptr);
         return;
       }
       view->m_captureSource = wlr_ext_image_capture_source_v1_create_with_scene_node(
           &captureTree->node, wl_display_get_event_loop(self->m_display), self->m_allocator, self->m_renderer
       );
       if (view->m_captureSource == nullptr) {
+        wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, nullptr);
         return;
       }
       view->m_captureSourceDestroy.notify = View::onCaptureSourceDestroy;

@@ -217,4 +217,27 @@ namespace umbriel {
     m_captureSourceDestroy.link.next = nullptr;
     m_captureSource = nullptr;
   }
+
+#ifdef UMBRIEL_TEST_IPC
+  bool View::setCaptureExcludedForTest(bool excluded) {
+    if (!umbrielfx_scene_node_set_capture_excluded_for_test(&m_sceneTree->node, excluded)) {
+      return false;
+    }
+    m_captureExcludedForTest = excluded;
+    if (excluded && m_captureSource != nullptr) {
+      // Session destruction refreshes rules synchronously. Detach this view's
+      // ownership before notifying those sessions; this IPC runs outside rendering.
+      auto* source = m_captureSource;
+      wl_list_remove(&m_captureSourceDestroy.link);
+      m_captureSourceDestroy.link.next = nullptr;
+      m_captureSource = nullptr;
+      umbrielfx_scene_capture_source_destroy(source);
+    }
+    for (const auto& output : m_server->outputs()) {
+      output->scheduleFullFrame();
+    }
+    m_server->scheduleSuspensionSync();
+    return true;
+  }
+#endif
 } // namespace umbriel
