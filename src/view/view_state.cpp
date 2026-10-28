@@ -501,6 +501,7 @@ namespace umbriel {
   }
 
   void View::handleSetParent() {
+    refreshCaptureProtection();
     if (m_mapped) {
       reconcileAttachment();
       // `match.is_dialog` follows the parent.

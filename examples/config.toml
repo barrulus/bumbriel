@@ -330,6 +330,12 @@ default_pinned = true
 # match.app_id = "^obs$"
 # background_render = true
 
+# Keep matching windows visible locally but absent from screenshots and recordings.
+# See docs/user/window-rules.md#capture-protection.
+# [[window_rule]]
+# match.app_id = "^private-app$"
+# block_capture = true
+
 # Keep one application's modal dialogs as ordinary windows.
 # [[window_rule]]
 # match.app_id = "^gimp"

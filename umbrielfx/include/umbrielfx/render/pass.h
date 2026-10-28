@@ -47,6 +47,7 @@ struct fx_gles_render_pass {
   // Reject the frame instead of displaying a partially applied animation.
   bool require_animation_success;
   bool animation_failed;
+  bool capture_blocked;
 
   // The region where there's blur
   pixman_region32_t blur_padding_region;

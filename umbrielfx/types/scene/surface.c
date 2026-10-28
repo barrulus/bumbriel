@@ -160,7 +160,7 @@ static void handle_scene_buffer_output_sample(struct wl_listener* listener, void
   const struct wlr_scene_output_sample_event* event = data;
   struct wlr_output* output = event->output->output;
   if (get_surface_frame_pacing_output(surface->surface) != output
-      && !umbrielfx_scene_buffer_captured_for_test(surface->buffer, event->output)) {
+      && !umbrielfx_scene_buffer_captured(surface->buffer, event->output)) {
     return;
   }
 
@@ -183,7 +183,7 @@ static void handle_scene_buffer_frame_done(struct wl_listener* listener, void* d
   struct wlr_scene_surface* surface = wl_container_of(listener, surface, frame_done);
   struct wlr_scene_frame_done_event* event = data;
   if (get_surface_frame_pacing_output(surface->surface) != event->output->output
-      && !umbrielfx_scene_buffer_captured_for_test(surface->buffer, event->output)) {
+      && !umbrielfx_scene_buffer_captured(surface->buffer, event->output)) {
     return;
   }
 
@@ -524,7 +524,7 @@ static void handle_scene_surface_surface_commit(struct wl_listener* listener, vo
   if (!wl_list_empty(&surface->surface->current.frame_callback_list) && enabled) {
     struct wlr_scene_output* capture_output;
     wl_list_for_each(capture_output, &scene_node_get_root(&scene_buffer->node)->outputs, link) {
-      if (umbrielfx_scene_buffer_captured_for_test(scene_buffer, capture_output)) {
+      if (umbrielfx_scene_buffer_captured(scene_buffer, capture_output)) {
         wlr_output_schedule_frame(capture_output->output);
       }
     }

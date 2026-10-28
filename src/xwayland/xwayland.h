@@ -69,6 +69,7 @@ namespace umbriel {
     [[nodiscard]] bool advertiseOutputManager(const wl_client* client, const wl_global* global) const;
     // Republishes the X screen and moves every X11 window to match it.
     void handleOutputLayoutChange();
+    void refreshCaptureProtection();
     // Resolves the configured primary monitor after a reload or output change.
     void updatePrimaryOutput();
     // Completes through the XWM event stream after earlier X geometry events have been dispatched. Zero means failure.

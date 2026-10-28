@@ -461,6 +461,7 @@ namespace umbriel {
     // Keep a hidden window unsuspended and pace its frame callbacks at its output's refresh rate, for clients whose
     // non-rendering work stalls without them.
     std::optional<bool> backgroundRender;
+    std::optional<bool> blockCapture;
     std::optional<VrrMode> vrr;
     // Overrides the client's tearing-control hint. Omitted follows the hint,
     // true forces async preference, and false vetoes it.
@@ -528,6 +529,7 @@ namespace umbriel {
           && confinePointer == other.confinePointer
           && allowShortcutsInhibit == other.allowShortcutsInhibit
           && backgroundRender == other.backgroundRender
+          && blockCapture == other.blockCapture
           && vrr == other.vrr
           && allowTearing == other.allowTearing
           && hdr == other.hdr
@@ -576,6 +578,7 @@ namespace umbriel {
     std::optional<bool> confinePointer;
     std::optional<bool> allowShortcutsInhibit;
     std::optional<bool> backgroundRender;
+    std::optional<bool> blockCapture;
     std::optional<VrrMode> vrr;
     std::optional<bool> allowTearing;
     std::optional<HdrMode> hdr;

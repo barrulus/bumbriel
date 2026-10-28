@@ -160,6 +160,7 @@ namespace umbriel {
     wl_signal_add(&surface->events.destroy, &m_rootSurfaceDestroy);
 
     m_sceneTree = wlr_scene_tree_create(m_server->xdgTree());
+    (void)umbrielfx_scene_node_set_capture_excluded(&m_sceneTree->node, false);
     m_decoration.createShadow(m_sceneTree);
     // The content tree's direct child is the root surface's subsurface tree for both roles; the effect and clip paths
     // find the surface there.

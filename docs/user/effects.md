@@ -38,6 +38,8 @@ Bundled presets:
 | `trail`      | cursor    | Noctalia-inspired purple, lavender and moon-yellow motion tail; include `cursor/trail/effect.toml`, then set `[effects] cursor = "trail"`. |
 | `trail-path` | cursor    | Two-second curved tail coloured along its length; include `cursor/trail-path/effect.toml`, then set `[effects] cursor = "trail-path"`.     |
 
+[Capture protection](window-rules.md#capture-protection) always omits protected windows, regardless of `effects.in_capture`.
+
 ## Turn a default off for one window or output
 
 Set a selector to `""` to select nothing. A window rule or an output table can replace the default by name or switch it off with `"off"`:

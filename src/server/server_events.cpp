@@ -4223,7 +4223,7 @@ namespace umbriel {
     }
     auto* view = static_cast<View*>(request->toplevel_handle->data);
 
-    if (view->captureExcludedForTest()) {
+    if (view->captureBlocked()) {
       wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(request, nullptr);
       return;
     }

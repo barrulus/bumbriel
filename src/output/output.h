@@ -229,7 +229,7 @@ namespace umbriel {
     [[nodiscard]] int externalRenderLocks() const;
     // A capture holding `captureLocks` must see frames without in-place effects.
     [[nodiscard]] bool effectCapturePending(int captureLocks) const;
-    [[nodiscard]] bool captureExclusionPendingForTest(int captureLocks) const;
+    [[nodiscard]] bool captureExclusionPending(int captureLocks) const;
     void disarmEffectFrame();
     wlr_output_layout_output* addToLayout();
     void arrangeLayer(wlr_scene_tree* tree, const wlr_box* fullArea, wlr_box* usableArea, bool exclusive);

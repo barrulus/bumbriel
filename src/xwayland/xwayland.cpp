@@ -227,6 +227,12 @@ namespace umbriel {
     return m_outputs->advertise(client, global, m_wlr->server != nullptr ? m_wlr->server->client : nullptr);
   }
 
+  void Xwayland::refreshCaptureProtection() {
+    for (const auto& window : m_windows) {
+      window->refreshCaptureProtection();
+    }
+  }
+
   void Xwayland::handleOutputLayoutChange() {
     updatePrimaryOutput();
     if (!m_outputs->update()) {

@@ -17,7 +17,7 @@ namespace umbriel {
   class XwaylandUnmanaged {
   public:
     // `xsurface` must be associated with a wl_surface.
-    XwaylandUnmanaged(Server& server, wlr_xwayland_surface* xsurface);
+    XwaylandUnmanaged(Server& server, wlr_xwayland_surface* xsurface, bool captureBlocked);
     ~XwaylandUnmanaged();
 
     XwaylandUnmanaged(const XwaylandUnmanaged&) = delete;
@@ -30,12 +30,14 @@ namespace umbriel {
     void refreshFocusPolicy();
     // Reveal only the map whose earlier X geometry events have passed through the window manager.
     void handleXwmSync(uint64_t serial);
+    void refreshCaptureProtection();
     // X pixels per layout unit in the window's surface.
     [[nodiscard]] double scale() const { return m_scale; }
 
   private:
     static void onMap(wl_listener* listener, void* data);
     static void onUnmap(wl_listener* listener, void* data);
+    static void onSetParent(wl_listener* listener, void* data);
     static void onSetGeometry(wl_listener* listener, void* data);
     static void onRequestConfigure(wl_listener* listener, void* data);
     static void onCommit(wl_listener* listener, void* data);
@@ -53,9 +55,11 @@ namespace umbriel {
     wlr_scene_tree* m_tree = nullptr;
     double m_scale = 1.0;
     uint64_t m_pendingXwmSync = 0;
+    bool m_captureBlockedBeforePopup = false;
     wl_listener m_map{};
     wl_listener m_unmap{};
     wl_listener m_setGeometry{};
+    wl_listener m_setParent{};
     wl_listener m_requestConfigure{};
     wl_listener m_commit{};
     wl_listener m_shapeChanged{};

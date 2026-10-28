@@ -718,6 +718,8 @@ namespace umbriel {
       m_ruleOpacity = newOpacity;
       setFadeAlpha(m_fadeAlpha); // refresh effective opacity
     }
+    m_ruleCaptureBlocked = rule.blockCapture.value_or(false);
+    refreshCaptureProtection();
     if (const bool backgroundRender = rule.backgroundRender.value_or(false); backgroundRender != m_backgroundRender) {
       m_backgroundRender = backgroundRender;
       m_server->scheduleSuspensionSync();

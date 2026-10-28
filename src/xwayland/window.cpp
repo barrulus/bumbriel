@@ -171,6 +171,9 @@ namespace umbriel {
       // Unmanaged geometry belongs to the client, including override-redirect configures that bypass request_configure.
       m_clientGeometry = {m_xsurface->x, m_xsurface->y, m_xsurface->width, m_xsurface->height};
     }
+    if (m_view != nullptr) {
+      m_captureBlockedBeforePopup = m_view->captureBlocked();
+    }
     kLog.debug("reclassifying X11 window={} as {}", m_xsurface->window_id, popup ? "popup" : "managed");
     destroyWrapper();
     if (popup) {
@@ -185,12 +188,18 @@ namespace umbriel {
 
   void XwaylandWindow::createWrapper() {
     if (isPopup(m_xsurface)) {
-      m_unmanaged = std::make_unique<XwaylandUnmanaged>(m_server, m_xsurface);
+      m_unmanaged = std::make_unique<XwaylandUnmanaged>(m_server, m_xsurface, m_captureBlockedBeforePopup);
     } else {
       m_view = &m_server.adoptView(std::make_unique<View>(m_server, m_xsurface));
       if (m_xsurface->surface->mapped && !m_view->mapped()) {
         m_view->handleMap();
       }
+    }
+  }
+
+  void XwaylandWindow::refreshCaptureProtection() {
+    if (m_unmanaged != nullptr) {
+      m_unmanaged->refreshCaptureProtection();
     }
   }
 

@@ -28,10 +28,15 @@ default_floating_size_px = { width = 400, height = 400 }
 default_position = { x = 650, y = 100, anchor = "top_left" }
 [[window_rule]]
 match.title = "^protected$"
+block_capture = false
 default_floating_size_px = { width = 1280, height = 720 }
 default_position = { x = 0, y = 0, anchor = "top_left" }
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
+set_capture() {
+  sed -i "s/^block_capture = .*/block_capture = $1/" "$UMBRIEL_CONFIG"
+  "$UMBRIEL" msg config-reload > /dev/null
+}
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/floating-capture.png"
 window() { "$UMBRIEL" windows --json | jq -ce --arg title "$1" '.[] | select(.title == $title)'; }
 wait_window() {
@@ -68,7 +73,7 @@ id=$(window protected | jq -r .id)
 grim "$IMAGE"
 [[ $("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1') == 921600 ]]
 before=$(geometry)
-"$UMBRIEL" capture-exclude "$id" on > /dev/null
+set_capture true
 "$UMBRIEL_CAPTURE_CLIENT" --output HEADLESS-1 > "$UMBRIEL_RUNTIME_DIR/output.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/output.log" 'frame ' 1
 "$UMBRIEL" settle > /dev/null
@@ -88,13 +93,13 @@ red=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&g<0.1&&b<0.1')
 "$UMBRIEL" settle > /dev/null
 assert_hidden
 before=$(geometry)
-"$UMBRIEL" capture-exclude "$id" off > /dev/null
+set_capture false
 "$UMBRIEL" settle > /dev/null
 [[ $(geometry) == "$before" ]]
 grim "$IMAGE"
 visible=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1')
 ((visible > 10000)) || { echo 'unprotect did not restore floating window'; exit 1; }
-"$UMBRIEL" capture-exclude "$id" on > /dev/null
+set_capture true
 # These windows float because of layout policy, not explicit floating intent.
 # Changing the workspace layout must preserve exclusion even as they become tiles.
 for layout in scrolling floating; do

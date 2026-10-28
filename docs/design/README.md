@@ -5,7 +5,6 @@ The main documentation explains how to configure and use Umbriel. The notes in t
 Start with the user guide when a detail affects configuration or normal use. Use a design note when the detail explains state transitions, subsystem boundaries, or regression-sensitive behavior.
 
 - [Configuration reload](configuration-reload.md)
-- [Capture exclusion feasibility investigation](capture-exclusion-investigation.md)
 - [Invisible window capture exclusion PRD](capture-exclusion-prd.md)
 - [Effects](effects.md)
 - [Audio shader input](audio-shader-input.md)
@@ -30,9 +29,7 @@ The canonical pull request checklist is in [`.github/PULL_REQUEST_TEMPLATE.md`](
 
 ## Harness-only IPC
 
-`settle`, `clock-freeze`, `clock-advance`, `clock-resume`, `renderer-recover`, `animation-capture-fail`, `blur-composite-split`, `capture-exclude`, `swipe-test`, and `effect-frames` exist for `tests/harness` and are compiled only with the `test_ipc` option (auto: debug builds). The harness also drives hotplug through `output-create` and `output-destroy`, which every build ships for [virtual outputs](../user/outputs.md#virtual-outputs). `settle` replies once no animation is running, no workspace has an arrange pending, every mapped window has acknowledged and committed its latest configure, and every output has drawn a frame since the request; it errors after 30 seconds.
-
-`capture-exclude <window-id> <on|off>` drives the [capture exclusion prototype](capture-exclusion-prd.md). It supports ordinary live scene trees, with blur, effects, and animations disabled. It is not a supported privacy control; transient inheritance and retained images are unfinished.
+`settle`, `clock-freeze`, `clock-advance`, `clock-resume`, `renderer-recover`, `animation-capture-fail`, `blur-composite-split`, `swipe-test`, and `effect-frames` exist for `tests/harness` and are compiled only with the `test_ipc` option (auto: debug builds). The harness also drives hotplug through `output-create` and `output-destroy`, which every build ships for [virtual outputs](../user/outputs.md#virtual-outputs). `settle` replies once no animation is running, no workspace has an arrange pending, every mapped window has acknowledged and committed its latest configure, and every output has drawn a frame since the request; it errors after 30 seconds.
 
 Every animation ticks from `Server::animationClockMsec`. `clock-freeze` stops it, `clock-advance <ms>` moves it forward and replies once every output has drawn a frame at the new time, and `clock-resume` continues from the frozen time so animation time never runs backwards. An animation that starts while frozen counts from the frozen instant. Frozen time does not reach clients, input timestamps, or compositor timers. While an animation runs on the frozen clock, `settle` replies with an error at the next output frame. `renderer-recover` emits two consecutive notifications through the renderer's real mutable lost signal. The recovery check uses them to assert that one deferred renderer replacement completes and draws a new frame. `effect-frames` reports, per output, how many drawn frames advanced persistent effects' time and how many effect instances currently need frames of their own. `blur-composite-split on` makes backdrop blur store its full-resolution result and composite it as a texture instead of drawing it straight into the target, and `off` restores the direct draw; both redraw every output and reply once each has drawn, so a check can compare the two at one frozen instant.
 

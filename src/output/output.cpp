@@ -327,15 +327,8 @@ namespace umbriel {
     return captureLocks > 0 && !config().effects.inCapture && m_server->effects().inPlaceReferenced();
   }
 
-  bool Output::captureExclusionPendingForTest(int captureLocks) const {
-#ifdef UMBRIEL_TEST_IPC
-    return captureLocks > 0 && std::ranges::any_of(m_server->views(), [](const auto& view) {
-             return view != nullptr && view->mapped() && view->captureExcludedForTest();
-           });
-#else
-    (void)captureLocks;
-    return false;
-#endif
+  bool Output::captureExclusionPending(int captureLocks) const {
+    return captureLocks > 0 && umbrielfx_scene_has_capture_exclusion(m_sceneOutput->scene);
   }
 
   unsigned Output::effectEligible() const { return m_server->effects().ledger().eligible(this); }
@@ -815,8 +808,8 @@ namespace umbriel {
         wlr_scene_output_state_options sceneOptions{};
         sceneOptions.capture_sdr = targetHdr && captureLocks > 0;
         sceneOptions.effect_capture_pending = effectCapturePending(captureLocks);
-        sceneOptions.capture_exclusion_for_test = captureExclusionPendingForTest(captureLocks);
-        m_effectCaptureBuilt = sceneOptions.effect_capture_pending || sceneOptions.capture_exclusion_for_test;
+        sceneOptions.capture_exclusion = captureExclusionPending(captureLocks);
+        m_effectCaptureBuilt = sceneOptions.effect_capture_pending || sceneOptions.capture_exclusion;
 
         const RenderedStateCommitResult commitResult = commitRenderedState(
             frameState,
@@ -1982,8 +1975,8 @@ namespace umbriel {
       wlr_scene_output_state_options sceneOptions{};
       sceneOptions.capture_sdr = hdrActive() && captureLocks > 0;
       sceneOptions.effect_capture_pending = effectCapturePending(captureLocks);
-      sceneOptions.capture_exclusion_for_test = captureExclusionPendingForTest(captureLocks);
-      m_effectCaptureBuilt = sceneOptions.effect_capture_pending || sceneOptions.capture_exclusion_for_test;
+      sceneOptions.capture_exclusion = captureExclusionPending(captureLocks);
+      m_effectCaptureBuilt = sceneOptions.effect_capture_pending || sceneOptions.capture_exclusion;
       sceneOptions.require_animation_success = m_workspaceGroup != nullptr && m_workspaceGroup->revealActive();
       if (sceneOptions.require_animation_success) {
         sceneOptions.workspace_from = m_workspaceGroup->revealRoot(false);
@@ -2077,7 +2070,7 @@ namespace umbriel {
 
     // Screencopy drops its lock inside the commit; image-copy sessions ask for the release frame when they end.
     if (m_effectCaptureBuilt
-        && !(effectCapturePending(externalRenderLocks()) || captureExclusionPendingForTest(externalRenderLocks()))) {
+        && !(effectCapturePending(externalRenderLocks()) || captureExclusionPending(externalRenderLocks()))) {
       scheduleEffectCaptureRelease();
     }
 

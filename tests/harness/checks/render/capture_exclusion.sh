@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Harness-only prototype: a floating protected window exposes live tiles in capture
+# A floating protected window exposes live tiles in capture
 # across each tiling layout; toggles preserve allocation and revoke window sources.
 set -euo pipefail
 source "$UMBRIEL_HARNESS_LIB"
@@ -18,11 +18,16 @@ enabled = false
 enabled = false
 [[window_rule]]
 match.title = "^protected$"
+block_capture = false
 default_floating = true
 default_floating_size_px = { width = 1280, height = 720 }
 default_position = { x = 0, y = 0, anchor = "top_left" }
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
+set_capture() {
+  sed -i "s/^block_capture = .*/block_capture = $1/" "$UMBRIEL_CONFIG"
+  "$UMBRIEL" msg config-reload > /dev/null
+}
 readonly IMAGE="$UMBRIEL_RUNTIME_DIR/capture.png"
 window() { "$UMBRIEL" windows --json | jq -ce --arg title "$1" '.[] | select(.title == $title)'; }
 wait_window() {
@@ -54,7 +59,7 @@ for n in 1 2; do
   "$UMBRIEL_CAPTURE_CLIENT" --window "$id" > "$UMBRIEL_RUNTIME_DIR/window-$n.log" 2>&1 &
   await_lines "$UMBRIEL_RUNTIME_DIR/window-$n.log" 'session-ready ' 1
 done
-"$UMBRIEL" capture-exclude "$id" on > /dev/null
+set_capture true
 for n in 1 2; do await_lines "$UMBRIEL_RUNTIME_DIR/window-$n.log" 'session-stopped ' 1; done
 "$UMBRIEL_CAPTURE_CLIENT" --window "$id" > "$UMBRIEL_RUNTIME_DIR/denied.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/denied.log" 'session-stopped ' 1
@@ -93,13 +98,13 @@ for layout in scrolling dwindle master; do
   "$UMBRIEL" settle > /dev/null
   before=$(window protected | jq -c '[.x,.y,.w,.h,.floating]')
   assert_hidden
-  "$UMBRIEL" capture-exclude "$id" off > /dev/null
+  set_capture false
   "$UMBRIEL" settle > /dev/null
   [[ $(window protected | jq -c '[.x,.y,.w,.h,.floating]') == "$before" ]]
   grim "$IMAGE"
   visible=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1')
   ((visible > 10000)) || { echo "unprotect did not restore window"; exit 1; }
-  "$UMBRIEL" capture-exclude "$id" on > /dev/null
+  set_capture true
   "$UMBRIEL" msg "window-toggle-floating:$id" > /dev/null
   printf G >&8
   printf B >&9
@@ -107,7 +112,7 @@ for layout in scrolling dwindle master; do
   await_lines "$UMBRIEL_RUNTIME_DIR/left.log" 'repainted ' "$repaints"
   await_lines "$UMBRIEL_RUNTIME_DIR/right.log" 'repainted ' "$repaints"
 done
-"$UMBRIEL" capture-exclude "$id" off > /dev/null
+set_capture false
 "$UMBRIEL_CAPTURE_CLIENT" --window "$id" > "$UMBRIEL_RUNTIME_DIR/fresh.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/fresh.log" 'frame ' 1
 echo 'invisible floating and tiled exclusion, live underlying updates, movement, and source revocation verified'

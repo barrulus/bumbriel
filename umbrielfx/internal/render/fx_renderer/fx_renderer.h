@@ -76,6 +76,8 @@ struct fx_framebuffer {
   struct fx_framebuffer* effect_capture_parent;
   bool effect_capture_valid;
   const void* effect_capture_owner;
+  const void* capture_policy_owner;
+  bool capture_protected;
 
   EGLImageKHR image;
   GLuint rbo;
@@ -123,6 +125,8 @@ bool fx_framebuffer_copy(
 ///
 
 struct fx_texture {
+  // Format discovery is allowed; pixel reads and copies are refused.
+  bool capture_blocked;
   struct wlr_texture wlr_texture;
   struct fx_renderer* fx_renderer;
   struct wl_list link; // fx_renderer.textures

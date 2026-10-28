@@ -135,10 +135,8 @@ namespace umbriel {
     [[nodiscard]] bool effectSelectionPending() const { return m_effectSelectionIdle != nullptr; }
     void refreshEffectSelection();
     [[nodiscard]] wlr_scene_tree* captureTree() const;
-    [[nodiscard]] bool captureExcludedForTest() const { return m_captureExcludedForTest; }
-#ifdef UMBRIEL_TEST_IPC
-    bool setCaptureExcludedForTest(bool excluded);
-#endif
+    [[nodiscard]] bool captureBlocked() const { return m_captureBlocked; }
+    void refreshCaptureProtection();
     [[nodiscard]] bool mapped() const { return m_mapped; }
     // The pid of the application process, or -1 when it is unknown (an X11 client that sets no _NET_WM_PID).
     [[nodiscard]] pid_t pid() const;
@@ -982,7 +980,8 @@ namespace umbriel {
     wlr_ext_foreign_toplevel_handle_v1* m_extForeign = nullptr;
     wlr_output* m_foreignOutput = nullptr;
     wlr_ext_image_capture_source_v1* m_captureSource = nullptr;
-    bool m_captureExcludedForTest = false;
+    bool m_captureBlocked = false;
+    bool m_ruleCaptureBlocked = false;
     wlr_xdg_dialog_v1* m_dialog = nullptr;
     Workspace* m_workspace = nullptr;
     // The window whose attachment tree holds this one, and the dialogs attached to this one, oldest first: the last is

@@ -3,6 +3,7 @@
 #include "input/seat.h"
 #include "scene/surface_shape.h"
 #include "server/server.h"
+#include "view/view.h"
 #include "wlr.h"
 #include "xwayland/xwayland.h"
 
@@ -26,17 +27,20 @@ namespace umbriel {
 
   } // namespace
 
-  XwaylandUnmanaged::XwaylandUnmanaged(Server& server, wlr_xwayland_surface* xsurface)
-      : m_server(server), m_xsurface(xsurface) {
+  XwaylandUnmanaged::XwaylandUnmanaged(Server& server, wlr_xwayland_surface* xsurface, bool captureBlocked)
+      : m_server(server), m_xsurface(xsurface), m_captureBlockedBeforePopup(captureBlocked) {
     m_tree = wlr_scene_tree_create(server.xwaylandUnmanagedTree());
     wlr_scene_node_set_enabled(&m_tree->node, false);
     wlr_scene_subsurface_tree_create(m_tree, xsurface->surface);
     syncPosition();
+    refreshCaptureProtection();
 
     m_map.notify = onMap;
     wl_signal_add(&xsurface->surface->events.map, &m_map);
     m_unmap.notify = onUnmap;
     wl_signal_add(&xsurface->surface->events.unmap, &m_unmap);
+    m_setParent.notify = onSetParent;
+    wl_signal_add(&xsurface->events.set_parent, &m_setParent);
     m_setGeometry.notify = onSetGeometry;
     wl_signal_add(&xsurface->events.set_geometry, &m_setGeometry);
     m_requestConfigure.notify = onRequestConfigure;
@@ -54,6 +58,7 @@ namespace umbriel {
     wl_list_remove(&m_map.link);
     wl_list_remove(&m_unmap.link);
     wl_list_remove(&m_setGeometry.link);
+    wl_list_remove(&m_setParent.link);
     wl_list_remove(&m_requestConfigure.link);
     wl_list_remove(&m_commit.link);
     wl_list_remove(&m_shapeChanged.link);
@@ -69,6 +74,34 @@ namespace umbriel {
   void XwaylandUnmanaged::onUnmap(wl_listener* listener, void* /*data*/) {
     XwaylandUnmanaged* self = wl_container_of(listener, self, m_unmap); // NOLINT(modernize-use-auto)
     self->handleUnmap();
+  }
+
+  void XwaylandUnmanaged::onSetParent(wl_listener* listener, void* /*data*/) {
+    XwaylandUnmanaged* self = wl_container_of(listener, self, m_setParent); // NOLINT(modernize-use-auto)
+    self->refreshCaptureProtection();
+  }
+
+  void XwaylandUnmanaged::refreshCaptureProtection() {
+    // X11 popup parent links can form chains of unmanaged surfaces.
+    auto* parent = m_xsurface->parent;
+    for (unsigned depth = 0; parent != nullptr && depth < 64; ++depth, parent = parent->parent) {
+      for (const auto& view : m_server.views()) {
+        if (view != nullptr && view->xwaylandSurface() == parent) {
+          (void)umbrielfx_scene_node_set_capture_excluded(
+              &m_tree->node, m_captureBlockedBeforePopup || view->captureBlocked()
+          );
+          return;
+        }
+      }
+    }
+    // X11 clients may omit parent information. With no reliable owner, omit
+    // unmanaged surfaces whenever an X11 view is protected rather than guessing
+    // from titles, focus, or client-supplied PIDs.
+    bool blocked = m_captureBlockedBeforePopup;
+    for (const auto& view : m_server.views()) {
+      blocked |= view != nullptr && view->xwaylandSurface() != nullptr && view->captureBlocked();
+    }
+    (void)umbrielfx_scene_node_set_capture_excluded(&m_tree->node, blocked);
   }
 
   void XwaylandUnmanaged::onSetGeometry(wl_listener* listener, void* /*data*/) {

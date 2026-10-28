@@ -1848,8 +1848,8 @@ static bool test_capture_exclusion(struct fixture* fixture) {
   struct capture_test_samples top_samples = {.listener.notify = capture_test_sample};
   wl_signal_add(&underneath->events.output_sample, &lower_samples.listener);
   wl_signal_add(&top->events.output_sample, &top_samples.listener);
-  bool ok = check(umbrielfx_scene_node_set_capture_excluded_for_test(&protected->node, true), "tag subtree");
-  struct wlr_scene_output_state_options options = {.swapchain = swapchain, .capture_exclusion_for_test = true};
+  bool ok = check(umbrielfx_scene_node_set_capture_excluded(&protected->node, true), "tag subtree");
+  struct wlr_scene_output_state_options options = {.swapchain = swapchain, .capture_exclusion = true};
   for (int frame = 0; frame < 3; ++frame) {
     if (frame == 1) {
       // This node is completely occluded on the display, but must still damage capture.
@@ -1899,14 +1899,34 @@ static bool test_capture_exclusion(struct fixture* fixture) {
   fx_renderer_fail_effect_capture_for_test(fixture->renderer, true);
   struct wlr_output_state state;
   wlr_output_state_init(&state);
-  ok &= check(
-      !wlr_scene_output_build_state(output, &state, &options) && state.buffer == NULL,
-      "capture allocation failure never exposes a display buffer"
-  );
+  const bool failure_built = wlr_scene_output_build_state(output, &state, &options) && state.buffer != NULL;
+  ok &= check(failure_built, "capture failure preserves local display progress");
+  if (failure_built) {
+    uint8_t display[4];
+    ok &= fixture_read_display_pixel(fixture, state.buffer, 8, 8, display)
+        && check(display[2] > 250 && display[1] < 5, "failed capture still displays protected red locally");
+    struct wlr_texture* denied = wlr_texture_from_buffer(fixture->renderer, state.buffer);
+    uint8_t pixels[TEST_WIDTH * TEST_HEIGHT * 4];
+    ok &= check(
+        denied != NULL && wlr_texture_preferred_read_format(denied) != DRM_FORMAT_INVALID,
+        "protected buffer supports format discovery"
+    );
+    ok &= check(
+        denied != NULL
+            && !wlr_texture_read_pixels(
+                denied,
+                &(struct wlr_texture_read_pixels_options){
+                    .data = pixels, .format = DRM_FORMAT_ARGB8888, .stride = TEST_WIDTH * 4
+                }
+            ),
+        "failed capture refuses pixel reads"
+    );
+    wlr_texture_destroy(denied);
+  }
   wlr_output_state_finish(&state);
   fx_renderer_fail_effect_capture_for_test(fixture->renderer, false);
-  ok &= check(umbrielfx_scene_node_set_capture_excluded_for_test(&protected->node, false), "remove exclusion");
-  options.capture_exclusion_for_test = false;
+  ok &= check(umbrielfx_scene_node_set_capture_excluded(&protected->node, false), "remove exclusion");
+  options.capture_exclusion = false;
   wlr_output_state_init(&state);
   const bool restored = wlr_scene_output_build_state(output, &state, &options) && state.buffer != NULL;
   ok &= check(restored, "restore ordinary composition");
@@ -1914,10 +1934,36 @@ static bool test_capture_exclusion(struct fixture* fixture) {
     uint8_t capture[4];
     ok &= fixture_read_pixel(fixture, state.buffer, 8, 8, capture)
         && check(capture[2] > 250 && capture[1] < 5, "no stale excluded image after unprotecting");
+    // A rule change must invalidate already-rendered output buffers before a
+    // subsequent render or protocol-ready event has a chance to run.
+    ok &= umbrielfx_scene_node_set_capture_excluded(&protected->node, true);
+    struct wlr_texture* denied = wlr_texture_from_buffer(fixture->renderer, state.buffer);
+    uint8_t pixels[TEST_WIDTH * TEST_HEIGHT * 4];
+    ok &= check(
+        denied != NULL
+            && !wlr_texture_read_pixels(
+                denied,
+                &(struct wlr_texture_read_pixels_options){
+                    .data = pixels, .format = DRM_FORMAT_ARGB8888, .stride = TEST_WIDTH * 4
+                }
+            ),
+        "protection immediately closes the old-buffer read path"
+    );
+    wlr_texture_destroy(denied);
   }
   wlr_output_state_finish(&state);
+  struct wlr_scene_tree* retained = wlr_scene_tree_create(&scene->tree);
+  ok &= umbrielfx_scene_node_share_capture_policy(&retained->node, &protected->node);
+  ok &= umbrielfx_scene_node_set_capture_excluded(&protected->node, false);
+  ok &= check(!umbrielfx_scene_node_capture_excluded(&retained->node), "retained copy follows owner policy changes");
+  ok &= umbrielfx_scene_node_set_capture_excluded(&protected->node, true);
   wl_list_remove(&lower_samples.listener.link);
   wl_list_remove(&top_samples.listener.link);
+  wlr_scene_node_destroy(&protected->node);
+  ok &= check(
+      umbrielfx_scene_node_capture_excluded(&retained->node), "retained copy remains protected after owner death"
+  );
+  ok &= check(umbrielfx_scene_has_capture_exclusion(scene), "retained protection keeps capture composition active");
   wlr_scene_node_destroy(&scene->tree.node);
   wlr_swapchain_destroy(swapchain);
   return ok;

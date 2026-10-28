@@ -346,6 +346,9 @@ namespace umbriel {
       if (rule.allowShortcutsInhibit) {
         resolved.allowShortcutsInhibit = rule.allowShortcutsInhibit;
       }
+      if (rule.blockCapture) {
+        resolved.blockCapture = rule.blockCapture;
+      }
       if (rule.backgroundRender) {
         resolved.backgroundRender = rule.backgroundRender;
       }

@@ -504,7 +504,7 @@ static bool render_pass_submit(struct wlr_render_pass* wlr_pass) {
     glFlush();
   }
 
-  ok = true;
+  ok = !pass->capture_blocked;
 
 out:
   animation_history_commit_updates(pass, ok);
@@ -1923,6 +1923,10 @@ void fx_render_pass_add_texture(struct fx_gles_render_pass* pass, const struct f
   const struct wlr_render_texture_options* options = &fx_options->base;
   struct fx_renderer* renderer = pass->buffer->renderer;
   struct fx_texture* texture = fx_get_texture(options->texture);
+  if (texture->capture_blocked) {
+    pass->capture_blocked = true;
+    return;
+  }
 
   struct tex_shader* shader = NULL;
 
@@ -3258,6 +3262,8 @@ struct fx_gles_render_pass* fx_begin_buffer_pass(
   buffer->capture_sdr = false;
   buffer->sdr_capture_valid = false;
   buffer->effect_capture_valid = false;
+  buffer->capture_protected = false;
+  buffer->capture_policy_owner = NULL;
   buffer->output_buffers = output_buffers;
   buffer->output_generation = 0;
 

@@ -1197,6 +1197,7 @@ namespace umbriel {
       return nullptr;
     }
     card->surfaceTree = wlr_scene_tree_create(card->tree);
+    (void)umbrielfx_scene_node_share_capture_policy(&card->tree->node, &view->sceneTree()->node);
     if (card->surfaceTree == nullptr) {
       wlr_scene_node_destroy(&card->tree->node);
       return nullptr;
@@ -1227,6 +1228,10 @@ namespace umbriel {
 
     wlr_scene_tree* snapshot = wlr_scene_tree_create(m_tree);
     if (snapshot == nullptr) {
+      return;
+    }
+    if (!umbrielfx_scene_node_share_capture_policy(&snapshot->node, &card.tree->node)) {
+      wlr_scene_node_destroy(&snapshot->node);
       return;
     }
     wlr_box outputBox{};

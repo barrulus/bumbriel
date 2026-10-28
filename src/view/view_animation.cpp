@@ -1036,6 +1036,10 @@ namespace umbriel {
       return kInvalidCloseSnapshot;
     }
     wlr_scene_node_set_position(&snap->node, m_presentedBox.x, m_presentedBox.y);
+    if (!umbrielfx_scene_node_share_capture_policy(&snap->node, &m_sceneTree->node)) {
+      wlr_scene_node_destroy(&snap->node);
+      return kInvalidCloseSnapshot;
+    }
     wlr_scene_tree* content = wlr_scene_tree_create(snap);
     if (content == nullptr) {
       wlr_scene_node_destroy(&snap->node);
