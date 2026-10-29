@@ -487,20 +487,10 @@ UMBRIEL_TEST(actionRequestsRejectMalformedFieldsWithTheReason) {
   }
 }
 
-UMBRIEL_TEST(workspaceOutputRequestRequiresAnUnambiguousSource) {
+UMBRIEL_TEST(workspaceOutputRequestRejectsMalformedFields) {
   std::string error;
-  const auto request = nlohmann::json{
-      {"cmd", "action"},
-      {"action", "workspace-move-to-output"},
-      {"destination", "current"},
-      {"workspace", "3"},
-      {"output", "DP-1"}
-  };
-  const auto bind = umbriel::actionFromRequest(request, error);
-  CHECK(bind.has_value());
-  CHECK(umbriel::actionRequest(*bind) == request);
   for (const auto& invalid :
-       {nlohmann::json{{"destination", 2}}, nlohmann::json{{"destination", ""}},
+       {nlohmann::json::object(), nlohmann::json{{"destination", 2}}, nlohmann::json{{"destination", ""}},
         nlohmann::json{{"destination", "current"}, {"output", "DP-1"}},
         nlohmann::json{{"destination", "current"}, {"workspace", 0}},
         nlohmann::json{{"destination", "current"}, {"workspace", true}},

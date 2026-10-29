@@ -71,15 +71,16 @@ check --arg id "$work" '
   and ([.[] | select(.output == "HEADLESS-2") | .name] == ["TARGET", "WORK", "TAIL"])
   and any(.[]; .name == "BEFORE" and .active)'
 "$UMBRIEL" windows --json | jq -e --arg id "$work" 'length == 3 and all(.[]; .workspace == $id)' > /dev/null
-[[ $("$WORKSPACE" --all | awk -F '\t' '$2 == "WORK" {print $1}') == "$work" ]]
-[[ $("$WORKSPACE" --groups | awk -F '\t' -v id="$work" '$1 == id {print $3}') == HEADLESS-2 ]]
+[[ $("$WORKSPACE" --groups | awk -F '\t' -v id="$work" '$1 == id && $2 == "WORK" {print $3}') == HEADLESS-2 ]]
 for title in transfer-tile transfer-float transfer-pin; do
   "$FOREIGN" "$title" HEADLESS-2
 done
 
 # Cycle through three outputs in both directions, including wraparound, and move an empty named workspace.
-for action in next next previous previous; do msg "workspace-move-to-output-$action"; done
-check --arg id "$work" 'any(.[]; .id == $id and .output == "HEADLESS-2" and .focused)'
+for step in next:3 next:1 previous:3 previous:2; do
+  msg "workspace-move-to-output-${step%:*}"
+  check --arg id "$work" --arg output "HEADLESS-${step#*:}" 'any(.[]; .id == $id and .output == $output and .focused)'
+done
 msg workspace-move-to-output-left
 check --arg id "$work" 'any(.[]; .id == $id and .output == "HEADLESS-1" and .focused)'
 

@@ -12,16 +12,20 @@ expect() {
   jq -e "$@" <<< "$snapshot" > /dev/null || { echo "unexpected workspaces: $snapshot"; exit 1; }
 }
 unchanged() {
-  local status=$1 before
+  local reason=$1 before windows result
   shift
   "$UMBRIEL" settle
   before=$(state)
-  if [[ $status == reject ]]; then
-    if msg "$@"; then echo "unexpectedly accepted $*"; exit 1; fi
+  windows=$("$UMBRIEL" windows --json)
+  if [[ $reason != accept ]]; then
+    if result=$("$UMBRIEL" msg "$@" 2>&1); then echo "unexpectedly accepted $*"; exit 1; fi
+    [[ $result == *"$reason"* ]] || { echo "$* failed for the wrong reason: $result"; exit 1; }
   else
     msg "$@"
   fi
+  "$UMBRIEL" settle
   [[ $(state) == "$before" ]] || { echo "$* changed inventory or selection"; exit 1; }
+  [[ $("$UMBRIEL" windows --json) == "$windows" ]] || { echo "$* changed windows"; exit 1; }
 }
 cat >> "$UMBRIEL_CONFIG" <<'CONFIG'
 [animation]
@@ -55,11 +59,11 @@ for title in explicit-one explicit-two; do
 done
 msg workspace-switch KEEP --output HEADLESS-1
 msg workspace-switch OTHER --output HEADLESS-3
-unchanged reject workspace-move-to-output current WEB
-unchanged reject workspace-move-to-output HEADLESS-2 WEB --output HEADLESS-1
-unchanged reject workspace-move-to-output NOPE WEB --output HEADLESS-1
-unchanged reject workspace-move-to-output current MISSING --output HEADLESS-1
-unchanged reject workspace-move-to-output current WEB --output NOPE
+unchanged 'ambiguous workspace' workspace-move-to-output current WEB
+unchanged 'already has a workspace' workspace-move-to-output HEADLESS-2 WEB --output HEADLESS-1
+unchanged 'unknown output' workspace-move-to-output NOPE WEB --output HEADLESS-1
+unchanged 'unknown workspace' workspace-move-to-output current MISSING --output HEADLESS-1
+unchanged 'unknown output' workspace-move-to-output current WEB --output NOPE
 
 msg workspace-move-to-output current WEB --output HEADLESS-1
 "$UMBRIEL" settle
@@ -75,9 +79,7 @@ expect --arg id "$work" 'any(.[]; .id == $id and .output == "HEADLESS-1" and .fo
 unchanged accept workspace-move-to-output current
 unchanged accept workspace-move-to-output HEADLESS-1 KEEP --output HEADLESS-1
 
-# Unqualified duplicate names prefer the current output; --output can precede the destination.
-msg workspace-move-to-output --output HEADLESS-1 HEADLESS-3 WEB
-msg workspace-move-to-output HEADLESS-1
+# Unqualified duplicate names prefer the current output.
 msg workspace-move-to-output HEADLESS-3 WEB
 expect --arg id "$work" 'any(.[]; .id == $id and .output == "HEADLESS-3" and .focused)'
 msg workspace-move-to-output HEADLESS-1
@@ -90,11 +92,11 @@ msg workspace-move-to-output current 3 --output HEADLESS-1
 expect --arg id "$position" 'any(.[]; .id == $id and .output == "HEADLESS-2" and .focused)'
 msg workspace-move-to-output current --name 3 --output HEADLESS-1
 expect --arg id "$named" 'any(.[]; .id == $id and .output == "HEADLESS-2" and .focused)'
-msg workspace-move-to-output current 'My web' --output HEADLESS-1
+msg workspace-move-to-output --output HEADLESS-1 current 'My web'
 expect --arg id "$spaced" 'any(.[]; .id == $id and .output == "HEADLESS-2" and .focused)'
 
 msg output-disable HEADLESS-3
-unchanged reject workspace-move-to-output HEADLESS-3 WEB --output HEADLESS-1
+unchanged 'not available' workspace-move-to-output HEADLESS-3 WEB --output HEADLESS-1
 msg output-enable HEADLESS-3
 msg workspace-move-to-output HEADLESS-3 WEB --output HEADLESS-1
 expect --arg id "$work" 'any(.[]; .id == $id and .output == "HEADLESS-3" and .focused)'

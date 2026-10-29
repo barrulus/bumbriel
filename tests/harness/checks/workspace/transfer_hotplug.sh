@@ -42,11 +42,12 @@ state | jq -e --arg id "$original" '
 "$UMBRIEL" output-destroy HEADLESS-2 > /dev/null
 "$UMBRIEL" settle
 refuge=$("$UMBRIEL" windows --json | jq -r '.[] | select(.title == "transfer-hotplug") | .workspace')
+evacuated=$(state | jq -r --arg id "$refuge" '.[] | select(.id == $id) | .output')
 msg window-focus-warp "$window"
 msg workspace-move-to-output-next
 "$UMBRIEL" settle
 adopted=$(state | jq -r --arg id "$refuge" '.[] | select(.id == $id) | .output')
-[[ -n $adopted ]]
+[[ -n $adopted && $adopted != "$evacuated" ]]
 "$UMBRIEL" output-create HEADLESS-2 > /dev/null
 "$UMBRIEL" settle
 "$UMBRIEL" windows --json | jq -e --arg id "$refuge" --arg output "$adopted" '

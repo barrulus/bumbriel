@@ -1449,29 +1449,29 @@ UMBRIEL_TEST(effectCycleRejectsOffAndLayoutToggleNeedsTwoModes) {
 }
 
 UMBRIEL_TEST(workspaceOutputTargetsReuseWorkspaceSelectors) {
-  Keybind bind;
-  CHECK(parseAction("workspace-move-to-output DP-2", bind));
-  const auto* arg = umbriel::payloadIf<umbriel::WorkspaceMoveToOutputArg>(bind);
-  CHECK(arg != nullptr && arg->destination == "DP-2" && !arg->workspace);
-  CHECK(parseAction("workspace-move-to-output --output DP-1 current --name 3", bind));
-  arg = umbriel::payloadIf<umbriel::WorkspaceMoveToOutputArg>(bind);
-  CHECK(arg != nullptr && arg->workspace);
-  CHECK(arg->destination == "current" && arg->workspace->output == "DP-1");
-  CHECK(std::get<umbriel::WorkspaceName>(arg->workspace->reference).value == "3");
-  CHECK(parseAction("workspace-move-to-output 'Vendor Model Serial' 'My web'", bind));
-  arg = umbriel::payloadIf<umbriel::WorkspaceMoveToOutputArg>(bind);
-  CHECK(arg != nullptr && arg->workspace && arg->destination == "Vendor Model Serial");
-  CHECK(std::get<umbriel::WorkspaceName>(arg->workspace->reference).value == "My web");
-  CHECK(parseAction("workspace-move-to-output DP-2 3 --output DP-1", bind));
-  arg = umbriel::payloadIf<umbriel::WorkspaceMoveToOutputArg>(bind);
-  CHECK(arg != nullptr && arg->workspace);
-  CHECK(std::get<umbriel::WorkspaceIndex>(arg->workspace->reference).value == 3);
+  const struct {
+    std::string_view input;
+    umbriel::WorkspaceMoveToOutputArg expected;
+  } cases[] = {
+      {"DP-2", {"DP-2", std::nullopt}},
+      {"--output DP-1 current --name 3", {"current", umbriel::WorkspaceArg{umbriel::WorkspaceName{"3"}, "DP-1"}}},
+      {"'Vendor Model Serial' 'My web'",
+       {"Vendor Model Serial", umbriel::WorkspaceArg{umbriel::WorkspaceName{"My web"}, ""}}},
+      {"DP-2 3 --output DP-1", {"DP-2", umbriel::WorkspaceArg{umbriel::WorkspaceIndex{3}, "DP-1"}}},
+  };
+  for (const auto& [input, expected] : cases) {
+    Keybind bind;
+    CHECK(parseAction("workspace-move-to-output " + std::string(input), bind));
+    const auto* arg = umbriel::payloadIf<umbriel::WorkspaceMoveToOutputArg>(bind);
+    CHECK(arg != nullptr && *arg == expected);
+  }
   for (const std::string_view input :
        {"workspace-move-to-output", "workspace-move-to-output DP-2 --output DP-1",
         "workspace-move-to-output current WEB OTHER", "workspace-move-to-output current WEB --name WEB",
         "workspace-move-to-output current WEB --output", "workspace-move-to-output current 0",
         "workspace-move-to-output current 65", "workspace-move-to-output:DP-2/WEB/DP-1",
         "workspace-move-to-output DP-2 WEB --output DP-1 --output DP-3"}) {
+    Keybind bind;
     CHECK(!parseAction(input, bind));
   }
 }
