@@ -3360,7 +3360,7 @@ static void scene_entry_render(struct render_list_entry* entry, const struct ren
     if (light != NULL) {
       if (light->source != NULL && light->source->shaders[FX_SLOT_BORDER_EFFECT] != NULL) {
         fx_render_pass_add_effect_light(
-            fx_pass, data->effect_capture ? light->capture_cache : light->cache,
+            fx_pass, data->capture_exclusion && data->effect_capture ? light->capture_cache : light->cache,
             &light->source->parameters[FX_SLOT_BORDER_EFFECT].light, &dst_box, &render_region
         );
       }

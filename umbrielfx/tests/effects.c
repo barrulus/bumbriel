@@ -1429,6 +1429,73 @@ static bool test_border_light(struct fixture* fixture) {
   return ok;
 }
 
+// Border light remains in ordinary effect captures and uses independent
+// inputs when capture exclusion is active.
+static bool test_border_light_capture(struct fixture* fixture) {
+  struct wlr_scene* scene = wlr_scene_create();
+  struct wlr_scene_output* output = wlr_scene_output_create(scene, fixture->output);
+  struct wlr_swapchain* swapchain = create_swapchain(fixture);
+  const float black[4] = {0, 0, 0, 1}, white[4] = {1, 1, 1, 1};
+  wlr_scene_rect_create(&scene->tree, TEST_WIDTH, TEST_HEIGHT, black);
+  struct wlr_scene_border* border = wlr_scene_border_create(&scene->tree, white, white);
+  wlr_scene_border_set_geometry(
+      border, 8, 8, 2, 0, (struct clipped_region){.area = {2, 2, 4, 4}}, (struct fx_corner_radii){0},
+      (struct fx_corner_radii){0}
+  );
+  wlr_scene_node_set_position(&border->node, 4, 4);
+  wlr_scene_set_effect_light_layer(scene, wlr_scene_tree_create(&scene->tree));
+  struct fx_effect_shader* program =
+      fx_effect_shader_create(fixture->renderer, FX_EFFECT_BORDER, kLeftEdgeSource, "border-light-capture");
+  struct fx_effect_shader* window = fx_effect_shader_create(
+      fixture->renderer, FX_EFFECT_WINDOW, kSources[FX_EFFECT_WINDOW], "border-light-capture-window"
+  );
+  bool ok = check(swapchain != NULL && program != NULL && window != NULL, "capture swapchain and shaders");
+  struct fx_animation_parameters parameters = {
+      .progress = 1,
+      .linear_progress = 1,
+      .direction = 1,
+      .light = {.enabled = true, .spread = 3, .intensity = 4, .threshold = 0.1f},
+  };
+  fx_parameters_add_uniform(&parameters, "edge", FX_UNIFORM_FLOAT, 1)->floats[0] = 2;
+  wlr_scene_node_set_animation(&border->node, FX_SLOT_BORDER_EFFECT, program, &parameters);
+  wlr_scene_node_set_animation(&border->node, FX_SLOT_WINDOW, window, &parameters);
+  wlr_scene_output_set_effect_capture_policy(output, false);
+  ok = ok && warm_up(output, swapchain);
+  for (int frame = 0; ok && frame < 4; ++frame) {
+    const bool excluded = frame == 3;
+    ok &= check(umbrielfx_scene_node_set_capture_excluded(&border->node, excluded), "set border protection");
+    const struct wlr_scene_output_state_options options = {
+        .swapchain = swapchain,
+        .effect_capture_pending = true,
+        .capture_exclusion = frame == 1 || excluded,
+    };
+    wlr_scene_output_damage_whole_for_test(output);
+    struct wlr_output_state state;
+    wlr_output_state_init(&state);
+    const bool built = wlr_scene_output_build_state(output, &state, &options) && state.buffer != NULL;
+    ok &= check(built, "build light capture");
+    if (built) {
+      uint8_t display[4], capture[4];
+      const bool read = fixture_read_display_pixel(fixture, state.buffer, 2, 8, display)
+          && fixture_read_pixel(fixture, state.buffer, 2, 8, capture);
+      ok &= check(read, "read local and captured light spill");
+      if (read) {
+        ok &= check(display[2] > 20, "local border light remains visible");
+        ok &= check(
+            excluded ? capture[2] < 5 : capture[2] > 20,
+            excluded ? "protected border light is absent from capture" : "eligible border light remains in capture"
+        );
+      }
+    }
+    wlr_output_state_finish(&state);
+  }
+  fx_effect_shader_unref(program);
+  fx_effect_shader_unref(window);
+  wlr_scene_node_destroy(&scene->tree.node);
+  wlr_swapchain_destroy(swapchain);
+  return ok;
+}
+
 // The single light proxy in `layer`, or NULL when it holds none.
 static struct wlr_scene_rect* light_proxy(struct wlr_scene_tree* layer) {
   if (wl_list_length(&layer->children) != 1) {
@@ -3061,6 +3128,8 @@ int main(int argc, char* argv[]) {
     ok = test_border_geometry_tree(&fixture);
   } else if (strcmp(argv[1], "border-light") == 0) {
     ok = test_border_light(&fixture);
+  } else if (strcmp(argv[1], "border-light-capture") == 0) {
+    ok = test_border_light_capture(&fixture);
   } else if (strcmp(argv[1], "border-light-hdr-low-alpha") == 0) {
     ok = test_border_light_hdr_low_alpha(&fixture);
   } else if (strcmp(argv[1], "border-light-lifecycle") == 0) {
