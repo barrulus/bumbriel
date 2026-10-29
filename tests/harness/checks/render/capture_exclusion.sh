@@ -75,7 +75,7 @@ assert_hidden() {
   [[ $count == 0 ]] || { echo "protected pixels leaked: $count"; exit 1; }
 }
 for layout in scrolling dwindle master; do
-  "$UMBRIEL" msg "workspace-set-layout:$layout" > /dev/null
+  "$UMBRIEL" msg workspace-set-layout "$layout" > /dev/null
   "$UMBRIEL" settle > /dev/null
   assert_hidden
   # A large central rectangle is covered by the local float. Capture must show
@@ -91,10 +91,10 @@ for layout in scrolling dwindle master; do
   assert_hidden
   red=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&g<0.1&&b<0.1' '900x500+150+100')
   ((red == green + blue)) || { echo "$layout did not update both covered tiles: $red != $green + $blue"; exit 1; }
-  "$UMBRIEL" msg "window-move-by:20/20/$id" > /dev/null
+  "$UMBRIEL" msg window-move-by 20 20 --window "$id" > /dev/null
   "$UMBRIEL" settle > /dev/null
   assert_hidden
-  "$UMBRIEL" msg "window-toggle-floating:$id" > /dev/null
+  "$UMBRIEL" msg window-toggle-floating "$id" > /dev/null
   "$UMBRIEL" settle > /dev/null
   before=$(window protected | jq -c '[.x,.y,.w,.h,.floating]')
   assert_hidden
@@ -105,7 +105,7 @@ for layout in scrolling dwindle master; do
   visible=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1')
   ((visible > 10000)) || { echo "unprotect did not restore window"; exit 1; }
   set_capture true
-  "$UMBRIEL" msg "window-toggle-floating:$id" > /dev/null
+  "$UMBRIEL" msg window-toggle-floating "$id" > /dev/null
   printf G >&8
   printf B >&9
   repaints=$((repaints + 1))

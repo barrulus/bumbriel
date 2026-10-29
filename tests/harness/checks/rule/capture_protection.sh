@@ -77,8 +77,8 @@ sed -i '0,/enabled = false/s//enabled = true/' "$UMBRIEL_CONFIG"
 "$UMBRIEL" settle > /dev/null
 "$UMBRIEL" clock-freeze > /dev/null
 frozen=true
-"$UMBRIEL" msg "window-close:$child" > /dev/null
-"$UMBRIEL" msg "window-close:$parent" > /dev/null
+"$UMBRIEL" msg window-close "$child" > /dev/null
+"$UMBRIEL" msg window-close "$parent" > /dev/null
 assert_hidden
 "$UMBRIEL" clock-advance 6000 > /dev/null
 "$UMBRIEL" clock-resume > /dev/null

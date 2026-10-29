@@ -407,7 +407,7 @@ block_capture = true
 
 Use the application ID from `umbriel windows --json`. Reloading updates existing windows. The last matching rule that sets `block_capture` wins; `false` removes that window's own protection. A protected parent also protects its popups and transients, even if a child has an explicit `false` rule.
 
-Output and region captures show the content underneath, including its ongoing updates. No black rectangle replaces the window. Scrolling, dwindle, master, and floating layouts are supported, including floating windows above tiles. A protected tile keeps its allocation; neighbouring windows do not reflow. Protection does not change local visibility, input, focus, or geometry.
+Output and region captures show the content underneath, including its ongoing updates. No black rectangle replaces the window. Scrolling, dwindle, master, and stacking layouts are supported, including floating windows above tiles. A protected tile keeps its allocation; neighbouring windows do not reflow. Protection does not change local visibility, input, focus, or geometry.
 
 Direct window capture is refused. Enabling protection stops existing sessions for that window; removing it permits a fresh session. Frames already copied or submitted to a recorder cannot be recalled. Titles and application IDs remain available through existing window metadata protocols.
 

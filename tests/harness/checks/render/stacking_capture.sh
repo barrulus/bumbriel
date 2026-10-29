@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Floating is a workspace layout: protect an ordinary layout-managed window,
+# Stacking is a workspace layout: protect an ordinary layout-managed window,
 # reveal two updating floats beneath it, and preserve protection on layout changes.
 set -euo pipefail
 source "$UMBRIEL_HARNESS_LIB"
 cat >> "$UMBRIEL_CONFIG" <<'CONFIG'
 [layout]
-mode = "floating"
+mode = "stacking"
 [animation]
 enabled = false
 [appearance]
@@ -37,7 +37,7 @@ set_capture() {
   sed -i "s/^block_capture = .*/block_capture = $1/" "$UMBRIEL_CONFIG"
   "$UMBRIEL" msg config-reload > /dev/null
 }
-readonly IMAGE="$UMBRIEL_RUNTIME_DIR/floating-capture.png"
+readonly IMAGE="$UMBRIEL_RUNTIME_DIR/stacking-capture.png"
 window() { "$UMBRIEL" windows --json | jq -ce --arg title "$1" '.[] | select(.title == $title)'; }
 wait_window() {
   for _ in $(seq 100); do
@@ -67,7 +67,7 @@ OPAQUE_BUFFER=1 FOLLOW_CONFIGURES=1 FILL_COLOR=0xFFFF00FF \
 wait_window protected
 id=$(window protected | jq -r .id)
 "$UMBRIEL" settle > /dev/null
-[[ $("$UMBRIEL" workspaces --json | jq -r '.[] | select(.active) | .layout') == floating ]]
+[[ $("$UMBRIEL" workspaces --json | jq -r '.[] | select(.active) | .layout') == stacking ]]
 "$UMBRIEL" windows --json | jq -e 'length == 3 and all(.floating)' > /dev/null
 [[ $(window protected | jq -c '[.x,.y,.w,.h]') == '[0,0,1280,720]' ]]
 grim "$IMAGE"
@@ -89,7 +89,7 @@ await_lines "$UMBRIEL_RUNTIME_DIR/right.log" 'repainted ' 1
 assert_hidden
 red=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&g<0.1&&b<0.1')
 ((red == green + blue)) || { echo "underlying floats stopped updating: $red != $green + $blue"; exit 1; }
-"$UMBRIEL" msg "window-move-by:20/20/$id" > /dev/null
+"$UMBRIEL" msg window-move-by 20 20 --window "$id" > /dev/null
 "$UMBRIEL" settle > /dev/null
 assert_hidden
 before=$(geometry)
@@ -102,15 +102,15 @@ visible=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1')
 set_capture true
 # These windows float because of layout policy, not explicit floating intent.
 # Changing the workspace layout must preserve exclusion even as they become tiles.
-for layout in scrolling floating; do
-  "$UMBRIEL" msg "workspace-set-layout:$layout" > /dev/null
+for layout in scrolling stacking; do
+  "$UMBRIEL" msg workspace-set-layout "$layout" > /dev/null
   "$UMBRIEL" settle > /dev/null
   expected_floating=false
-  if [[ $layout == floating ]]; then expected_floating=true; fi
+  if [[ $layout == stacking ]]; then expected_floating=true; fi
   [[ $(window protected | jq -r .floating) == "$expected_floating" ]]
   assert_hidden
 done
-echo 'floating layout exclusion, covered client updates, movement, unchanged geometry, and layout transitions verified'
+echo 'stacking layout exclusion, covered client updates, movement, unchanged geometry, and layout transitions verified'
 
 # Keep one other window protected while toggling the magenta window, so both
 # frames use capture-role screen feedback. Old magenta history must be discarded.
