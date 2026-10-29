@@ -21,14 +21,6 @@ match.title = "^transient-child$"
 block_capture = false
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
-window() { "$UMBRIEL" windows --json | jq -ce --arg title "$1" '.[] | select(.title == $title)'; }
-wait_window() {
-  for _ in $(seq 100); do
-    window "$1" > /dev/null && return
-    sleep 0.02
-  done
-  echo "missing window $1"; return 1
-}
 frozen=false
 assert_hidden() {
   if [[ $frozen == true ]]; then
@@ -36,17 +28,16 @@ assert_hidden() {
   else
     "$UMBRIEL" settle > /dev/null
   fi
-  grim "$IMAGE"
-  [[ $("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1') == 0 ]]
+  capture_assert_hidden "$IMAGE"
 }
 TRANSIENT_SUITE=mapped-together FILL_COLOR=0xFFFF00FF "$UMBRIEL_UNMAP_CLIENT" transient-child 400 300 > "$UMBRIEL_RUNTIME_DIR/transient.log" 2>&1 &
-wait_window transient-child
-parent=$(window transient-parent | jq -r .id)
-child=$(window transient-child | jq -r .id)
+await_window transient-child
+parent=$(window_by_title transient-parent | jq -r .id)
+child=$(window_by_title transient-child | jq -r .id)
 assert_hidden
 "$UMBRIEL_CAPTURE_CLIENT" --window "$child" > "$UMBRIEL_RUNTIME_DIR/denied-child.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/denied-child.log" 'session-stopped ' 1
-! rg '^frame |protocol error' "$UMBRIEL_RUNTIME_DIR/denied-child.log"
+if rg '^frame |protocol error' "$UMBRIEL_RUNTIME_DIR/denied-child.log"; then exit 1; fi
 # The card was created while protected. It must follow a later owner toggle.
 "$UMBRIEL" msg overview-open > /dev/null
 assert_hidden
@@ -93,9 +84,9 @@ block_capture = true
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
 "$UMBRIEL_UNMAP_CLIENT" dynamic > "$UMBRIEL_RUNTIME_DIR/dynamic.log" 2>&1 &
-wait_window dynamic
-id=$(window dynamic | jq -r .id)
+await_window dynamic
+id=$(window_by_title dynamic | jq -r .id)
 "$UMBRIEL_CAPTURE_CLIENT" --window "$id" > "$UMBRIEL_RUNTIME_DIR/dynamic-capture.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/dynamic-capture.log" 'session-stopped ' 1
-! rg '^frame |protocol error' "$UMBRIEL_RUNTIME_DIR/dynamic-capture.log"
+if rg '^frame |protocol error' "$UMBRIEL_RUNTIME_DIR/dynamic-capture.log"; then exit 1; fi
 echo 'inherited protection, retained images, and reentrant session revocation verified'

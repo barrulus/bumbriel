@@ -22,21 +22,13 @@ match.title = "^xwayland-dialog-child$"
 block_capture = false
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
-window() { "$UMBRIEL" windows --json | jq -ce --arg title "$1" '.[] | select(.title == $title)'; }
-wait_window() {
-  for _ in $(seq 100); do
-    window "$1" > /dev/null && return
-    sleep 0.025
-  done
-  echo "missing window $1"; return 1
-}
 mkfifo "$UMBRIEL_RUNTIME_DIR/dialog" "$UMBRIEL_RUNTIME_DIR/popup"
 exec 8<> "$UMBRIEL_RUNTIME_DIR/dialog"
 exec 9<> "$UMBRIEL_RUNTIME_DIR/popup"
 "$UMBRIEL_XWAYLAND_DIALOG_CLIENT" <&8 > "$UMBRIEL_RUNTIME_DIR/dialog.log" 2>&1 &
-wait_window xwayland-dialog-parent
+await_window xwayland-dialog-parent
 printf 'map-dialog\n' >&8
-wait_window xwayland-dialog-child
+await_window xwayland-dialog-child
 "$UMBRIEL_XWAYLAND_POPUP_CLIENT" capture-popup <&9 > "$UMBRIEL_RUNTIME_DIR/popup.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/popup.log" ready 1
 printf 'override true\nmap\n' >&9
