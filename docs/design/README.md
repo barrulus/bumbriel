@@ -5,7 +5,6 @@ The main documentation explains how to configure and use Umbriel. The notes in t
 Start with the user guide when a detail affects configuration or normal use. Use a design note when the detail explains state transitions, subsystem boundaries, or regression-sensitive behavior.
 
 - [Configuration reload](configuration-reload.md)
-- [Invisible window capture exclusion PRD](capture-exclusion-prd.md)
 - [Effects](effects.md)
 - [Audio shader input](audio-shader-input.md)
 - [Workspace lifecycle](workspace-lifecycle.md)
