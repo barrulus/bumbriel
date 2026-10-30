@@ -38,22 +38,37 @@ assert_hidden
 "$UMBRIEL_CAPTURE_CLIENT" --window "$child" > "$UMBRIEL_RUNTIME_DIR/denied-child.log" 2>&1 &
 await_lines "$UMBRIEL_RUNTIME_DIR/denied-child.log" 'session-stopped ' 1
 if rg '^frame |protocol error' "$UMBRIEL_RUNTIME_DIR/denied-child.log"; then exit 1; fi
-# The card was created while protected. It must follow a later owner toggle.
-"$UMBRIEL" msg overview-open > /dev/null
-assert_hidden
-sed -i 's/^block_capture = true$/block_capture = false/' "$UMBRIEL_CONFIG"
-"$UMBRIEL" msg config-reload > /dev/null
-"$UMBRIEL" settle > /dev/null
-grim "$IMAGE"
-(( $("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'r>0.9&&b>0.9&&g<0.1') > 1000 ))
-# A last-matching parent rule protects both existing overview cards again.
+# A card follows its window's protection while the overview stays open. A
+# rule reload closes the overview, so the toggle comes from a title change.
 cat >> "$UMBRIEL_CONFIG" <<'CONFIG'
 [[window_rule]]
-match.title = "^transient-parent$"
+match.title = "^card-protected$"
 block_capture = true
 CONFIG
 "$UMBRIEL" msg config-reload > /dev/null
+mkfifo "$UMBRIEL_RUNTIME_DIR/card"
+exec 7<> "$UMBRIEL_RUNTIME_DIR/card"
+TITLE_AFTER_MAP=card-protected FILL_COLOR=0xFF00FF00 \
+  "$UMBRIEL_UNMAP_CLIENT" card-open 400 300 <&7 > "$UMBRIEL_RUNTIME_DIR/card.log" 2>&1 &
+await_window card-open
+# An unprotected witness proves the overview is still open after the toggle.
+FILL_COLOR=0xFF0000FF "$UMBRIEL_UNMAP_CLIENT" witness 400 300 > "$UMBRIEL_RUNTIME_DIR/witness.log" 2>&1 &
+await_window witness
+zoomed() {
+  local w
+  read -r _ _ w _ < <("$UMBRIEL_PIXEL_PROBE" "$IMAGE" bbox "$1")
+  ((w > 0 && w < 400)) || { echo "$2 not shown at overview zoom: $w"; return 1; }
+}
+"$UMBRIEL" msg overview-open > /dev/null
+# The transient cards were created while protected.
 assert_hidden
+zoomed 'g>0.9&&r<0.1&&b<0.1' card-open
+printf t >&7
+await_lines "$UMBRIEL_RUNTIME_DIR/card.log" title-updated 1
+assert_hidden
+zoomed 'b>0.9&&r<0.1&&g<0.1' witness
+green=$("$UMBRIEL_PIXEL_PROBE" "$IMAGE" count 'g>0.9&&r<0.1&&b<0.1')
+((green == 0)) || { echo "card kept capture after its window became protected: $green"; exit 1; }
 "$UMBRIEL" msg overview-close > /dev/null
 assert_hidden
 # A close retains client images after unmap. Keep the transition at its start.
