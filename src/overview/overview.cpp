@@ -516,6 +516,7 @@ namespace umbriel {
       if (card.shadowTree == nullptr) {
         return;
       }
+      (void)umbrielfx_scene_node_share_capture_policy(&card.shadowTree->node, &card.tree->node);
       card.shadow = wlr_scene_shadow_create(card.shadowTree, 0, 0, 0, 0.0F, source->color);
       if (card.shadow == nullptr) {
         destroyCardShadow(card);
