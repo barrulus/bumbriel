@@ -5370,23 +5370,27 @@ static struct capture_exclusion* capture_exclusion_get(struct wlr_scene_node* no
   return exclusion;
 }
 
-static void capture_policy_reparent(struct wlr_scene_node* node, struct wlr_scene* from, struct wlr_scene* to) {
-  if (from == to) {
-    return;
-  }
+static void capture_policy_move_counts(struct wlr_scene_node* node, struct wlr_scene* from, struct wlr_scene* to) {
   struct capture_exclusion* exclusion = capture_exclusion_get(node);
   if (exclusion != NULL && exclusion->policy->excluded) {
     assert(from->capture_protected_nodes > 0);
     from->capture_protected_nodes--;
     to->capture_protected_nodes++;
   }
-  to->capture_policy_failed |= from->capture_policy_failed;
   if (node->type == WLR_SCENE_NODE_TREE) {
     struct wlr_scene_node* child;
     wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
-      capture_policy_reparent(child, from, to);
+      capture_policy_move_counts(child, from, to);
     }
   }
+}
+
+static void capture_policy_reparent(struct wlr_scene_node* node, struct wlr_scene* from, struct wlr_scene* to) {
+  if (from == to) {
+    return;
+  }
+  capture_policy_move_counts(node, from, to);
+  to->capture_policy_failed |= from->capture_policy_failed;
   capture_policy_invalidate(to);
 }
 
@@ -5464,13 +5468,16 @@ bool umbrielfx_scene_node_share_capture_policy(struct wlr_scene_node* node, stru
   if (previous != NULL && previous->policy == owner->policy) {
     return true;
   }
+  const bool was_excluded = previous != NULL && previous->policy->excluded;
   if (previous != NULL) {
     capture_exclusion_destroy(&previous->addon);
   }
   if (capture_exclusion_create(node, owner->policy) == NULL) {
     return false;
   }
-  capture_policy_invalidate(scene_node_get_root(node));
+  if (was_excluded != owner->policy->excluded) {
+    capture_policy_invalidate(scene_node_get_root(node));
+  }
   return true;
 }
 
