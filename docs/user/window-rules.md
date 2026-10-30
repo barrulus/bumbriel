@@ -407,12 +407,12 @@ block_capture = true
 
 Use the application ID from `umbriel windows --json`. Reloading updates existing windows. The last matching rule that sets `block_capture` wins; `false` removes that window's own protection. A protected parent also protects its popups and transients, even if a child has an explicit `false` rule.
 
-Output and region captures show the content underneath, including its ongoing updates. No black rectangle replaces the window. Scrolling, dwindle, master, and stacking layouts are supported, including floating windows above tiles. A protected tile keeps its allocation; neighbouring windows do not reflow. Protection does not change local visibility, input, focus, or geometry.
+Output and region captures show the content underneath, including its ongoing updates. No black rectangle replaces the window. Scrolling, dwindle, master, and stacking layouts are supported, including floating windows above tiles. A protected tile keeps its allocation; neighboring windows do not reflow. Protection does not change local visibility, input, focus, or geometry.
 
 Direct window capture is refused. Enabling protection stops existing sessions for that window; removing it permits a fresh session. Frames already copied or submitted to a recorder cannot be recalled. Titles and application IDs remain available through existing window metadata protocols.
 
-Protection also covers decorations, shadows, overview cards, and closing images, regardless of `effects.in_capture`. A capture that cannot be composed safely fails while local display rendering continues. Protected captures currently redraw the complete output and can cost more GPU time and memory.
+Protection also covers decorations, shadows, overview cards, and closing images, regardless of `effects.in_capture`. A capture that cannot be composed safely fails while local display rendering continues. Protected captures redraw the complete output and can cost more GPU time and memory.
 
 X11 transients with a known owner inherit its protection. When an X11 popup has no reliable parent, Umbriel conservatively excludes it while any X11 window is protected; this can also hide unrelated X11 menus and notifications from capture. A protected window that changes into an unmanaged popup keeps its protection until it becomes managed again.
 
-Raw `zwlr_export_dmabuf_manager_v1` export is no longer advertised because it bypasses the filtered composition. Use screencopy or image-copy capture clients instead. Image-copy DMA-BUF destinations are a separate path.
+Raw `zwlr_export_dmabuf_manager_v1` export is not advertised because it would bypass the filtered composition. Use screencopy or image-copy capture clients instead, including image-copy clients with DMA-BUF destinations.
