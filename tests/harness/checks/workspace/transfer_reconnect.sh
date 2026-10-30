@@ -101,15 +101,19 @@ CONFIG
       state
       exit 1
     fi
+    # The pinned window stayed on its output when the workspace moved.
     "$UMBRIEL" windows --json | jq -e --arg id "$restored" '
-      length == 4 and all(.[]; .workspace == $id and .output == "HEADLESS-2")' > /dev/null
+      length == 4
+      and all(.[]; if .title == "reconnect-pin" then .pinned and .output == "HEADLESS-1"
+                   else .workspace == $id and .output == "HEADLESS-2" end)' > /dev/null
     if (( cycle < 4 )); then
       [[ $(geometry) == "$expected" ]] || { echo "reconnect changed window geometry"; exit 1; }
     fi
     [[ $("$WORKSPACE" --groups | awk -F '\t' -v id="$restored" '$1 == id {print $3}') == HEADLESS-2 ]]
-    for title in reconnect-tile-one reconnect-tile-two reconnect-float reconnect-pin; do
+    for title in reconnect-tile-one reconnect-tile-two reconnect-float; do
       "$FOREIGN" "$title" HEADLESS-2
     done
+    "$FOREIGN" reconnect-pin HEADLESS-1
   done
   for title in reconnect-tile-one reconnect-tile-two reconnect-float reconnect-pin; do
     msg window-close "$(window_id "$title")"
@@ -120,4 +124,4 @@ CONFIG
   done
   [[ $("$UMBRIEL" windows --json | jq length) == 0 ]]
 done
-echo "transferred names, layouts and all window types survive repeated output recreation"
+echo "transferred names, layouts and windows survive repeated output recreation; pinned windows stay on their output"

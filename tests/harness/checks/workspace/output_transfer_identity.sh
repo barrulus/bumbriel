@@ -62,7 +62,8 @@ msg window-toggle-pinned
 msg window-focus "$(window_id transfer-tile)"
 "$UMBRIEL" settle
 
-# IDs and names survive the group change. Fixed inventories shrink and grow rather than reusing a slot.
+# IDs and names survive the group change. Fixed inventories shrink and grow rather than reusing a slot. Pinned windows
+# stay on their output with the source's newly active workspace.
 msg workspace-move-to-output-next
 "$UMBRIEL" settle
 check --arg id "$work" '
@@ -70,11 +71,16 @@ check --arg id "$work" '
   and ([.[] | select(.output == "HEADLESS-1") | .name] == ["BEFORE", "AFTER"])
   and ([.[] | select(.output == "HEADLESS-2") | .name] == ["TARGET", "WORK", "TAIL"])
   and any(.[]; .name == "BEFORE" and .active)'
-"$UMBRIEL" windows --json | jq -e --arg id "$work" 'length == 3 and all(.[]; .workspace == $id)' > /dev/null
+before=$(state | jq -r '.[] | select(.name == "BEFORE") | .id')
+"$UMBRIEL" windows --json | jq -e --arg id "$work" --arg before "$before" '
+  length == 3
+  and all(.[]; if .title == "transfer-pin" then .workspace == $before and .output == "HEADLESS-1" and .pinned
+               else .workspace == $id end)' > /dev/null
 [[ $("$WORKSPACE" --groups | awk -F '\t' -v id="$work" '$1 == id && $2 == "WORK" {print $3}') == HEADLESS-2 ]]
-for title in transfer-tile transfer-float transfer-pin; do
+for title in transfer-tile transfer-float; do
   "$FOREIGN" "$title" HEADLESS-2
 done
+"$FOREIGN" transfer-pin HEADLESS-1
 
 # Cycle through three outputs in both directions, including wraparound, and move an empty named workspace.
 for step in next:3 next:1 previous:3 previous:2; do

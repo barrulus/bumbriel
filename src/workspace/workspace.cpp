@@ -240,9 +240,6 @@ namespace umbriel {
     wlr_scene_node_reparent(&m_tree->node, group.output()->viewRoot());
     wlr_scene_node_reparent(&m_fullscreenTree->node, group.output()->fullscreenRoot());
     for (View* view : m_views) {
-      if (view->pinned()) {
-        view->restorePinnedSceneParent();
-      }
       view->restoreFloatingPosition();
     }
     // Attached dialogs share their placement root's workspace without being layout members.
@@ -3596,6 +3593,14 @@ namespace umbriel {
       m_previous = nullptr;
     }
     m_active->setActive(true);
+    // Pinned windows belong to their output: they stay with the source's active workspace.
+    std::vector<View*> pinned;
+    std::ranges::copy_if(workspace->allViews(), std::back_inserter(pinned), [](const View* view) {
+      return view->pinned();
+    });
+    for (View* view : pinned) {
+      view->setWorkspace(m_active);
+    }
 
     workspace->transferTo(destination);
     destination.m_workspaces.insert(

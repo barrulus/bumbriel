@@ -133,7 +133,7 @@ Configuration resolution and change classification are covered by [`tests/unit/c
 
 ## Explicit output transfers
 
-Workspace move actions transfer ownership of the existing `Workspace` between groups. Its ext-workspace handle, ID, layout object, launch anchor, and window membership survive. Scene roots are reparented and client output membership and scale hints are refreshed, including attached dialogs. Both groups finish live slides before the transfer.
+Workspace move actions transfer ownership of the existing `Workspace` between groups. Its ext-workspace handle, ID, layout object, launch anchor, and window membership survive. Pinned members are handed to the source's newly selected active workspace before the transfer, so they never leave their output. Scene roots are reparented and client output membership and scale hints are refreshed, including attached dialogs. Both groups finish live slides before the transfer.
 
 When its active workspace moves, the source selects the preceding member, with the following member or an empty replacement as fallback. Moving an inactive member preserves the source selection. The destination inserts and activates the transferred member after its previously active member. A duplicate explicit name or a full destination rejects the operation before mutation. Static inventories can grow or shrink at runtime through these actions.
 

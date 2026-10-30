@@ -100,4 +100,26 @@ unchanged 'not available' workspace-move-to-output HEADLESS-3 WEB --output HEADL
 msg output-enable HEADLESS-3
 msg workspace-move-to-output HEADLESS-3 WEB --output HEADLESS-1
 expect --arg id "$work" 'any(.[]; .id == $id and .output == "HEADLESS-3" and .focused)'
+
+# A pinned window stays on its output when the hidden workspace it was pinned on moves away.
+msg workspace-switch KEEP --output HEADLESS-1
+"$UMBRIEL_UNMAP_CLIENT" explicit-pin 300 200 > "$UMBRIEL_RUNTIME_DIR/explicit-pin.log" 2>&1 &
+pin=
+for _ in $(seq 60); do
+  pin=$("$UMBRIEL" windows --json | jq -r '.[] | select(.title == "explicit-pin") | .id')
+  [[ -n $pin ]] && break
+  sleep 0.05
+done
+[[ -n $pin ]]
+msg window-focus "$pin"
+msg window-toggle-pinned
+keep=$(id_of KEEP HEADLESS-1)
+msg workspace-move-to-output current TARGET --output HEADLESS-2
+target=$(id_of TARGET HEADLESS-1)
+msg workspace-move-to-output HEADLESS-2 KEEP --output HEADLESS-1
+"$UMBRIEL" settle
+expect --arg id "$keep" 'any(.[]; .id == $id and .output == "HEADLESS-2" and .focused)'
+"$UMBRIEL" windows --json | jq -e --arg id "$pin" --arg target "$target" '
+  any(.[]; .id == $id and .pinned and .workspace == $target and .output == "HEADLESS-1")' > /dev/null
+"$UMBRIEL_FOREIGN_TOPLEVEL_CLIENT" explicit-pin HEADLESS-1
 echo "explicit targets preserve source selection, workspace identity and members; invalid targets are inert"

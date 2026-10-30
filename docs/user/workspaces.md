@@ -110,7 +110,7 @@ umbriel msg workspace-move-to-output DP-2 --name 3 --output DP-1
 
 Moving an inactive workspace leaves its source output's active workspace selected. Moving a workspace to its existing output succeeds without changing selection or order. Unknown, disabled, or ambiguous destination outputs are rejected.
 
-The workspace keeps its stable ID, explicit name, layout, and all its windows, including floating and pinned windows. It is inserted immediately after the destination's active workspace and becomes active there. Keyboard focus follows it. When its active workspace moves, the source shows the preceding workspace, or the following one if the first workspace moved. An output whose only workspace moves receives an empty replacement.
+The workspace keeps its stable ID, explicit name, layout, and its windows, including floating windows. Pinned windows stay on their output, even when the workspace they were pinned on moves. The workspace is inserted immediately after the destination's active workspace and becomes active there. Keyboard focus follows it. When its active workspace moves, the source shows the preceding workspace, or the following one if the first workspace moved. An output whose only workspace moves receives an empty replacement.
 
 Moves also work for empty workspaces and fixed inventories. They change the runtime inventory without editing configuration. Dynamic outputs maintain their empty workspace sentinels and minimum count. Explicit names stay with transferred workspaces; anonymous labels follow their new positions. A move is rejected if the destination already has the same explicit name or has reached the 64-workspace limit.
 
