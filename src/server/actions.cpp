@@ -78,33 +78,32 @@ namespace umbriel {
     }
 
     // Positions stay on the selected output; names follow a displaced workspace's original output when qualified.
-    std::expected<Workspace*, std::string> resolveWorkspaceSelector(Server& server, const WorkspaceArg& arg) {
-      const auto* selector = &arg;
+    std::expected<Workspace*, std::string> resolveWorkspaceSelector(Server& server, const WorkspaceArg& selector) {
       Output* preferred = server.outputFromWlr(server.preferredOutput());
       WorkspaceGroup* group = preferred != nullptr ? preferred->workspaceGroup() : nullptr;
-      if (const auto* name = std::get_if<WorkspaceName>(&selector->reference)) {
-        return server.resolveNamedWorkspace(name->value, group, selector->output);
+      if (const auto* name = std::get_if<WorkspaceName>(&selector.reference)) {
+        return server.resolveNamedWorkspace(name->value, group, selector.output);
       }
-      if (!selector->output.empty()) {
-        Output* output = server.outputFromName(selector->output);
+      if (!selector.output.empty()) {
+        Output* output = server.outputFromName(selector.output);
         if (output == nullptr) {
-          return std::unexpected("unknown output: " + selector->output);
+          return std::unexpected("unknown output: " + selector.output);
         }
         group = output->workspaceGroup();
         if (group == nullptr) {
-          return std::unexpected("output has no workspace group: " + selector->output);
+          return std::unexpected("output has no workspace group: " + selector.output);
         }
       }
-      const auto* index = std::get_if<WorkspaceIndex>(&selector->reference);
+      const auto* index = std::get_if<WorkspaceIndex>(&selector.reference);
       if (index == nullptr) {
         return std::unexpected(std::string("action carries an invalid workspace selector"));
       }
       Workspace* target = index->value > 0 && group != nullptr ? group->workspaceAtClamped(index->value - 1) : nullptr;
       if (target == nullptr) {
         return std::unexpected(
-            selector->output.empty()
+            selector.output.empty()
                 ? "unknown workspace position: " + std::to_string(index->value)
-                : "unknown workspace on output " + selector->output + ": " + std::to_string(index->value)
+                : "unknown workspace on output " + selector.output + ": " + std::to_string(index->value)
         );
       }
       return target;
