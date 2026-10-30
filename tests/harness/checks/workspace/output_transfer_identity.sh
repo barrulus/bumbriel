@@ -29,7 +29,7 @@ reject() {
   local before after
   "$UMBRIEL" settle
   before=$(state)
-  if msg "$1"; then echo "unexpectedly accepted $1"; exit 1; fi
+  if msg "$1" 2> /dev/null; then echo "unexpectedly accepted $1"; exit 1; fi
   after=$(state)
   [[ $before == "$after" ]] || { echo "rejected transfer changed inventory"; exit 1; }
 }
